@@ -1,0 +1,99 @@
+# ============================================
+# Go 语言特定
+# ============================================
+# 编译输出
+dist/
+bin/
+out/
+node_modules/
+*.exe
+# 依赖
+vendor/
+go.mod~
+go.sum~
+
+# 测试缓存
+_testmain.go
+*.coverprofile
+
+# ============================================
+# AI Agent 特定
+# ============================================
+# 模型文件
+models/
+*.gguf
+*.ggml
+*.bin
+*.safetensors
+
+# 向量数据库
+*.chroma
+chroma-data/
+qdrant-data/
+weaviate-data/
+milvus-data/
+
+# 数据集
+*.h5
+*.hdf5
+*.npz
+*.npy
+
+# 嵌入缓存
+embeddings/
+vectors/
+
+# 对话历史
+history/
+sessions/
+
+# ============================================
+# IDE 和编辑器
+# ============================================
+# VS Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# GoLand
+.idea/
+
+# 通用
+*.swp
+*.swo
+*~
+
+# ============================================
+# 系统文件
+# ============================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ============================================
+# 项目特定
+# ============================================
+# 工作空间
+workspace/
+workspace/*
+
+# 实验
+experiments/
+experiments/*
+
+# 个人笔记
+notes/
+scratch/
+
+# 临时文件
+tmp/
+temp/
+
+
+
