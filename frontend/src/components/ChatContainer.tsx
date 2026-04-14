@@ -5,9 +5,10 @@ import { MessageBubble } from './MessageBubble';
 interface ChatContainerProps {
   messages: ChatMessage[];
   isTyping: boolean;
+  onClear: () => void;
 }
 
-export function ChatContainer({ messages, isTyping }: ChatContainerProps) {
+export function ChatContainer({ messages, isTyping, onClear }: ChatContainerProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -26,8 +27,17 @@ export function ChatContainer({ messages, isTyping }: ChatContainerProps) {
     );
   }
 
+  const hasUserMessages = messages.some((m) => m.role === 'user');
+
   return (
     <div style={styles.container}>
+      {hasUserMessages && (
+        <div style={styles.clearRow}>
+          <button style={styles.clearBtn} onClick={onClear}>
+            Clear conversation
+          </button>
+        </div>
+      )}
       {messages.map((msg) => (
         <MessageBubble key={msg.id} message={msg} />
       ))}
@@ -84,6 +94,18 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     gap: 16,
+  },
+  clearRow: { display: 'flex', justifyContent: 'center', padding: '4px 0' },
+  clearBtn: {
+    fontSize: 11,
+    color: '#5a5a5e',
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+    fontFamily: 'JetBrains Mono, monospace',
+    padding: '4px 8px',
+    borderRadius: 4,
+    transition: 'color 0.2s ease',
   },
   typingRow: { display: 'flex', gap: 12, alignItems: 'center' },
   typingAvatar: {

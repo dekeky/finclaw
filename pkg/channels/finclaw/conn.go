@@ -1,12 +1,15 @@
 package finclaw
 
 import (
+	"errors"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
+
+var ErrConnectionClosed = errors.New("connection closed")
 
 type finConn struct {
 	id        string
@@ -20,7 +23,7 @@ func newFinConn(id string, conn *websocket.Conn, sessionID string) *finConn {
 		id:        id,
 		conn:      conn,
 		sessionID: sessionID,
-		writeMu:   sync.Mutex{}, // 避免回复的消息和ping消息写入时并发冲突
+		writeMu:   sync.Mutex{},
 	}
 }
 
@@ -53,13 +56,19 @@ func (fc *finConn) pingLoop(interval time.Duration, done <-chan struct{}) {
 		case <-done:
 			return
 		case <-ticker.C:
-			// Send a ping message
-			if err := fc.writeMessage(websocket.PingMessage, nil); err != nil {
+			fc.writeMu.Lock()
+			err := fc.conn.WriteMessage(websocket.PingMessage, nil)
+			fc.writeMu.Unlock()
+			if err != nil {
+				// Normal when the peer closed or we already sent a close frame — not worth warning.
+				if errors.Is(err, websocket.ErrCloseSent) {
+					return
+				}
 				logger.WarnCF("finclaw", "Failed to send ping, connection may be closing", map[string]any{
 					"conn_id": fc.id,
 					"error":   err.Error(),
 				})
-				// Don't return here, let the readLoop detect the close
+				return
 			}
 		}
 	}
@@ -68,7 +77,6 @@ func (fc *finConn) pingLoop(interval time.Duration, done <-chan struct{}) {
 func (fc *finConn) SetReadDeadline(readTimeout time.Duration) {
 	fc.conn.SetReadDeadline(time.Now().Add(readTimeout))
 	fc.conn.SetPongHandler(func(appData string) error {
-		_ = fc.conn.SetReadDeadline(time.Now().Add(readTimeout))
-		return nil
+		return fc.conn.SetReadDeadline(time.Now().Add(readTimeout))
 	})
 }

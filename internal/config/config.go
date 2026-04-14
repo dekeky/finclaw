@@ -1,44 +1,119 @@
 package config
 
 import (
+	"errors"
+	"io/fs"
 	"os"
-	"path/filepath"
 
 	"github.com/finclaw/pkg/channels/finclaw"
-	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/pelletier/go-toml/v2"
+	picoclawconfig "github.com/sipeed/picoclaw/pkg/config"
 )
 
-type FinclawConfig struct {
-	*config.Config
-	ServerAddr      string                    `json:"server_addr"`
-	FincChannelConf *finclaw.FinChannelConfig `json:"finclaw_channel"`
-}
+const (
+	CurrentVersion = picoclawconfig.CurrentVersion
+)
 
 var finclawConf *FinclawConfig
 
+type FinclawConfig struct {
+	*picoclawconfig.Config
+	*FinclawConfigServer
+}
+
+type FinclawConfigServer struct {
+	ServerAddr         string                    `toml:"serverAddr"`
+	FinClawChannelConf *finclaw.FinChannelConfig `toml:"finClawChannel"`
+}
+
+func (c *FinclawConfig) Save() error {
+	if err := picoclawconfig.SaveConfig(picoConfigPath(), c.Config); err != nil {
+		return err
+	}
+
+	if err := tomlEncodeFile(finConfigPath(), c.FinclawConfigServer); err != nil {
+		return err
+	}
+	return nil
+}
+
 func init() {
 	var err error
-	finclawConf = &FinclawConfig{
-		Config: config.DefaultConfig(),
-	}
-	finclawConf.Config, err = config.LoadConfig(configPathGet())
+	finclawConf, err = LoadConfig()
 	if err != nil {
 		panic(err)
 	}
 
-	finclawConf.ServerAddr = ":8082"
-	finclawConf.FincChannelConf = new(finclaw.FinChannelConfig)
+	if err := finclawConf.Save(); err != nil {
+		panic(err)
+	}
 }
 
-func configPathGet() string {
-	workspace := os.Getenv("WORKSPACE")
-	if workspace == "" {
-		home, _ := os.UserHomeDir()
-		workspace = home + "/.finclaw"
+func LoadConfig() (*FinclawConfig, error) {
+	// 先判断picoclaw配置文件是否存在，确保加载的时候，不会因为配置文件不存在而使用picoclaw内部的默认配置，导致picoclaw的workspace路径不正确
+	exists, err := pathExists(picoConfigPath())
+	if err != nil {
+		return nil, err
 	}
-	return filepath.Join(workspace, "config.json")
+	if !exists {
+		return defaultConfig(), nil
+	}
+	picoConf, err := picoclawconfig.LoadConfig(picoConfigPath())
+	if err != nil {
+		return nil, err
+	}
+	finConf, err := loadFinclawConfig()
+	if err != nil {
+		return nil, err
+	}
+	return &FinclawConfig{
+		Config:              picoConf,
+		FinclawConfigServer: finConf,
+	}, nil
+}
+
+func loadFinclawConfig() (finServerConf *FinclawConfigServer, err error) {
+	exists, err := pathExists(finConfigPath())
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return defaultFinclawConfig(), nil
+	}
+
+	finServerConf = new(FinclawConfigServer)
+	err = tomlDecodeFile(finConfigPath(), finServerConf)
+
+	return finServerConf, err
 }
 
 func FinConfigGet() *FinclawConfig {
 	return finclawConf
+}
+
+func pathExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return false, err // 其它错误（权限、路径无效等）
+}
+
+func tomlDecodeFile(path string, v interface{}) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return toml.Unmarshal(content, v)
+}
+
+func tomlEncodeFile(path string, v interface{}) error {
+	content, err := toml.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, content, 0644)
 }

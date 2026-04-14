@@ -22,12 +22,18 @@ function parseHistory(raw: WSMessage): ChatMessage[] {
 export interface UseWebSocketReturn {
   messages: ChatMessage[];
   status: ConnectionStatus;
+  isTyping: boolean;
+  sendError: string | null;
   send: (content: string) => void;
+  clearMessages: () => void;
+  reconnect: () => void;
 }
 
 export function useWebSocket(url: string): UseWebSocketReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ConnectionStatus>('idle');
+  const [isTyping, setIsTyping] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const reconnectCountRef = useRef(0);
@@ -52,64 +58,6 @@ export function useWebSocket(url: string): UseWebSocketReturn {
       }
     }, PING_INTERVAL);
   }, []);
-
-  const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
-    if (reconnectCountRef.current >= MAX_RECONNECT) {
-      setStatus('error');
-      return;
-    }
-
-    setStatus('connecting');
-
-    try {
-      const ws = new WebSocket(url);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        if (!mountedRef.current) return;
-        reconnectCountRef.current = 0;
-        setStatus('connected');
-        console.log('[Finclaw WS] Connected');
-        startPing();
-      };
-
-      ws.onclose = (ev) => {
-        console.log('[Finclaw WS] Closed:', ev.code, ev.reason);
-        if (!mountedRef.current) return;
-        setStatus('idle');
-        if (pingTimerRef.current) {
-          clearInterval(pingTimerRef.current);
-          pingTimerRef.current = null;
-        }
-        // 不重试主动关闭
-        if (ev.code === 1000) return;
-        if (reconnectCountRef.current < MAX_RECONNECT) {
-          reconnectCountRef.current += 1;
-          setTimeout(connect, RECONNECT_DELAY * reconnectCountRef.current);
-        } else {
-          setStatus('error');
-        }
-      };
-
-      ws.onerror = () => {
-        if (!mountedRef.current) return;
-        setStatus('error');
-      };
-
-      ws.onmessage = (ev) => {
-        if (!mountedRef.current) return;
-        try {
-          const msg: WSMessage = JSON.parse(ev.data);
-          handleIncoming(msg);
-        } catch {
-          // ignore parse errors
-        }
-      };
-    } catch {
-      setStatus('error');
-    }
-  }, [url, startPing]);
 
   const handleIncoming = useCallback((msg: WSMessage) => {
     console.log('[Finclaw WS] Received:', msg.type, msg.payload);
@@ -146,38 +94,136 @@ export function useWebSocket(url: string): UseWebSocketReturn {
       }
 
       case 'typing_start':
-        // handled by parent if needed
+        setIsTyping(true);
         break;
 
-      case 'error':
-        console.error('[Finclaw WS]', msg.payload?.content);
+      case 'typing_stop':
+        setIsTyping(false);
         break;
+
+      case 'error': {
+        // @ts-ignore backend sends {type:"error", payload:{message:"..."}}
+        const errContent = (msg.payload as any)?.message || msg.payload?.content;
+        if (errContent) {
+          console.error('[Finclaw WS] Server error:', errContent);
+          // 把服务器错误追加为一条 assistant 消息，让用户看到
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: msg.id || genId(),
+              role: 'assistant',
+              content: `⚠️ Error: ${errContent}`,
+              timestamp: new Date(),
+            },
+          ]);
+        }
+        break;
+      }
     }
   }, []);
 
-  const send = useCallback((content: string) => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      console.warn('[Finclaw WS] Send failed: not connected, readyState:', ws?.readyState);
+  const connect = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    // 达到最大重试次数后不再自动重试，留给用户手动触发
+    if (reconnectCountRef.current > MAX_RECONNECT) {
+      setStatus('error');
       return;
     }
 
-    // 即时添加到本地消息列表，保证用户看到自己的消息
-    const id = genId();
-    setMessages((prev) => [
-      ...prev,
-      { id, role: 'user', content, timestamp: new Date() },
-    ]);
+    setStatus('connecting');
 
-    const msg = {
-      type: 'message.send',
-      id,
-      session_id: sessionIdRef.current || undefined,
-      payload: { content },
-    };
-    console.log('[Finclaw WS] Sending:', JSON.stringify(msg));
-    ws.send(JSON.stringify(msg));
+    try {
+      const ws = new WebSocket(url);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (!mountedRef.current) return;
+        reconnectCountRef.current = 0;
+        setStatus('connected');
+        setSendError(null);
+        console.log('[Finclaw WS] Connected');
+        startPing();
+      };
+
+      ws.onclose = (ev) => {
+        console.log('[Finclaw WS] Closed:', ev.code, ev.reason);
+        if (!mountedRef.current) return;
+        if (pingTimerRef.current) {
+          clearInterval(pingTimerRef.current);
+          pingTimerRef.current = null;
+        }
+        // 主动关闭（code 1000）不重试
+        if (ev.code === 1000) {
+          setStatus('idle');
+          return;
+        }
+        if (reconnectCountRef.current < MAX_RECONNECT) {
+          reconnectCountRef.current += 1;
+          setStatus('connecting');
+          setTimeout(connect, RECONNECT_DELAY * reconnectCountRef.current);
+        } else {
+          reconnectCountRef.current += 1;
+          setStatus('error');
+        }
+      };
+
+      ws.onerror = () => {
+        if (!mountedRef.current) return;
+        setStatus('error');
+      };
+
+      ws.onmessage = (ev) => {
+        if (!mountedRef.current) return;
+        try {
+          const msg: WSMessage = JSON.parse(ev.data);
+          handleIncoming(msg);
+        } catch {
+          // ignore parse errors
+        }
+      };
+    } catch {
+      setStatus('error');
+    }
+  }, [url, startPing, handleIncoming]);
+
+  const clearMessages = useCallback(() => {
+    setMessages([]);
   }, []);
+
+  const reconnect = useCallback(() => {
+    reconnectCountRef.current = 0;
+    reset();
+    connect();
+  }, [reset, connect]);
+
+  const send = useCallback(
+    (content: string) => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        setSendError('Connection lost. Please reconnect.');
+        return;
+      }
+
+      setSendError(null);
+
+      // 即时添加到本地消息列表，保证用户看到自己的消息
+      const id = genId();
+      setMessages((prev) => [
+        ...prev,
+        { id, role: 'user', content, timestamp: new Date() },
+      ]);
+
+      const msg = {
+        type: 'message.send',
+        id,
+        session_id: sessionIdRef.current || undefined,
+        payload: { content },
+      };
+      console.log('[Finclaw WS] Sending:', JSON.stringify(msg));
+      ws.send(JSON.stringify(msg));
+    },
+    []
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -188,5 +234,5 @@ export function useWebSocket(url: string): UseWebSocketReturn {
     };
   }, [connect, reset]);
 
-  return { messages, status, send };
+  return { messages, status, isTyping, sendError, send, clearMessages, reconnect };
 }

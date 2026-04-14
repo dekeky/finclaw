@@ -18,9 +18,9 @@ import (
 )
 
 type FinChannelConfig struct {
-	ReadTimeout  time.Duration `json:"read_timeout"`  // in seconds，默认60s，当客户端持续一段时间未发送消息时，会关闭连接
-	PingInterval time.Duration `json:"ping_interval"` // in seconds，默认30s，用户探活
-	MaxConn      int           `json:"max_conn"`      // 最大连接数，默认1000
+	ReadTimeout  time.Duration `toml:"readTimeout"`  // in seconds，默认60s，当客户端持续一段时间未发送消息时，会关闭连接
+	PingInterval time.Duration `toml:"pingInterval"` // in seconds，默认30s，用户探活
+	MaxConn      int           `toml:"maxConn"`      // 最大连接数，默认1000
 }
 
 func (config *FinChannelConfig) getReadTimeout() time.Duration {
@@ -305,7 +305,7 @@ func (fchannel *FinClawChannel) handleMessageSend(fconn *finConn, msg FinMessage
 	})
 }
 
-// truncate truncates a string to maxLen runes.
+// truncate truncates a String to maxLen runes.
 func truncate(s string, maxLen int) string {
 	runes := []rune(s)
 	if len(runes) <= maxLen {
@@ -329,7 +329,7 @@ func (fchannel *FinClawChannel) ProcessAgentMessage(outbound <-chan bus.Outbound
 		// Format message for frontend - match frontend's expected format
 		msgId := uuid.New().String()
 		response := map[string]any{
-			"type": "message.send",
+			"type": TypeMessageSend,
 			"id":   msgId,
 			"payload": map[string]any{
 				"content": agentMsg.Content,
@@ -337,9 +337,24 @@ func (fchannel *FinClawChannel) ProcessAgentMessage(outbound <-chan bus.Outbound
 			},
 		}
 
+		// 并行发送给所有订阅该 session 的客户端，一个慢客户端不 block 其他客户端
+		var wg sync.WaitGroup
 		for _, fconn := range conns {
-			fconn.writeJson(response)
+			wg.Add(1)
+			go func(conn *finConn) {
+				defer wg.Done()
+				if err := conn.writeJson(response); err != nil {
+					logger.WarnCF("fin", "Failed to deliver message to client, closing connection", map[string]any{
+						"conn_id":    conn.id,
+						"session_id": sessionId,
+						"error":      err.Error(),
+					})
+					conn.close()
+					fchannel.removeConnection(conn.id)
+				}
+			}(fconn)
 		}
+		wg.Wait()
 	}
 }
 

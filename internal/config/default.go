@@ -1,0 +1,71 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+
+	"github.com/finclaw/pkg/channels/finclaw"
+	"github.com/sipeed/picoclaw/pkg/config"
+)
+
+const (
+	FinclawHomeEnv     = "FINCLAW_HOME"
+	PicoClawConfigFile = "picoclaw.json" // 相当于picoclaw config.json文件
+	FinclawConfigFile  = "finclaw.toml"
+	FinclawWorkspace   = "workspace"
+	RssSourceFile      = "rss.config"
+)
+
+func finclawHomePath() string {
+	var err error
+	home := os.Getenv(FinclawHomeEnv)
+	if home == "" {
+		home, err = os.UserHomeDir()
+		if err != nil {
+			panic(err)
+		}
+		home = filepath.Join(home, ".finclaw")
+	}
+	return home
+}
+
+func picoConfigPath() string {
+	return filepath.Join(finclawHomePath(), PicoClawConfigFile)
+}
+
+func finConfigPath() string {
+	return filepath.Join(finclawHomePath(), FinclawConfigFile)
+}
+
+func finWorkspacePath() string {
+	return filepath.Join(finclawHomePath(), FinclawWorkspace)
+}
+
+func RssConfigPath() string {
+	return filepath.Join(finclawHomePath(), RssSourceFile)
+}
+
+func RssStoragePath() string {
+	return filepath.Join(finWorkspacePath(), RssSourceFile)
+}
+
+func defaultConfig() *FinclawConfig {
+	picoClawConfig := config.DefaultConfig()
+	// 设置picoclaw的workspace路径为finclaw的workspace路径
+	picoClawConfig.Agents.Defaults.Workspace = finWorkspacePath()
+	return &FinclawConfig{
+		Config:              picoClawConfig,
+		FinclawConfigServer: defaultFinclawConfig(),
+	}
+}
+
+func defaultFinclawConfig() *FinclawConfigServer {
+	return &FinclawConfigServer{
+		ServerAddr: ":8082",
+		FinClawChannelConf: &finclaw.FinChannelConfig{
+			ReadTimeout:  60,
+			PingInterval: 30,
+			MaxConn:      1000,
+		},
+	}
+}

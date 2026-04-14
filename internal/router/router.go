@@ -1,30 +1,31 @@
 package router
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"path/filepath"
+	"runtime"
 
 	"github.com/finclaw/pkg/channels/finclaw"
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 	"github.com/sipeed/picoclaw/pkg/bus"
 )
-
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
-}
 
 // FinClawRouter handles HTTP and WebSocket routes
 type FinClawRouter struct {
 	r        *gin.Engine
 	bus      *bus.MessageBus
 	fchannel *finclaw.FinClawChannel
+}
+
+// frontendDir returns <repo>/frontend based on this file's location (independent of process cwd).
+func frontendDir() string {
+	_, file, _, ok := runtime.Caller(1)
+	if !ok {
+		return "frontend"
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	return filepath.Join(root, "frontend")
 }
 
 // NewFinClawRouter creates a new router instance
@@ -39,11 +40,11 @@ func (fr *FinClawRouter) RoutesInit() {
 	// CORS middleware
 	fr.r.Use(CORSMiddleware())
 
-	// Serve static files from web directory
-	webDir, _ := filepath.Abs("../../web")
-	fmt.Println(webDir)
-	fr.r.Static("/static", webDir)
-	fr.r.StaticFile("/", filepath.Join(webDir, "index.html"))
+	// Serve static files from frontend/ (repo root, not cwd — ../../web never existed)
+	frontDir := frontendDir()
+	fr.r.Static("/static", frontDir)
+	fr.r.Static("/src", filepath.Join(frontDir, "src"))
+	fr.r.StaticFile("/", filepath.Join(frontDir, "index.html"))
 
 	// WebSocket chat endpoints
 	fr.r.GET("/chat", fr.handleWebSocket)

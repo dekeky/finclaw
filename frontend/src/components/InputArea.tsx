@@ -39,7 +39,7 @@ export function InputArea({ onSend, disabled }: InputAreaProps) {
 
   return (
     <form style={styles.form} onSubmit={onFormSubmit}>
-      <div style={styles.wrapper}>
+      <div style={styles.wrapper} className="finclaw-input">
         <textarea
           ref={textareaRef}
           style={styles.textarea}

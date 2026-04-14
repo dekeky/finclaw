@@ -18,6 +18,7 @@ import (
 
 	finclawconfig "github.com/finclaw/internal/config"
 	"github.com/finclaw/internal/router"
+	_ "github.com/finclaw/internal/rss"
 	"github.com/finclaw/pkg/channels/finclaw"
 	"github.com/sipeed/picoclaw/pkg/agent"
 	"github.com/sipeed/picoclaw/pkg/bus"
@@ -45,7 +46,7 @@ func main() {
 		}
 	}()
 
-	fchannel := finclaw.NewFinChannel(ctx, msgBus, finclawConf.FincChannelConf)
+	fchannel := finclaw.NewFinChannel(ctx, msgBus, finclawConf.FinClawChannelConf)
 	go fchannel.ProcessAgentMessage(msgBus.OutboundChan())
 	frouter := router.NewFinClawRouter(msgBus, fchannel)
 	frouter.RoutesInit()

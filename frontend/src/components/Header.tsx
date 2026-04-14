@@ -2,6 +2,9 @@ import type { ConnectionStatus } from '../types';
 
 interface HeaderProps {
   status: ConnectionStatus;
+  onNewChat: () => void;
+  messageCount: number;
+  onReconnect: () => void;
 }
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
@@ -11,9 +14,9 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
   error: 'Connection Error',
 };
 
-export function Header({ status }: HeaderProps) {
+export function Header({ status, onNewChat, messageCount, onReconnect }: HeaderProps) {
   return (
-    <header style={styles.header}>
+    <header style={styles.header} className="finclaw-header">
       <div style={styles.headerLeft}>
         <div style={styles.logo}>F</div>
         <div>
@@ -21,9 +24,28 @@ export function Header({ status }: HeaderProps) {
           <div style={styles.headerSubtitle}>AI Financial Assistant</div>
         </div>
       </div>
-      <div style={styles.connectionStatus}>
-        <span style={{ ...styles.statusDot, ...statusDotStyle(status) }} />
-        <span style={styles.statusText}>{STATUS_LABEL[status]}</span>
+      <div style={styles.right}>
+        {messageCount > 0 && (
+          <button style={styles.newChatBtn} onClick={onNewChat} title="New conversation">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            New Chat
+          </button>
+        )}
+        <div style={styles.connectionStatus}>
+          <span style={{ ...styles.statusDot, ...statusDotStyle(status) }} />
+          <span style={styles.statusText}>{STATUS_LABEL[status]}</span>
+        </div>
+        {(status === 'error' || status === 'idle') && (
+          <button style={styles.reconnectBtn} onClick={onReconnect} title="Reconnect">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="1 4 1 10 7 10" />
+              <path d="M3.51 15a9 9 0 1 0 .49-3.51" />
+            </svg>
+            Reconnect
+          </button>
+        )}
       </div>
     </header>
   );
@@ -51,6 +73,21 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: '1px solid rgba(255,255,255,0.06)',
   },
   headerLeft: { display: 'flex', alignItems: 'center', gap: 12 },
+  right: { display: 'flex', alignItems: 'center', gap: 12 },
+  newChatBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '6px 14px',
+    background: 'rgba(201,168,76,0.08)',
+    border: '1px solid rgba(201,168,76,0.25)',
+    borderRadius: 20,
+    color: '#c9a84c',
+    fontSize: 12,
+    fontFamily: 'JetBrains Mono, monospace',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  },
   logo: {
     width: 36,
     height: 36,
@@ -78,4 +115,18 @@ const styles: Record<string, React.CSSProperties> = {
   },
   statusDot: { width: 8, height: 8, borderRadius: '50%', transition: 'all 0.3s ease' },
   statusText: { color: '#8a8a8e' },
+  reconnectBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '6px 14px',
+    background: 'rgba(248,113,113,0.1)',
+    border: '1px solid rgba(248,113,113,0.3)',
+    borderRadius: 20,
+    color: '#f87171',
+    fontSize: 12,
+    fontFamily: 'JetBrains Mono, monospace',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  },
 };

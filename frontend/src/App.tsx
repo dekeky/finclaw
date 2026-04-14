@@ -1,31 +1,31 @@
-import { useState, useCallback } from 'react';
 import { Header } from './components/Header';
 import { ChatContainer } from './components/ChatContainer';
 import { InputArea } from './components/InputArea';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { useWebSocket } from './hooks/useWebSocket';
 
 // 通过 Vite 同源代理连接后端 WebSocket，绕过 CORS
 const WS_URL = `ws://${window.location.host}/ws/chat`;
 
 export default function App() {
-  const { messages, status, send } = useWebSocket(WS_URL);
-  const [isTyping] = useState(false);
-
-  const handleSend = useCallback(
-    (content: string) => {
-      send(content);
-    },
-    [send]
-  );
+  const { messages, status, isTyping, sendError, send, clearMessages, reconnect } = useWebSocket(WS_URL);
 
   return (
     <>
       <style>{GLOBAL_CSS}</style>
       <div style={styles.app}>
-        <div style={styles.inner}>
-          <Header status={status} />
-          <ChatContainer messages={messages} isTyping={isTyping} />
-          <InputArea onSend={handleSend} disabled={status !== 'connected'} />
+        <div style={styles.inner} className="finclaw-inner">
+          <Header status={status} onNewChat={clearMessages} messageCount={messages.length} onReconnect={reconnect} />
+          {sendError && (
+            <div style={styles.errorBanner}>
+              <span style={styles.errorText}>{sendError}</span>
+              <button style={styles.reconnectBtn} onClick={reconnect}>Reconnect</button>
+            </div>
+          )}
+          <ErrorBoundary>
+            <ChatContainer messages={messages} isTyping={isTyping} onClear={clearMessages} />
+          </ErrorBoundary>
+          <InputArea onSend={send} disabled={status !== 'connected'} />
         </div>
       </div>
     </>
@@ -45,6 +45,29 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     maxWidth: 900,
     padding: '0 20px',
+  },
+  errorBanner: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '10px 16px',
+    background: 'rgba(248,113,113,0.1)',
+    border: '1px solid rgba(248,113,113,0.3)',
+    borderRadius: 10,
+    marginTop: 12,
+    animation: 'fadeIn 0.3s ease',
+  },
+  errorText: { color: '#f87171', fontSize: 13 },
+  reconnectBtn: {
+    padding: '5px 14px',
+    background: 'rgba(248,113,113,0.15)',
+    border: '1px solid rgba(248,113,113,0.4)',
+    borderRadius: 6,
+    color: '#f87171',
+    fontSize: 12,
+    cursor: 'pointer',
+    fontFamily: 'JetBrains Mono, monospace',
+    transition: 'all 0.2s ease',
   },
 };
 
@@ -88,5 +111,29 @@ html, body, #root {
 @keyframes pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+@media (max-width: 640px) {
+  .finclaw-inner {
+    padding: 0 12px !important;
+  }
+
+  .finclaw-header {
+    padding: 14px 0 !important;
+  }
+
+  .finclaw-message {
+    max-width: 92% !important;
+  }
+
+  .finclaw-bubble {
+    font-size: 13px !important;
+    padding: 12px 14px !important;
+  }
+
+  .finclaw-input {
+    border-radius: 16px !important;
+    padding: 4px 4px 4px 14px !important;
+  }
 }
 `;

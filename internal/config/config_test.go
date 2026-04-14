@@ -10,3 +10,8 @@ func TestConfLoad(t *testing.T) {
 	t.Logf("conf = %+v", conf)
 	t.Logf("modelConf: %+v", conf.Agents.Defaults)
 }
+
+func TestFinclawHomePath(t *testing.T) {
+	home := finclawHomePath()
+	t.Logf("home = %s", home)
+}
