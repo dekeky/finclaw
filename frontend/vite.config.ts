@@ -12,6 +12,10 @@ export default defineConfig({
         ws: true,
         rewrite: (path) => path.replace(/^\/ws/, ''),
       },
+      '/rss': {
+        target: 'http://127.0.0.1:8082',
+        changeOrigin: true,
+      },
     },
   },
 })

@@ -61,7 +61,8 @@ func defaultConfig() *FinclawConfig {
 
 func defaultFinclawConfig() *FinclawConfigServer {
 	return &FinclawConfigServer{
-		ServerAddr: ":8082",
+		ServerAddr:    ":8082",
+		RSSServerAddr: "http://159.75.51.78:6606",
 		FinClawChannelConf: &finclaw.FinChannelConfig{
 			ReadTimeout:  60,
 			PingInterval: 30,

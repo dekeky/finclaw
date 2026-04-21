@@ -6,9 +6,11 @@ interface ChatContainerProps {
   messages: ChatMessage[];
   isTyping: boolean;
   onClear: () => void;
+  /** 右侧浮窗里用更轻量的欢迎文案 */
+  variant?: 'default' | 'dock';
 }
 
-export function ChatContainer({ messages, isTyping, onClear }: ChatContainerProps) {
+export function ChatContainer({ messages, isTyping, onClear, variant = 'default' }: ChatContainerProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -16,6 +18,19 @@ export function ChatContainer({ messages, isTyping, onClear }: ChatContainerProp
   }, [messages, isTyping]);
 
   if (messages.length === 0) {
+    if (variant === 'dock') {
+      return (
+        <div style={styles.welcomeDock}>
+          <div style={styles.welcomeDockIcon} aria-hidden>
+            🌟
+          </div>
+          <div style={styles.welcomeDockTitle}>嗨，我是你的小助手</div>
+          <div style={styles.welcomeDockSub}>
+            可以直接提问；在列表里勾选一篇或多篇文章，再输入问题，我会带上原文链接一起分析。
+          </div>
+        </div>
+      );
+    }
     return (
       <div style={styles.welcome}>
         <div style={styles.welcomeIcon}>💼</div>
@@ -136,5 +151,32 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'rgba(201,168,76,0.6)',
     borderRadius: '50%',
     animation: 'typingBounce 1.4s ease-in-out infinite',
+  },
+  welcomeDock: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '32px 16px',
+    textAlign: 'center',
+    animation: 'fadeIn 0.45s ease',
+  },
+  welcomeDockIcon: {
+    fontSize: 36,
+    marginBottom: 12,
+    animation: 'float 3s ease-in-out infinite',
+  },
+  welcomeDockTitle: {
+    fontSize: 16,
+    fontWeight: 600,
+    color: '#e8e8ec',
+    marginBottom: 10,
+  },
+  welcomeDockSub: {
+    fontSize: 13,
+    color: '#8a8a92',
+    lineHeight: 1.55,
+    maxWidth: 300,
   },
 };

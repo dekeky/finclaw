@@ -1,11 +1,19 @@
+import { Link } from 'react-router-dom';
 import type { ConnectionStatus } from '../types';
 
-interface HeaderProps {
-  status: ConnectionStatus;
-  onNewChat: () => void;
-  messageCount: number;
-  onReconnect: () => void;
-}
+export type HeaderProps =
+  | {
+      mode: 'chat';
+      status: ConnectionStatus;
+      onNewChat: () => void;
+      messageCount: number;
+      onReconnect: () => void;
+    }
+  | {
+      mode: 'rss';
+      rssRefreshing?: boolean;
+      onRssRefresh?: () => void;
+    };
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
   idle: 'Disconnected',
@@ -14,37 +22,65 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
   error: 'Connection Error',
 };
 
-export function Header({ status, onNewChat, messageCount, onReconnect }: HeaderProps) {
+export function Header(props: HeaderProps) {
+  const isRss = props.mode === 'rss';
+
   return (
     <header style={styles.header} className="finclaw-header">
       <div style={styles.headerLeft}>
-        <div style={styles.logo}>F</div>
+        <Link to="/" style={styles.logoLink} aria-label="Finclaw 首页">
+          <div style={styles.logo}>F</div>
+        </Link>
         <div>
           <div style={styles.headerTitle}>Finclaw</div>
-          <div style={styles.headerSubtitle}>AI Financial Assistant</div>
+          <div style={styles.headerSubtitle}>
+            {isRss ? '金融资讯 · AI Reader' : 'AI Financial Assistant'}
+          </div>
         </div>
       </div>
       <div style={styles.right}>
-        {messageCount > 0 && (
-          <button style={styles.newChatBtn} onClick={onNewChat} title="New conversation">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            New Chat
-          </button>
-        )}
-        <div style={styles.connectionStatus}>
-          <span style={{ ...styles.statusDot, ...statusDotStyle(status) }} />
-          <span style={styles.statusText}>{STATUS_LABEL[status]}</span>
-        </div>
-        {(status === 'error' || status === 'idle') && (
-          <button style={styles.reconnectBtn} onClick={onReconnect} title="Reconnect">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="1 4 1 10 7 10" />
-              <path d="M3.51 15a9 9 0 1 0 .49-3.51" />
-            </svg>
-            Reconnect
-          </button>
+        {isRss ? (
+          <>
+            {props.rssRefreshing && <span style={styles.rssLoading}>同步中…</span>}
+            <button
+              type="button"
+              style={styles.refreshBtn}
+              onClick={props.onRssRefresh}
+              disabled={props.rssRefreshing}
+              title="重新拉取订阅列表与当前分组"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M23 4v6h-6" />
+                <path d="M1 20v-6h6" />
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+              </svg>
+              刷新
+            </button>
+          </>
+        ) : (
+          <>
+            {props.messageCount > 0 && (
+              <button style={styles.newChatBtn} onClick={props.onNewChat} title="New conversation">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+                New Chat
+              </button>
+            )}
+            <div style={styles.connectionStatus}>
+              <span style={{ ...styles.statusDot, ...statusDotStyle(props.status) }} />
+              <span style={styles.statusText}>{STATUS_LABEL[props.status]}</span>
+            </div>
+            {(props.status === 'error' || props.status === 'idle') && (
+              <button style={styles.reconnectBtn} onClick={props.onReconnect} title="Reconnect">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="1 4 1 10 7 10" />
+                  <path d="M3.51 15a9 9 0 1 0 .49-3.51" />
+                </svg>
+                Reconnect
+              </button>
+            )}
+          </>
         )}
       </div>
     </header>
@@ -69,11 +105,13 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '20px 0',
+    padding: '20px 24px',
     borderBottom: '1px solid rgba(255,255,255,0.06)',
+    flexShrink: 0,
   },
-  headerLeft: { display: 'flex', alignItems: 'center', gap: 12 },
-  right: { display: 'flex', alignItems: 'center', gap: 12 },
+  logoLink: { textDecoration: 'none', color: 'inherit', display: 'flex' },
+  headerLeft: { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', minWidth: 0 },
+  right: { display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 },
   newChatBtn: {
     display: 'flex',
     alignItems: 'center',
@@ -128,5 +166,23 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'JetBrains Mono, monospace',
     cursor: 'pointer',
     transition: 'all 0.2s ease',
+  },
+  refreshBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '6px 14px',
+    background: 'rgba(91,155,213,0.1)',
+    border: '1px solid rgba(91,155,213,0.3)',
+    borderRadius: 20,
+    color: '#7ab8e8',
+    fontSize: 12,
+    fontFamily: 'JetBrains Mono, monospace',
+    cursor: 'pointer',
+  },
+  rssLoading: {
+    fontSize: 12,
+    color: '#6a6a72',
+    fontFamily: 'JetBrains Mono, monospace',
   },
 };

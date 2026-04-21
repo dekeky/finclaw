@@ -3,9 +3,10 @@ import { useState, useRef, useEffect, type FormEvent, type KeyboardEvent } from 
 interface InputAreaProps {
   onSend: (content: string) => void;
   disabled: boolean;
+  placeholder?: string;
 }
 
-export function InputArea({ onSend, disabled }: InputAreaProps) {
+export function InputArea({ onSend, disabled, placeholder }: InputAreaProps) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -43,7 +44,7 @@ export function InputArea({ onSend, disabled }: InputAreaProps) {
         <textarea
           ref={textareaRef}
           style={styles.textarea}
-          placeholder="Ask me anything about finance..."
+          placeholder={placeholder ?? 'Ask me anything about finance...'}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={onKeyDown}

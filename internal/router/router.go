@@ -3,9 +3,8 @@ package router
 import (
 	"log"
 	"net/http"
-	"path/filepath"
-	"runtime"
 
+	"github.com/finclaw/internal/rss"
 	"github.com/finclaw/pkg/channels/finclaw"
 	"github.com/gin-gonic/gin"
 	"github.com/sipeed/picoclaw/pkg/bus"
@@ -13,24 +12,15 @@ import (
 
 // FinClawRouter handles HTTP and WebSocket routes
 type FinClawRouter struct {
-	r        *gin.Engine
-	bus      *bus.MessageBus
-	fchannel *finclaw.FinClawChannel
-}
-
-// frontendDir returns <repo>/frontend based on this file's location (independent of process cwd).
-func frontendDir() string {
-	_, file, _, ok := runtime.Caller(1)
-	if !ok {
-		return "frontend"
-	}
-	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	return filepath.Join(root, "frontend")
+	r             *gin.Engine
+	bus           *bus.MessageBus
+	fchannel      *finclaw.FinClawChannel
+	rssServerAddr string
 }
 
 // NewFinClawRouter creates a new router instance
-func NewFinClawRouter(b *bus.MessageBus, fchannel *finclaw.FinClawChannel) *FinClawRouter {
-	return &FinClawRouter{bus: b, fchannel: fchannel}
+func NewFinClawRouter(b *bus.MessageBus, fchannel *finclaw.FinClawChannel, rssServerAddr string) *FinClawRouter {
+	return &FinClawRouter{bus: b, fchannel: fchannel, rssServerAddr: rssServerAddr}
 }
 
 // RoutesInit configures all HTTP and WebSocket routes
@@ -40,12 +30,13 @@ func (fr *FinClawRouter) RoutesInit() {
 	// CORS middleware
 	fr.r.Use(CORSMiddleware())
 
-	// Serve static files from frontend/ (repo root, not cwd — ../../web never existed)
-	frontDir := frontendDir()
-	fr.r.Static("/static", frontDir)
-	fr.r.Static("/src", filepath.Join(frontDir, "src"))
-	fr.r.StaticFile("/", filepath.Join(frontDir, "index.html"))
+	fr.webSocketRouter()
+	fr.rssRouter()
 
+	log.Println("📡 Routes initialized")
+}
+
+func (fr *FinClawRouter) webSocketRouter() {
 	// WebSocket chat endpoints
 	fr.r.GET("/chat", fr.handleWebSocket)
 
@@ -60,8 +51,11 @@ func (fr *FinClawRouter) RoutesInit() {
 			},
 		})
 	})
+}
 
-	log.Println("📡 Routes initialized")
+func (fr *FinClawRouter) rssRouter() {
+	rssRouter := rss.NewRssRouter(fr.rssServerAddr, fr.r)
+	rssRouter.ConfigRouter()
 }
 
 // Run starts the HTTP server
