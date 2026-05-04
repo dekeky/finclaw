@@ -7,17 +7,11 @@ import (
 
 	"github.com/finclaw/pkg/channels/finclaw"
 	"github.com/pelletier/go-toml/v2"
-	picoclawconfig "github.com/sipeed/picoclaw/pkg/config"
-)
-
-const (
-	CurrentVersion = picoclawconfig.CurrentVersion
 )
 
 var finclawConf *FinclawConfig
 
 type FinclawConfig struct {
-	*picoclawconfig.Config
 	*FinclawConfigServer
 }
 
@@ -28,14 +22,7 @@ type FinclawConfigServer struct {
 }
 
 func (c *FinclawConfig) Save() error {
-	if err := picoclawconfig.SaveConfig(picoConfigPath(), c.Config); err != nil {
-		return err
-	}
-
-	if err := tomlEncodeFile(finConfigPath(), c.FinclawConfigServer); err != nil {
-		return err
-	}
-	return nil
+	return tomlEncodeFile(finConfigPath(), c.FinclawConfigServer)
 }
 
 func init() {
@@ -51,24 +38,11 @@ func init() {
 }
 
 func LoadConfig() (*FinclawConfig, error) {
-	// 先判断picoclaw配置文件是否存在，确保加载的时候，不会因为配置文件不存在而使用picoclaw内部的默认配置，导致picoclaw的workspace路径不正确
-	exists, err := pathExists(picoConfigPath())
-	if err != nil {
-		return nil, err
-	}
-	if !exists {
-		return defaultConfig(), nil
-	}
-	picoConf, err := picoclawconfig.LoadConfig(picoConfigPath())
-	if err != nil {
-		return nil, err
-	}
 	finConf, err := loadFinclawConfig()
 	if err != nil {
 		return nil, err
 	}
 	return &FinclawConfig{
-		Config:              picoConf,
 		FinclawConfigServer: finConf,
 	}, nil
 }

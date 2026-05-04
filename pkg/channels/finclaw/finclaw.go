@@ -56,7 +56,7 @@ type FinClawChannel struct {
 }
 
 func NewFinChannel(ctx context.Context, messageBus *bus.MessageBus, config *FinChannelConfig) *FinClawChannel {
-	base := channels.NewBaseChannel("pico", nil, messageBus, nil)
+	base := channels.NewBaseChannel("fin", nil, messageBus, nil)
 	return &FinClawChannel{
 		Ctx:         ctx,
 		BaseChannel: base,
@@ -119,12 +119,12 @@ func (fchannel *FinClawChannel) HandleWebSocket(w http.ResponseWriter, r *http.R
 
 // createAndAddConnection checks MaxConnections and registers a connection atomically.
 func (fchannel *FinClawChannel) createAndAddConnection(conn *websocket.Conn, sessionID string) (*finConn, error) {
+	fchannel.connsMu.Lock()
+	defer fchannel.connsMu.Unlock()
+
 	if len(fchannel.conns) >= fchannel.config.getMaxConn() {
 		return nil, fmt.Errorf("max connections reached")
 	}
-
-	fchannel.connsMu.Lock()
-	defer fchannel.connsMu.Unlock()
 
 	var connID string
 	for {

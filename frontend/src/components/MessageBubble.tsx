@@ -7,9 +7,11 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 interface MessageBubbleProps {
   message: ChatMessage;
+  /** 侧栏会话：更接近元宝等产品 — 用户偏青绿、助手偏中性底 */
+  variant?: 'default' | 'dock';
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({ message, variant = 'default' }: MessageBubbleProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const time = message.timestamp.toLocaleTimeString('zh-CN', {
@@ -26,13 +28,23 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     });
   }, []);
 
+  const dock = variant === 'dock';
+  const avatarSize = dock ? styles.avatarDock : {};
+  const userAv = dock ? styles.userAvatarDock : styles.userAvatar;
+  const aiAv = dock ? styles.aiAvatarDock : styles.aiAvatar;
+  const userBu = dock ? styles.userBubbleDock : styles.userBubble;
+  const aiBu = dock ? styles.aiBubbleDock : styles.aiBubble;
+
   return (
-    <div style={{ ...styles.message, ...(isUser ? styles.user : styles.assistant) }} className="finclaw-message">
-      <div style={{ ...styles.avatar, ...(isUser ? styles.userAvatar : styles.aiAvatar) }}>
-        {isUser ? 'U' : 'F'}
+    <div
+      style={{ ...styles.message, ...(dock ? styles.messageDock : {}), ...(isUser ? styles.user : styles.assistant) }}
+      className="finclaw-message"
+    >
+      <div style={{ ...styles.avatar, ...avatarSize, ...(isUser ? userAv : aiAv) }}>
+        {isUser ? '我' : 'AI'}
       </div>
       <div style={styles.content}>
-        <div style={{ ...styles.bubble, ...(isUser ? styles.userBubble : styles.aiBubble) }} className="finclaw-bubble">
+        <div style={{ ...styles.bubble, ...(isUser ? userBu : aiBu) }} className="finclaw-bubble">
           {isUser ? (
             <span style={styles.text}>{message.content}</span>
           ) : (
@@ -123,6 +135,9 @@ const styles: Record<string, React.CSSProperties> = {
     animation: 'messageIn 0.4s cubic-bezier(0.16,1,0.3,1)',
     maxWidth: '85%',
   },
+  messageDock: {
+    maxWidth: '94%',
+  },
   user: { alignSelf: 'flex-end', flexDirection: 'row-reverse' },
   assistant: { alignSelf: 'flex-start' },
   avatar: {
@@ -136,8 +151,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     flexShrink: 0,
   },
-  userAvatar: { background: 'linear-gradient(135deg, #4a4a55 0%, #3a3a42 100%)', color: '#8a8a8e' },
-  aiAvatar: { background: 'linear-gradient(135deg, #c9a84c 0%, #e8b84a 100%)', color: '#0c0c0e' },
+  avatarDock: { width: 32, height: 32, borderRadius: 10, fontSize: 12 },
+  userAvatar: { background: 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)', color: '#3730a3' },
+  userAvatarDock: {
+    background: 'linear-gradient(145deg, #0f766e 0%, #0d9488 100%)',
+    color: '#ecfdf5',
+  },
+  aiAvatar: { background: 'linear-gradient(135deg, #2468f2 0%, #5b9cff 100%)', color: '#fff' },
+  aiAvatarDock: {
+    background: 'linear-gradient(145deg, #e8f0ff 0%, #dbeafe 100%)',
+    color: '#1e40af',
+  },
   content: { display: 'flex', flexDirection: 'column', gap: 6 },
   bubble: {
     padding: '14px 18px',
@@ -148,24 +172,34 @@ const styles: Record<string, React.CSSProperties> = {
     wordBreak: 'break-word',
   },
   userBubble: {
-    background: 'linear-gradient(135deg, #2d2d35 0%, #1f1f26 100%)',
-    border: '1px solid rgba(255,255,255,0.06)',
+    background: 'linear-gradient(135deg, #eff6ff 0%, #e0ecff 100%)',
+    border: '1px solid rgba(36,104,242,0.18)',
     borderTopRightRadius: 4,
   },
+  userBubbleDock: {
+    background: 'linear-gradient(160deg, rgba(13,148,136,0.28) 0%, rgba(15,118,110,0.18) 100%)',
+    border: '1px solid rgba(45,212,191,0.35)',
+    borderTopRightRadius: 6,
+  },
   aiBubble: {
-    background: 'rgba(201,168,76,0.08)',
-    border: '1px solid rgba(201,168,76,0.25)',
+    background: 'var(--fc-bg-raised)',
+    border: '1px solid var(--fc-border-strong)',
     borderTopLeftRadius: 4,
   },
-  text: { color: '#f0f0f2' },
+  aiBubbleDock: {
+    background: 'var(--fc-bg-raised)',
+    border: '1px solid var(--fc-border-strong)',
+    borderTopLeftRadius: 6,
+  },
+  text: { color: 'var(--fc-text)' },
   inlineCode: {
-    background: 'rgba(255,255,255,0.08)',
+    background: 'var(--fc-bg-muted)',
     padding: '2px 6px',
     borderRadius: 4,
     fontFamily: 'JetBrains Mono, monospace',
     fontSize: 13,
   },
-  link: { color: '#c9a84c', textDecoration: 'underline' },
+  link: { color: 'var(--fc-primary)', textDecoration: 'underline' },
   table: {
     borderCollapse: 'collapse',
     width: '100%',
@@ -173,12 +207,12 @@ const styles: Record<string, React.CSSProperties> = {
     margin: '8px 0',
   },
   blockquote: {
-    borderLeft: '3px solid rgba(201,168,76,0.4)',
+    borderLeft: '3px solid rgba(36,104,242,0.35)',
     paddingLeft: 12,
     margin: '8px 0',
-    color: '#8a8a8e',
+    color: 'var(--fc-text-muted)',
   },
-  time: { fontSize: 11, color: '#5a5a5e', fontFamily: 'JetBrains Mono, monospace', padding: '0 4px' },
+  time: { fontSize: 11, color: 'var(--fc-text-dim)', fontFamily: 'JetBrains Mono, monospace', padding: '0 4px' },
 };
 
 const copyBtn: React.CSSProperties = {
@@ -186,10 +220,10 @@ const copyBtn: React.CSSProperties = {
   top: 10,
   right: 10,
   padding: '4px 8px',
-  background: 'rgba(255,255,255,0.06)',
-  border: '1px solid rgba(255,255,255,0.1)',
+  background: 'var(--fc-bg-muted)',
+  border: '1px solid var(--fc-border-strong)',
   borderRadius: 6,
-  color: '#8a8a8e',
+  color: 'var(--fc-text-muted)',
   cursor: 'pointer',
   display: 'flex',
   alignItems: 'center',

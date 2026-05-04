@@ -1,9 +1,12 @@
 import { Link } from 'react-router-dom';
 import type { ConnectionStatus } from '../types';
+import { FinclawMark } from './FinclawMark';
 
 export type HeaderProps =
   | {
       mode: 'chat';
+      /** 为 false 时不显示左侧 Logo（与侧栏并存时使用） */
+      showBranding?: boolean;
       status: ConnectionStatus;
       onNewChat: () => void;
       messageCount: number;
@@ -11,6 +14,7 @@ export type HeaderProps =
     }
   | {
       mode: 'rss';
+      showBranding?: boolean;
       rssRefreshing?: boolean;
       onRssRefresh?: () => void;
     };
@@ -24,14 +28,19 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
 
 export function Header(props: HeaderProps) {
   const isRss = props.mode === 'rss';
+  const showBrand = props.showBranding !== false;
 
   return (
     <header style={styles.header} className="finclaw-header">
       <div style={styles.headerLeft}>
-        <Link to="/" style={styles.logoLink} aria-label="Finclaw 首页">
-          <div style={styles.logo}>F</div>
-        </Link>
-        <div>
+        {showBrand && (
+          <Link to="/" style={styles.logoLink} aria-label="Finclaw 首页">
+            <div style={styles.logo}>
+              <FinclawMark variant="mark" size={26} decorative />
+            </div>
+          </Link>
+        )}
+        <div style={styles.titleBlock}>
           <div style={styles.headerTitle}>Finclaw</div>
           <div style={styles.headerSubtitle}>
             {isRss ? '金融资讯 · AI Reader' : 'AI Financial Assistant'}
@@ -105,65 +114,81 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '20px 24px',
-    borderBottom: '1px solid rgba(255,255,255,0.06)',
+    gap: 16,
+    padding: '16px var(--fc-page-pad-x) 16px var(--fc-page-pad-x)',
+    borderBottom: '1px solid var(--fc-border)',
     flexShrink: 0,
+    background: 'var(--fc-bg-raised)',
+    boxShadow: '0 1px 0 rgba(15, 23, 42, 0.04)',
   },
-  logoLink: { textDecoration: 'none', color: 'inherit', display: 'flex' },
-  headerLeft: { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', minWidth: 0 },
+  logoLink: { textDecoration: 'none', color: 'inherit', display: 'flex', flexShrink: 0 },
+  headerLeft: { display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', minWidth: 0, flex: 1 },
+  titleBlock: { minWidth: 0 },
   right: { display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 },
   newChatBtn: {
     display: 'flex',
     alignItems: 'center',
     gap: 6,
-    padding: '6px 14px',
-    background: 'rgba(201,168,76,0.08)',
-    border: '1px solid rgba(201,168,76,0.25)',
+    padding: '7px 14px',
+    background: 'var(--fc-primary-soft)',
+    border: '1px solid rgba(36,104,242,0.22)',
     borderRadius: 20,
-    color: '#c9a84c',
+    color: 'var(--fc-primary)',
     fontSize: 12,
-    fontFamily: 'JetBrains Mono, monospace',
+    fontFamily: 'var(--fc-font-mono)',
     cursor: 'pointer',
-    transition: 'all 0.2s ease',
+    transition: 'background 0.2s ease, border-color 0.2s ease',
   },
   logo: {
-    width: 36,
-    height: 36,
-    background: 'linear-gradient(135deg, #c9a84c 0%, #e8b84a 100%)',
-    borderRadius: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 10,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    fontWeight: 600,
-    fontSize: 18,
-    color: '#0c0c0e',
-    boxShadow: '0 0 20px rgba(201,168,76,0.15)',
+    padding: 6,
+    background: 'linear-gradient(145deg, #fff9e6 0%, #ffe8b8 100%)',
+    border: '1px solid rgba(234, 179, 8, 0.28)',
+    boxShadow: '0 2px 12px rgba(234, 179, 8, 0.12)',
   },
-  headerTitle: { fontSize: 18, fontWeight: 500, letterSpacing: '-0.02em' },
-  headerSubtitle: { fontSize: 12, color: '#5a5a5e', fontFamily: 'JetBrains Mono, monospace' },
+  headerTitle: {
+    fontSize: 'var(--fc-type-title)',
+    fontWeight: 650,
+    letterSpacing: '-0.025em',
+    color: 'var(--fc-text)',
+    lineHeight: 1.25,
+  },
+  headerSubtitle: {
+    fontSize: 'var(--fc-type-caption)',
+    color: 'var(--fc-text-muted)',
+    fontFamily: 'var(--fc-font-mono)',
+    marginTop: 3,
+    lineHeight: 1.4,
+  },
   connectionStatus: {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
     padding: '6px 12px',
-    background: '#1a1a1f',
+    background: 'var(--fc-bg-raised)',
     borderRadius: 20,
+    border: '1px solid var(--fc-border)',
     fontSize: 12,
-    fontFamily: 'JetBrains Mono, monospace',
+    fontFamily: 'var(--fc-font-mono)',
   },
   statusDot: { width: 8, height: 8, borderRadius: '50%', transition: 'all 0.3s ease' },
-  statusText: { color: '#8a8a8e' },
+  statusText: { color: 'var(--fc-text-muted)' },
   reconnectBtn: {
     display: 'flex',
     alignItems: 'center',
     gap: 6,
     padding: '6px 14px',
     background: 'rgba(248,113,113,0.1)',
-    border: '1px solid rgba(248,113,113,0.3)',
+    border: '1px solid rgba(248,113,113,0.32)',
     borderRadius: 20,
-    color: '#f87171',
+    color: 'var(--fc-danger)',
     fontSize: 12,
-    fontFamily: 'JetBrains Mono, monospace',
+    fontFamily: 'var(--fc-font-mono)',
     cursor: 'pointer',
     transition: 'all 0.2s ease',
   },
@@ -171,18 +196,19 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: 6,
-    padding: '6px 14px',
-    background: 'rgba(91,155,213,0.1)',
-    border: '1px solid rgba(91,155,213,0.3)',
+    padding: '7px 14px',
+    background: 'var(--fc-primary-soft)',
+    border: '1px solid rgba(36,104,242,0.22)',
     borderRadius: 20,
-    color: '#7ab8e8',
+    color: 'var(--fc-primary)',
     fontSize: 12,
-    fontFamily: 'JetBrains Mono, monospace',
+    fontFamily: 'var(--fc-font-mono)',
     cursor: 'pointer',
+    transition: 'background 0.15s ease, border-color 0.15s ease',
   },
   rssLoading: {
     fontSize: 12,
-    color: '#6a6a72',
-    fontFamily: 'JetBrains Mono, monospace',
+    color: 'var(--fc-text-muted)',
+    fontFamily: 'var(--fc-font-mono)',
   },
 };

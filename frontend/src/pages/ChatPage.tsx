@@ -45,14 +45,18 @@ const styles: Record<string, React.CSSProperties> = {
   app: {
     display: 'flex',
     justifyContent: 'center',
-    height: '100vh',
-    background: '#0c0c0e',
+    flex: 1,
+    minHeight: 0,
+    minWidth: 0,
+    background: 'var(--fc-bg-app)',
   },
   inner: {
     display: 'flex',
     flexDirection: 'column',
     width: '100%',
     maxWidth: 900,
+    flex: 1,
+    minHeight: 0,
     padding: '0 20px',
   },
   errorBanner: {

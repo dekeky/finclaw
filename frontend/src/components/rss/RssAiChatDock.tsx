@@ -1,13 +1,20 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { FinclawMark } from '../FinclawMark';
 import { ChatContainer } from '../ChatContainer';
 import { InputArea } from '../InputArea';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { useWebSocket } from '../../hooks/useWebSocket';
+import { useAgents } from '../../state/agents';
 import { buildAnalysisUserMessage, type EntryForAnalysis } from '../../utils/analysisPrompt';
 import { rssScopedItemKey } from '../../utils/rssScopedKey';
 import { rssSourceDisplayLabel } from '../../utils/rssSourceLabel';
 
-const WS_URL = `ws://${window.location.host}/ws/chat`;
+function buildAgentWsUrl(agentName: string | null): string | null {
+  if (!agentName) return null;
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${window.location.host}/ws/chat/${encodeURIComponent(agentName)}`;
+}
 
 type Props = {
   listEntries: EntryForAnalysis[];
@@ -61,9 +68,12 @@ function CuteAiFab({ onClick }: { onClick: () => void }) {
 export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, onClearSelection }: Props) {
   const [open, setOpen] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
-  const { messages, status, isTyping, sendError, send, clearMessages, reconnect } = useWebSocket(WS_URL);
+  const { agents, currentAgent, selectAgent, status: agentsStatus } = useAgents();
+  const wsUrl = buildAgentWsUrl(currentAgent);
+  const { messages, status, isTyping, sendError, send, clearMessages, reconnect } = useWebSocket(wsUrl);
 
   const hasFeed = listEntries.length > 0;
+  const noAgent = !currentAgent;
   const selectedEntries = useMemo(
     () => listEntries.filter((e) => selectedKeys.has(rssScopedItemKey(e.sourceName, e.sector, e.item))),
     [listEntries, selectedKeys],
@@ -72,6 +82,10 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
   const handleSend = useCallback(
     (text: string) => {
       setHint(null);
+      if (noAgent) {
+        setHint('当前没有可用 Agent，请先在「Agent 管理」中添加并选择一位 Agent。');
+        return;
+      }
       const entries = selectedEntries;
       const missingLink = entries.length > 0 && entries.every((e) => !e.item.link?.trim());
       if (missingLink) {
@@ -81,8 +95,19 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
       const payload = buildAnalysisUserMessage(text, entries);
       send(payload);
     },
-    [send, selectedEntries],
+    [send, selectedEntries, noAgent],
   );
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  const hasThread = messages.length > 0;
 
   const removeChip = (key: string) => {
     onToggleSelectKey(key);
@@ -99,8 +124,8 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
           <aside className="rss-ai-dock" aria-label="AI 对话">
             <div className="rss-ai-dock-head">
               <div className="rss-ai-dock-title">
-                <span className="rss-ai-dock-emoji" aria-hidden>
-                  💬
+                <span className="rss-ai-dock-mark" aria-hidden>
+                  <FinclawMark variant="mark" size={24} decorative />
                 </span>
                 <div>
                   <div className="rss-ai-dock-name">Finclaw AI</div>
@@ -111,7 +136,17 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
               </div>
               <div className="rss-ai-dock-head-actions">
                 <span className={`rss-ai-dock-dot rss-ai-dock-dot--${status}`} title={status} />
-                {(status === 'error' || status === 'idle') && (
+                {hasThread && (
+                  <button
+                    type="button"
+                    className="rss-ai-dock-newchat"
+                    onClick={clearMessages}
+                    title="清空当前会话（元宝式新对话）"
+                  >
+                    新对话
+                  </button>
+                )}
+                {!noAgent && (status === 'error' || status === 'idle') && (
                   <button type="button" className="rss-ai-dock-mini-btn" onClick={reconnect}>
                     重连
                   </button>
@@ -120,6 +155,36 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
                   ×
                 </button>
               </div>
+            </div>
+
+            <div className="rss-ai-dock-agentbar">
+              <label className="rss-ai-dock-agentbar-label">Agent</label>
+              {agents.length > 0 ? (
+                <select
+                  className="rss-ai-dock-select"
+                  value={currentAgent ?? ''}
+                  onChange={(e) => selectAgent(e.target.value || null)}
+                  aria-label="选择 Agent"
+                >
+                  {!currentAgent && <option value="">请选择…</option>}
+                  {agents.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="rss-ai-dock-agentbar-empty">
+                  {agentsStatus === 'loading' ? '加载中…' : '尚未创建 Agent'}
+                </span>
+              )}
+              <Link
+                to="/agents"
+                className="rss-ai-dock-mini-btn rss-ai-dock-mini-btn--primary"
+                title="管理 Agent"
+              >
+                {agents.length === 0 ? '创建' : '管理'}
+              </Link>
             </div>
 
             {selectedEntries.length > 0 && (
@@ -163,6 +228,7 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
                   isTyping={isTyping}
                   onClear={clearMessages}
                   variant="dock"
+                  onQuickPrompt={handleSend}
                 />
               </div>
             </ErrorBoundary>
@@ -170,9 +236,12 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
             <div className="rss-ai-dock-inputwrap">
               <InputArea
                 onSend={handleSend}
-                disabled={status !== 'connected'}
+                disabled={noAgent || status !== 'connected'}
+                compact
                 placeholder={
-                  selectedEntries.length > 0
+                  noAgent
+                    ? '请先在「Agent 管理」中添加并选择一位 Agent…'
+                    : selectedEntries.length > 0
                     ? '输入问题，将附带已选文章的原文链接…'
                     : '随便聊聊，或在列表勾选文章后再提问…'
                 }
@@ -242,7 +311,9 @@ const DOCK_CSS = `
   position: fixed;
   inset: 0;
   z-index: 1090;
-  background: rgba(0,0,0,0.45);
+  background: rgba(15, 23, 42, 0.25);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: none;
   cursor: pointer;
   animation: rssAiFadeIn 0.2s ease;
@@ -258,13 +329,13 @@ const DOCK_CSS = `
   right: 0;
   bottom: 0;
   z-index: 1100;
-  width: min(420px, 100vw);
+  width: min(428px, 100vw);
   display: flex;
   flex-direction: column;
-  background: linear-gradient(180deg, #12121a 0%, #0c0c0e 40%);
-  border-left: 1px solid rgba(255,255,255,0.08);
-  box-shadow: -12px 0 40px rgba(0,0,0,0.45);
-  animation: rssAiSlide 0.28s ease;
+  background: var(--fc-bg-raised);
+  border-left: 1px solid var(--fc-border-strong);
+  box-shadow: -12px 0 40px rgba(15, 23, 42, 0.12);
+  animation: rssAiSlide 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 @keyframes rssAiSlide {
   from { transform: translateX(100%); opacity: 0.9; }
@@ -277,23 +348,49 @@ const DOCK_CSS = `
   justify-content: space-between;
   gap: 12px;
   padding: 16px 14px 12px;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+  border-bottom: 1px solid var(--fc-border);
   flex-shrink: 0;
 }
-.rss-ai-dock-title { display: flex; gap: 10px; min-width: 0; }
-.rss-ai-dock-emoji { font-size: 26px; line-height: 1; }
+.rss-ai-dock-title { display: flex; gap: 10px; min-width: 0; align-items: flex-start; }
+.rss-ai-dock-mark {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(145deg, #fff9e6 0%, #ffe8b8 100%);
+  border: 1px solid rgba(234, 179, 8, 0.28);
+}
 .rss-ai-dock-name {
   font-size: 16px;
   font-weight: 600;
-  color: #f0f0f2;
+  color: var(--fc-text);
 }
 .rss-ai-dock-sub {
   font-size: 11px;
-  color: #7a7a82;
+  color: var(--fc-text-muted);
   margin-top: 4px;
   line-height: 1.45;
 }
-.rss-ai-dock-head-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.rss-ai-dock-head-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+.rss-ai-dock-newchat {
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(36,104,242,0.25);
+  background: var(--fc-primary-soft);
+  color: var(--fc-primary);
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.rss-ai-dock-newchat:hover {
+  background: #dbeafe;
+  border-color: rgba(36,104,242,0.4);
+}
 .rss-ai-dock-dot {
   width: 8px;
   height: 8px;
@@ -306,30 +403,74 @@ const DOCK_CSS = `
 
 .rss-ai-dock-mini-btn {
   font-size: 11px;
-  padding: 4px 8px;
+  padding: 4px 10px;
   border-radius: 6px;
   border: 1px solid rgba(248,113,113,0.35);
   background: rgba(248,113,113,0.1);
   color: #f87171;
   cursor: pointer;
   font-family: JetBrains Mono, monospace;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.3;
 }
+.rss-ai-dock-mini-btn--primary {
+  border-color: rgba(36,104,242,0.35);
+  background: var(--fc-primary-soft);
+  color: var(--fc-primary);
+}
+
+.rss-ai-dock-agentbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px 10px;
+  border-bottom: 1px solid var(--fc-border);
+  flex-shrink: 0;
+}
+.rss-ai-dock-agentbar-label {
+  font-size: 11px;
+  color: var(--fc-text-muted);
+  font-family: JetBrains Mono, monospace;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.rss-ai-dock-agentbar-empty {
+  flex: 1;
+  font-size: 12px;
+  color: var(--fc-text-muted);
+}
+.rss-ai-dock-select {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-family: JetBrains Mono, monospace;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--fc-border-strong);
+  background: var(--fc-bg-app);
+  color: var(--fc-text);
+  outline: none;
+  appearance: none;
+}
+.rss-ai-dock-select:focus { border-color: rgba(36,104,242,0.45); }
 .rss-ai-dock-close {
   width: 32px;
   height: 32px;
   border: none;
   border-radius: 8px;
-  background: rgba(255,255,255,0.06);
-  color: #a0a0a8;
+  background: var(--fc-bg-muted);
+  color: var(--fc-text-secondary);
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
 }
-.rss-ai-dock-close:hover { background: rgba(255,255,255,0.1); color: #f0f0f2; }
+.rss-ai-dock-close:hover { background: var(--fc-bg-app); color: var(--fc-text); }
 
 .rss-ai-chips {
   padding: 10px 12px;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border-bottom: 1px solid var(--fc-border);
   flex-shrink: 0;
   max-height: 120px;
   overflow: auto;
@@ -340,13 +481,13 @@ const DOCK_CSS = `
   align-items: center;
   font-size: 11px;
   font-family: JetBrains Mono, monospace;
-  color: #7ab8e8;
+  color: var(--fc-primary);
   margin-bottom: 8px;
 }
 .rss-ai-chips-clear {
   background: none;
   border: none;
-  color: #c9a84c;
+  color: var(--fc-primary-hover);
   cursor: pointer;
   font-size: 11px;
   font-family: JetBrains Mono, monospace;
@@ -363,10 +504,10 @@ const DOCK_CSS = `
   max-width: 100%;
   padding: 4px 8px 4px 10px;
   border-radius: 999px;
-  background: rgba(91,155,213,0.12);
-  border: 1px solid rgba(91,155,213,0.25);
+  background: var(--fc-primary-soft);
+  border: 1px solid rgba(36,104,242,0.2);
   font-size: 11px;
-  color: #b8d9f5;
+  color: var(--fc-primary);
 }
 .rss-ai-chip-text {
   display: flex;
@@ -387,7 +528,7 @@ const DOCK_CSS = `
 .rss-ai-chip-x {
   border: none;
   background: transparent;
-  color: #8ec5f0;
+  color: var(--fc-accent-blue-soft);
   cursor: pointer;
   font-size: 14px;
   line-height: 1;

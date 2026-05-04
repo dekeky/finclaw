@@ -5,22 +5,20 @@ import (
 	"net/http"
 
 	"github.com/finclaw/internal/rss"
-	"github.com/finclaw/pkg/channels/finclaw"
+	agentruntime "github.com/finclaw/pkg/agent"
 	"github.com/gin-gonic/gin"
-	"github.com/sipeed/picoclaw/pkg/bus"
 )
 
 // FinClawRouter handles HTTP and WebSocket routes
 type FinClawRouter struct {
 	r             *gin.Engine
-	bus           *bus.MessageBus
-	fchannel      *finclaw.FinClawChannel
+	agentManager  *agentruntime.AgentManager
 	rssServerAddr string
 }
 
 // NewFinClawRouter creates a new router instance
-func NewFinClawRouter(b *bus.MessageBus, fchannel *finclaw.FinClawChannel, rssServerAddr string) *FinClawRouter {
-	return &FinClawRouter{bus: b, fchannel: fchannel, rssServerAddr: rssServerAddr}
+func NewFinClawRouter(rssServerAddr string, agentManager *agentruntime.AgentManager) *FinClawRouter {
+	return &FinClawRouter{rssServerAddr: rssServerAddr, agentManager: agentManager}
 }
 
 // RoutesInit configures all HTTP and WebSocket routes
@@ -32,13 +30,14 @@ func (fr *FinClawRouter) RoutesInit() {
 
 	fr.webSocketRouter()
 	fr.rssRouter()
+	fr.agentManagerRouter()
 
 	log.Println("📡 Routes initialized")
 }
 
 func (fr *FinClawRouter) webSocketRouter() {
 	// WebSocket chat endpoints
-	fr.r.GET("/chat", fr.handleWebSocket)
+	fr.r.GET("/chat/:agentName", fr.handleWebSocket)
 
 	// Health check
 	fr.r.GET("/health", func(c *gin.Context) {
@@ -46,8 +45,7 @@ func (fr *FinClawRouter) webSocketRouter() {
 			"status":    "ok",
 			"timestamp": "now",
 			"services": gin.H{
-				"message_bus": fr.bus != nil,
-				"websocket":   true,
+				"websocket": true,
 			},
 		})
 	})
@@ -56,6 +54,11 @@ func (fr *FinClawRouter) webSocketRouter() {
 func (fr *FinClawRouter) rssRouter() {
 	rssRouter := rss.NewRssRouter(fr.rssServerAddr, fr.r)
 	rssRouter.ConfigRouter()
+}
+
+func (fr *FinClawRouter) agentManagerRouter() {
+	agentManagerRouter := agentruntime.NewAgentManagerRouter(fr.agentManager, fr.r)
+	agentManagerRouter.ConfigRouter()
 }
 
 // Run starts the HTTP server

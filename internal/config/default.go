@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 
 	"github.com/finclaw/pkg/channels/finclaw"
-	"github.com/sipeed/picoclaw/pkg/config"
 )
 
 const (
@@ -15,6 +14,10 @@ const (
 	FinclawWorkspace   = "workspace"
 	RssSourceFile      = "rss.config"
 )
+
+func FinClawHomePath() string {
+	return filepath.Join(os.Getenv(FinclawHomeEnv), ".finclaw")
+}
 
 func finclawHomePath() string {
 	var err error
@@ -47,16 +50,6 @@ func RssConfigPath() string {
 
 func RssStoragePath() string {
 	return filepath.Join(finWorkspacePath(), RssSourceFile)
-}
-
-func defaultConfig() *FinclawConfig {
-	picoClawConfig := config.DefaultConfig()
-	// 设置picoclaw的workspace路径为finclaw的workspace路径
-	picoClawConfig.Agents.Defaults.Workspace = finWorkspacePath()
-	return &FinclawConfig{
-		Config:              picoClawConfig,
-		FinclawConfigServer: defaultFinclawConfig(),
-	}
 }
 
 func defaultFinclawConfig() *FinclawConfigServer {
