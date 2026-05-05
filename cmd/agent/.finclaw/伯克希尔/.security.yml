@@ -1,0 +1,47 @@
+channels:
+  telegram: {}
+  qq: {}
+  matrix: {}
+  line: {}
+  onebot: {}
+  wecom: {}
+  weixin: {}
+  pico: {}
+model_list:
+  LongCat-Flash-Thinking:0: {}
+  MiniMax-M2.5:0: {}
+  ark-code-latest:0: {}
+  azure-gpt5:0: {}
+  cerebras-llama-3.3-70b:0: {}
+  claude-sonnet-4.6:0: {}
+  copilot-gpt-5.4:0: {}
+  deepseek-chat:0: {}
+  deepseek-v3.2:0: {}
+  deepseek-v3:0: {}
+  doubao-pro:0: {}
+  gemini-2.0-flash:0: {}
+  gemini-flash:0: {}
+  glm-4.7:0: {}
+  gpt-5.4:0: {}
+  kimi-k2.5:0: {}
+  llama-3.3-70b:0: {}
+  llama3:0: {}
+  lmstudio-local:0: {}
+  local-model:0: {}
+  mistral-small:0: {}
+  modelscope-qwen:0: {}
+  moonshot-v1-8k:0: {}
+  nemotron-4-340b:0: {}
+  openrouter-auto:0: {}
+  openrouter-gpt-5.4:0: {}
+  qwen-plus:0: {}
+  venice-uncensored:0: {}
+  vivgrid-auto:0: {}
+web:
+  brave: {}
+  tavily: {}
+  perplexity: {}
+  glm_search: {}
+  baidu_search: {}
+skills:
+  clawhub: {}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/finclaw/pkg/channels/finclaw"
 	"github.com/pelletier/go-toml/v2"
@@ -22,7 +23,15 @@ type FinclawConfigServer struct {
 }
 
 func (c *FinclawConfig) Save() error {
-	return tomlEncodeFile(finConfigPath(), c.FinclawConfigServer)
+	configPath := finConfigPath()
+	exists, err := pathExists(configPath)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		os.MkdirAll(filepath.Dir(configPath), 0755)
+	}
+	return tomlEncodeFile(configPath, c.FinclawConfigServer)
 }
 
 func init() {

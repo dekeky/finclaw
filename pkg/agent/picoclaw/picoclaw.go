@@ -2,6 +2,7 @@ package picoclaw
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -12,33 +13,65 @@ import (
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
-func NewPicoclawAgent(rootDir string, msgBus *bus.MessageBus, modelConf *picoclawconfig.ModelConfig) (*agent.AgentLoop, error) {
+func LoadAgentByConfig(rootDir, agentName string) (*agent.AgentLoop, *bus.MessageBus, error) {
+	configPath := agentConfigPath(rootDir, agentName)
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		return nil, nil, fmt.Errorf("agent config not found")
+	}
+	conf, err := picoclawconfig.LoadConfig(configPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to load agent config: %w", err)
+	}
+	conf.Agents.Defaults.ToolFeedback.Enabled = true
+	conf.Agents.Defaults.Workspace = agentWorkspacePath(rootDir, agentName)
+	provider, _, err := providers.CreateProvider(conf)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create provider for agent: %w", err)
+	}
+	msgBus := bus.NewMessageBus()
+	agentLoop := agent.NewAgentLoop(conf, msgBus, provider)
+
+	return agentLoop, msgBus, nil
+}
+
+func NewPicoclawAgent(rootDir string, msgBus *bus.MessageBus, modelConf *picoclawconfig.ModelConfig, agentName string) (*agent.AgentLoop, error) {
 	if err := modelConf.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid model config: %w", err)
 	}
 
+	modelConf.RequestTimeout = 500
 	provider, _, err := providers.CreateProviderFromConfig(modelConf)
 	if err != nil {
 		logger.Errorf("failed to create provider for model %q: %v", modelConf.ModelName, err)
 		return nil, err
 	}
 
-	picoConf, err := newPicoclawConfig(rootDir, modelConf.ModelName)
+	picoConf, err := newPicoclawConfig(rootDir, agentName)
 	if err != nil {
 		logger.Errorf("failed to load picoclaw config: %v", err)
 		return nil, err
 	}
+	picoConf.Agents.Defaults.ToolFeedback.Enabled = true
+	picoConf.Agents.Defaults.Workspace = agentWorkspacePath(rootDir, agentName)
 
 	if err := applyModelConfig(picoConf, modelConf); err != nil {
 		return nil, err
 	}
+	picoclawconfig.SaveConfig(agentConfigPath(rootDir, agentName), picoConf)
+
+	// picoConf 在此之后的改动不影响上面已创建的 provider（例如 HTTP request_timeout 须在 CreateProviderFromConfig 之前写入 modelConf）。
 
 	agentLoop := agent.NewAgentLoop(picoConf, msgBus, provider)
 	return agentLoop, nil
 }
 
 func newPicoclawConfig(rootDir, agentName string) (*picoclawconfig.Config, error) {
-	picoConfigPath := filepath.Join(rootDir, agentName, "config.json")
+	picoConfigPath := agentConfigPath(rootDir, agentName)
+	if _, err := os.Stat(picoConfigPath); os.IsNotExist(err) {
+		conf := picoclawconfig.DefaultConfig()
+		picoclawconfig.SaveConfig(picoConfigPath, conf)
+		return conf, nil
+	}
 	return picoclawconfig.LoadConfig(picoConfigPath)
 }
 
@@ -72,4 +105,12 @@ func applyModelConfig(picoConf *picoclawconfig.Config, modelConf *picoclawconfig
 	picoConf.Agents.Defaults.ModelName = alias
 
 	return nil
+}
+
+func agentWorkspacePath(rootDir, agentName string) string {
+	return filepath.Join(rootDir, agentName, "workspace")
+}
+
+func agentConfigPath(rootDir, agentName string) string {
+	return filepath.Join(rootDir, agentName, "config.json")
 }

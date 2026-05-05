@@ -62,12 +62,12 @@ func (ar *AgentManagerRouter) createAgent(c *gin.Context) {
 	ginx.PanicIfNotNil(c.ShouldBindJSON(&req))
 
 	msgBus := bus.NewMessageBus()
-	picoclawAgent, err := picoclaw.NewPicoclawAgent(config.FinClawHomePath(), msgBus, &picoclawconfig.ModelConfig{
+	picoclawAgent, err := picoclaw.NewPicoclawAgent(config.FinclawHomePath(), msgBus, &picoclawconfig.ModelConfig{
 		ModelName: req.ModelProvider.ModelName,
 		Model:     req.ModelProvider.Model,
 		APIBase:   req.ModelProvider.ApiBase,
 		APIKeys:   picoclawconfig.SimpleSecureStrings(req.ModelProvider.ApiKey),
-	})
+	}, req.Name)
 	if err != nil {
 		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
 		return

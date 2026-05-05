@@ -3,9 +3,14 @@ package agentruntime
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/finclaw/internal/config"
+	"github.com/finclaw/pkg/agent/picoclaw"
 	"github.com/finclaw/pkg/channels/finclaw"
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/logger"
@@ -111,4 +116,64 @@ func (m *AgentManager) Remove(name string) error {
 	delete(m.msgBusses, name)
 	delete(m.finclawChannel, name)
 	return nil
+}
+
+// Init lists agent names persisted on disk: each immediate subdirectory of FinClaw home
+// that contains config.json (same layout as picoclaw agentConfigPath).
+func Init(ctx context.Context, finclawConf *config.FinclawConfig) (*AgentManager, error) {
+	home := config.FinclawHomePath()
+	agentNames, err := agentNamesFromDisk(home)
+	if err != nil {
+		return nil, fmt.Errorf("agent names from disk: %w", err)
+	}
+
+	agentManager := NewAgentManager(ctx, finclawConf)
+	for _, agentName := range agentNames {
+		agentLoop, msgBus, err := picoclaw.LoadAgentByConfig(home, agentName)
+		if err != nil {
+			return nil, fmt.Errorf("load agent by config: %w", err)
+		}
+		agentManager.AddAgent(agentName, agentLoop, msgBus)
+	}
+
+	return agentManager, nil
+}
+
+// AgentNamesFromDisk returns sorted directory names under home that have agent config.json.
+func agentNamesFromDisk(home string) ([]string, error) {
+	st, err := os.Stat(home)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("finclaw home: %w", err)
+	}
+	if !st.IsDir() {
+		return nil, fmt.Errorf("finclaw home is not a directory: %s", home)
+	}
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		return nil, fmt.Errorf("read finclaw home: %w", err)
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		if name == config.FinclawWorkspace {
+			continue
+		}
+		cfg := filepath.Join(home, name, "config.json")
+		fi, err := os.Stat(cfg)
+		if err != nil || fi.IsDir() {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, nil
 }

@@ -28,7 +28,10 @@ func main() {
 	// 2. Create message bus (the core of the system)
 	ctx, _ := context.WithCancel(context.Background())
 
-	agentManager := agentruntime.NewAgentManager(ctx, finclawConf)
+	agentManager, err := agentruntime.Init(ctx, finclawConf)
+	if err != nil {
+		log.Fatalf("❌ Failed to init agent manager: %v", err)
+	}
 
 	frouter := router.NewFinClawRouter(finclawConf.RSSServerAddr, agentManager)
 
