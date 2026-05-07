@@ -11,7 +11,9 @@ import {
   createAgent as apiCreateAgent,
   deleteAgent as apiDeleteAgent,
   listAgents,
+  updateAgent as apiUpdateAgent,
   type CreateAgentRequest,
+  type UpdateAgentRequest,
 } from '../api/agents';
 
 const SELECTED_AGENT_STORAGE_KEY = 'finclaw.selectedAgent';
@@ -27,6 +29,7 @@ export interface AgentsState {
   selectAgent: (name: string | null) => void;
   refresh: () => Promise<void>;
   createAgent: (req: CreateAgentRequest) => Promise<void>;
+  updateAgent: (name: string, req: UpdateAgentRequest) => Promise<void>;
   deleteAgent: (name: string) => Promise<void>;
 }
 
@@ -100,6 +103,14 @@ export function AgentsProvider({ children }: { children: React.ReactNode }) {
     [refresh, selectAgent],
   );
 
+  const updateAgent = useCallback(
+    async (name: string, req: UpdateAgentRequest) => {
+      await apiUpdateAgent(name, req);
+      await refresh();
+    },
+    [refresh],
+  );
+
   const deleteAgent = useCallback(
     async (name: string) => {
       await apiDeleteAgent(name);
@@ -127,9 +138,10 @@ export function AgentsProvider({ children }: { children: React.ReactNode }) {
       selectAgent,
       refresh,
       createAgent,
+      updateAgent,
       deleteAgent,
     }),
-    [agents, status, error, currentAgent, selectAgent, refresh, createAgent, deleteAgent],
+    [agents, status, error, currentAgent, selectAgent, refresh, createAgent, updateAgent, deleteAgent],
   );
 
   return <AgentsContext.Provider value={value}>{children}</AgentsContext.Provider>;

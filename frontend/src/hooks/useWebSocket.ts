@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { ChatMessage, ConnectionStatus, WSMessage } from '../types';
+import { foldConsecutivePicoclawToolFeedback } from '../utils/foldPicoclawToolFeedback';
 
 const RECONNECT_DELAY = 2000;
 const MAX_RECONNECT = 5;
@@ -101,14 +102,14 @@ export function useWebSocket(url: string | null): UseWebSocketReturn {
         setMessages((prev) => {
           const ids = new Set(prev.map((m) => m.id));
           const deduped = history.filter((m) => !ids.has(m.id));
-          return [...prev, ...deduped];
+          return foldConsecutivePicoclawToolFeedback([...prev, ...deduped]);
         });
         break;
       }
 
       case 'message.send':
       case 'message_create': {
-        const content = msg.payload?.content || msg.content || '';
+        const content = typeof msg.payload?.content === 'string' ? msg.payload.content : msg.content ?? '';
         const role = msg.payload?.role || 'assistant';
         if (!content) {
           console.warn('[Finclaw WS] Empty content in message.send:', msg);
@@ -118,10 +119,12 @@ export function useWebSocket(url: string | null): UseWebSocketReturn {
           clearTypingFallback();
           setIsTyping(false);
         }
-        setMessages((prev) => [
-          ...prev,
-          { id: msg.id || genId(), role, content, timestamp: new Date() },
-        ]);
+        setMessages((prev) =>
+          foldConsecutivePicoclawToolFeedback([
+            ...prev,
+            { id: msg.id || genId(), role, content, timestamp: new Date() },
+          ]),
+        );
         break;
       }
 
@@ -143,15 +146,17 @@ export function useWebSocket(url: string | null): UseWebSocketReturn {
         if (errContent) {
           console.error('[Finclaw WS] Server error:', errContent);
           // 把服务器错误追加为一条 assistant 消息，让用户看到
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: msg.id || genId(),
-              role: 'assistant',
-              content: `⚠️ Error: ${errContent}`,
-              timestamp: new Date(),
-            },
-          ]);
+          setMessages((prev) =>
+            foldConsecutivePicoclawToolFeedback([
+              ...prev,
+              {
+                id: msg.id || genId(),
+                role: 'assistant',
+                content: `⚠️ Error: ${errContent}`,
+                timestamp: new Date(),
+              },
+            ]),
+          );
         }
         break;
       }
@@ -255,10 +260,9 @@ export function useWebSocket(url: string | null): UseWebSocketReturn {
 
       // 即时添加到本地消息列表，保证用户看到自己的消息
       const id = genId();
-      setMessages((prev) => [
-        ...prev,
-        { id, role: 'user', content, timestamp: new Date() },
-      ]);
+      setMessages((prev) =>
+        foldConsecutivePicoclawToolFeedback([...prev, { id, role: 'user', content, timestamp: new Date() }]),
+      );
       // 元宝式：发出后即显示「正在思考」，不依赖服务端 typing_start
       setIsTyping(true);
       if (typingFallbackRef.current) {

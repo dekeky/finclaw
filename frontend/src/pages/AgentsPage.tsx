@@ -1,25 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Header } from '../components/Header';
-import { ChatContainer } from '../components/ChatContainer';
-import { InputArea } from '../components/InputArea';
-import { ErrorBoundary } from '../components/ErrorBoundary';
-import { useWebSocket } from '../hooks/useWebSocket';
 import { useAgents } from '../state/agents';
-import type { CreateAgentRequest } from '../api/agents';
-import type { ConnectionStatus } from '../types';
-
-const CHAT_WS_STATUS: Record<ConnectionStatus, string> = {
-  idle: '未连接',
-  connecting: '连接中…',
-  connected: '已连接',
-  error: '连接异常',
-};
-
-function buildAgentWsUrl(agentName: string | null): string | null {
-  if (!agentName) return null;
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${window.location.host}/ws/chat/${encodeURIComponent(agentName)}`;
-}
+import { getAgent, type AgentDetailBody, type CreateAgentRequest } from '../api/agents';
 
 type FormState = {
   name: string;
@@ -29,8 +11,23 @@ type FormState = {
   apiKey: string;
 };
 
+/** 更新 Agent 时仅提交 model_provider，不含目录名。 */
+type EditFormState = {
+  modelName: string;
+  model: string;
+  apiBase: string;
+  apiKey: string;
+};
+
 const EMPTY_FORM: FormState = {
   name: '',
+  modelName: '',
+  model: '',
+  apiBase: '',
+  apiKey: '',
+};
+
+const EMPTY_EDIT_FORM: EditFormState = {
   modelName: '',
   model: '',
   apiBase: '',
@@ -105,6 +102,7 @@ export default function AgentsPage() {
     selectAgent,
     refresh,
     createAgent,
+    updateAgent,
     deleteAgent,
   } = useAgents();
 
@@ -115,6 +113,18 @@ export default function AgentsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [editConfigOpen, setEditConfigOpen] = useState(false);
+  const [editFetchLoading, setEditFetchLoading] = useState(false);
+  const [editFetchError, setEditFetchError] = useState<string | null>(null);
+  /** 最近一次为「更新」拉取的成功快照（用于校验密钥是否可省略、表单恢复）。 */
+  const [editBaseline, setEditBaseline] = useState<AgentDetailBody | null>(null);
+  const editLoadGenRef = useRef(0);
+  const [editForm, setEditForm] = useState<EditFormState>(EMPTY_EDIT_FORM);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editSubmitError, setEditSubmitError] = useState<string | null>(null);
+  const [agentRuntime, setAgentRuntime] = useState<AgentDetailBody | null>(null);
+  const [agentRuntimeLoading, setAgentRuntimeLoading] = useState(false);
+  const [agentRuntimeError, setAgentRuntimeError] = useState<string | null>(null);
 
   useEffect(() => {
     void refresh();
@@ -137,6 +147,79 @@ export default function AgentsPage() {
     });
   }, [agents, currentAgent]);
 
+  const detailName = addOpen ? null : selectedName;
+
+  useEffect(() => {
+    setEditConfigOpen(false);
+    editLoadGenRef.current += 1;
+    setEditFetchLoading(false);
+    setEditFetchError(null);
+    setEditBaseline(null);
+    setEditForm(EMPTY_EDIT_FORM);
+    setEditSubmitError(null);
+  }, [detailName]);
+
+  const loadLatestForEdit = useCallback(async () => {
+    if (!detailName) return;
+    const gen = ++editLoadGenRef.current;
+    setEditFetchLoading(true);
+    setEditFetchError(null);
+    setEditBaseline(null);
+    setEditSubmitError(null);
+    setEditForm(EMPTY_EDIT_FORM);
+    try {
+      const d = await getAgent(detailName);
+      if (gen !== editLoadGenRef.current) return;
+      setAgentRuntime(d);
+      setAgentRuntimeError(null);
+      setEditBaseline(d);
+      const mp = d.model_provider;
+      setEditForm({
+        modelName: mp.model_name ?? '',
+        model: mp.model ?? '',
+        apiBase: mp.api_base ?? '',
+        apiKey: '',
+      });
+    } catch (err) {
+      if (gen !== editLoadGenRef.current) return;
+      setEditFetchError(err instanceof Error ? err.message : String(err));
+      setEditBaseline(null);
+    } finally {
+      if (gen === editLoadGenRef.current) {
+        setEditFetchLoading(false);
+      }
+    }
+  }, [detailName]);
+
+  useEffect(() => {
+    if (!detailName) {
+      setAgentRuntime(null);
+      setAgentRuntimeError(null);
+      setAgentRuntimeLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setAgentRuntimeLoading(true);
+    setAgentRuntimeError(null);
+    getAgent(detailName)
+      .then((d) => {
+        if (!cancelled) {
+          setAgentRuntime(d);
+          setAgentRuntimeLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setAgentRuntime(null);
+          setAgentRuntimeLoading(false);
+          setAgentRuntimeError(err instanceof Error ? err.message : String(err));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [detailName]);
+
   const formValid = useMemo(() => {
     return (
       form.name.trim() &&
@@ -146,6 +229,19 @@ export default function AgentsPage() {
       form.apiKey.trim()
     );
   }, [form]);
+
+  const editFormValid = useMemo(() => {
+    const hasStoredKey = editBaseline?.model_provider.has_api_key === true;
+    return (
+      !!editBaseline &&
+      !editFetchLoading &&
+      !editFetchError &&
+      editForm.modelName.trim() &&
+      editForm.model.trim() &&
+      editForm.apiBase.trim() &&
+      (editForm.apiKey.trim().length > 0 || hasStoredKey)
+    );
+  }, [editBaseline, editFetchError, editFetchLoading, editForm]);
 
   const openDetail = useCallback(
     (name: string) => {
@@ -205,20 +301,46 @@ export default function AgentsPage() {
     }));
   };
 
-  const detailName = addOpen ? null : selectedName;
-  const chatWsUrl = useMemo(
-    () => buildAgentWsUrl(addOpen ? null : detailName),
-    [addOpen, detailName],
-  );
-  const {
-    messages,
-    status: chatWsStatus,
-    isTyping,
-    sendError,
-    send,
-    clearMessages,
-    reconnect,
-  } = useWebSocket(chatWsUrl);
+  const applyEditPreset = (preset: (typeof PRESETS)[number]) => {
+    setEditForm((prev) => ({
+      ...prev,
+      modelName: preset.modelName,
+      model: preset.model,
+      apiBase: preset.apiBase,
+    }));
+  };
+
+  const onEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!detailName || !editFormValid || editSubmitting) return;
+    setEditSubmitting(true);
+    setEditSubmitError(null);
+    try {
+      await updateAgent(detailName, {
+        model_provider: {
+          model_name: editForm.modelName.trim(),
+          model: editForm.model.trim(),
+          api_base: editForm.apiBase.trim(),
+          api_key: editForm.apiKey.trim(),
+        },
+      });
+      try {
+        const d = await getAgent(detailName);
+        setAgentRuntime(d);
+        setAgentRuntimeError(null);
+      } catch {
+        // 列表已成功更新；摘要拉取失败不阻塞界面
+      }
+      setEditForm(EMPTY_EDIT_FORM);
+      setEditConfigOpen(false);
+      setEditBaseline(null);
+      setEditFetchError(null);
+    } catch (err) {
+      setEditSubmitError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
 
   return (
     <>
@@ -239,7 +361,9 @@ export default function AgentsPage() {
                   <h1 className="contacts-list-title">Agent 管理</h1>
                   <span className="contacts-count">{agents.length}</span>
                 </div>
-                <p className="contacts-list-hint">点击 Agent 即在右侧直连 WebSocket 对话；当前选中项会与资讯浮窗共用。</p>
+                <p className="contacts-list-hint">
+                  选中项会设为全局「当前 Agent」；对话请展开右下角 Finclaw AI 浮窗，与金融资讯页共用。
+                </p>
                 <div className="contacts-toolbar">
                   <label className="contacts-search-wrap">
                     <span className="contacts-search-ic" aria-hidden>
@@ -448,8 +572,8 @@ export default function AgentsPage() {
                   </form>
                 </div>
               ) : detailName ? (
-                <div className="contacts-agent-split">
-                  <header className="contacts-agent-header">
+                <div className="contacts-agent-detail">
+                  <div className="contacts-agent-header">
                     <div className="contacts-agent-header-row">
                       <div className="contacts-profile-hero contacts-profile-hero--compact">
                         <div className="contacts-profile-avatar contacts-profile-avatar--sm" aria-hidden>
@@ -462,18 +586,79 @@ export default function AgentsPage() {
                           </p>
                         </div>
                       </div>
-                      <div className="contacts-chat-status" title="与本页的实时连接状态">
-                        <span className={`contacts-ws-dot contacts-ws-dot--${chatWsStatus}`} aria-hidden />
-                        <span className="contacts-ws-label">{CHAT_WS_STATUS[chatWsStatus]}</span>
-                        {(chatWsStatus === 'error' || chatWsStatus === 'idle') && chatWsUrl ? (
-                          <button type="button" className="agents-btn agents-btn-ghost agents-btn-tight" onClick={reconnect}>
-                            重连
-                          </button>
-                        ) : null}
-                      </div>
                     </div>
-                    <p className="contacts-agent-hint">列表选中即切换对话对象；资讯页右下角 AI 浮窗会使用同一当前 Agent。</p>
+                    <p className="contacts-agent-hint">
+                      本页仅做配置与管理。与 Agent 聊天请点开右下角浮窗（连接状态与重连也在浮窗内）。
+                    </p>
+                    {agentRuntimeError ? (
+                      <div className="agents-warn contacts-runtime-warn" role="status">
+                        ⚠️ 加载 Agent 配置失败：{agentRuntimeError}
+                      </div>
+                    ) : null}
+                    {agentRuntimeLoading ? (
+                      <p className="contacts-agent-meta-hint" aria-busy="true">
+                        正在同步后端运行时配置…
+                      </p>
+                    ) : null}
+                    {agentRuntime && !agentRuntimeLoading ? (
+                      <dl className="contacts-runtime-info">
+                        {agentRuntime.workspace ? (
+                          <div className="contacts-profile-row">
+                            <dt>工作目录</dt>
+                            <dd>
+                              <code className="contacts-mono">{agentRuntime.workspace}</code>
+                            </dd>
+                          </div>
+                        ) : null}
+                        <div className="contacts-profile-row">
+                          <dt>model_name</dt>
+                          <dd>{agentRuntime.model_provider.model_name || '—'}</dd>
+                        </div>
+                        <div className="contacts-profile-row">
+                          <dt>model</dt>
+                          <dd>
+                            <code className="contacts-mono">{agentRuntime.model_provider.model || '—'}</code>
+                          </dd>
+                        </div>
+                        <div className="contacts-profile-row">
+                          <dt>api_base</dt>
+                          <dd>
+                            <code className="contacts-mono">{agentRuntime.model_provider.api_base || '—'}</code>
+                          </dd>
+                        </div>
+                        <div className="contacts-profile-row">
+                          <dt>API Key</dt>
+                          <dd>{agentRuntime.model_provider.has_api_key ? '已配置（服务端不返回内容）' : '未检测到密钥'}</dd>
+                        </div>
+                      </dl>
+                    ) : null}
                     <div className="contacts-agent-toolbar">
+                      <button
+                        type="button"
+                        className="agents-btn agents-btn-ghost"
+                        onClick={() => {
+                          if (editConfigOpen) {
+                            editLoadGenRef.current += 1;
+                            setEditConfigOpen(false);
+                            setEditSubmitError(null);
+                            setEditFetchError(null);
+                            setEditFetchLoading(false);
+                            setEditBaseline(null);
+                            setEditForm(EMPTY_EDIT_FORM);
+                            return;
+                          }
+                          setEditConfigOpen(true);
+                          void loadLatestForEdit();
+                        }}
+                      >
+                        {editConfigOpen
+                          ? editFetchLoading
+                            ? '加载配置中…'
+                            : editFetchError && !editBaseline
+                              ? '关闭'
+                              : '收起更新表单'
+                          : '更新模型配置'}
+                      </button>
                       <button
                         type="button"
                         className="agents-btn agents-btn-danger"
@@ -483,25 +668,146 @@ export default function AgentsPage() {
                         {pendingDelete === detailName ? '移除中…' : '移除此 Agent'}
                       </button>
                     </div>
-                  </header>
-                  <div className="contacts-agent-chat">
-                    {sendError ? (
-                      <div className="contacts-chat-banner" role="status">
-                        <span>{sendError}</span>
-                        <button type="button" className="agents-btn agents-btn-ghost agents-btn-tight" onClick={reconnect}>
-                          重连
-                        </button>
+                    {editConfigOpen ? (
+                      <div className="contacts-agent-edit">
+                        <p className="contacts-agent-edit-intro">
+                          打开本面板时会先向服务端拉取当前配置并填入下方表单，再提交修改。保存后将重启该 Agent；API Key
+                          不会在查询接口中返回明文。
+                          {editBaseline?.model_provider.has_api_key
+                            ? ' 若上方摘要显示已配置密钥，可留空 api_key 以沿用服务器已保存的密钥；填写新值则覆盖。'
+                            : ' 当前未检测到已保存密钥时，须填写 api_key 才能保存。'}
+                        </p>
+                        {editFetchLoading ? (
+                          <p className="contacts-agent-edit-status" aria-busy="true">
+                            正在从服务端加载当前配置…
+                          </p>
+                        ) : null}
+                        {editFetchError && !editBaseline ? (
+                          <div className="agents-warn" role="status">
+                            ⚠️ 无法加载当前配置：{editFetchError}
+                            <div className="contacts-agent-edit-retry">
+                              <button
+                                type="button"
+                                className="agents-btn agents-btn-primary"
+                                onClick={() => void loadLatestForEdit()}
+                              >
+                                重试
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                        {editBaseline && !editFetchLoading ? (
+                          <>
+                            <div className="agents-presets">
+                              {PRESETS.map((p) => (
+                                <button
+                                  type="button"
+                                  key={`edit-${p.label}`}
+                                  className="agents-preset"
+                                  onClick={() => applyEditPreset(p)}
+                                  title={`${p.modelName} · ${p.apiBase}`}
+                                >
+                                  {p.label}
+                                </button>
+                              ))}
+                            </div>
+                            <form className="agents-form" onSubmit={onEditSubmit}>
+                              <div className="agents-row">
+                                <label className="agents-field">
+                                  <span className="agents-field-label">model_name *</span>
+                                  <input
+                                    className="agents-input"
+                                    value={editForm.modelName}
+                                    onChange={(e) => setEditForm((s) => ({ ...s, modelName: e.target.value }))}
+                                    placeholder="deepseek-chat"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    disabled={editSubmitting}
+                                  />
+                                </label>
+                                <label className="agents-field">
+                                  <span className="agents-field-label">model *</span>
+                                  <input
+                                    className="agents-input"
+                                    value={editForm.model}
+                                    onChange={(e) => setEditForm((s) => ({ ...s, model: e.target.value }))}
+                                    placeholder="deepseek-chat"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    disabled={editSubmitting}
+                                  />
+                                </label>
+                              </div>
+                              <label className="agents-field">
+                                <span className="agents-field-label">api_base *</span>
+                                <input
+                                  className="agents-input"
+                                  value={editForm.apiBase}
+                                  onChange={(e) => setEditForm((s) => ({ ...s, apiBase: e.target.value }))}
+                                  placeholder="https://api.deepseek.com/v1"
+                                  autoComplete="off"
+                                  spellCheck={false}
+                                  disabled={editSubmitting}
+                                />
+                              </label>
+                              <label className="agents-field">
+                                <span className="agents-field-label">
+                                  api_key
+                                  {editBaseline.model_provider.has_api_key ? '（可选）' : ' *'}
+                                </span>
+                                <input
+                                  className="agents-input"
+                                  type="password"
+                                  value={editForm.apiKey}
+                                  onChange={(e) => setEditForm((s) => ({ ...s, apiKey: e.target.value }))}
+                                  placeholder={
+                                    editBaseline.model_provider.has_api_key
+                                      ? '留空则沿用已保存的密钥'
+                                      : 'sk-...'
+                                  }
+                                  autoComplete="off"
+                                  spellCheck={false}
+                                  disabled={editSubmitting}
+                                />
+                                <span className="agents-field-hint">
+                                  {editBaseline.model_provider.has_api_key
+                                    ? '仅在你需要更换密钥时填写。'
+                                    : '必须提供有效密钥，否则无法请求模型。'}
+                                </span>
+                              </label>
+                              {editSubmitError ? <div className="agents-warn">⚠️ {editSubmitError}</div> : null}
+                              <div className="agents-form-actions">
+                                <button
+                                  type="button"
+                                  className="agents-btn agents-btn-ghost"
+                                  onClick={() => {
+                                    if (!editBaseline) return;
+                                    const mp = editBaseline.model_provider;
+                                    setEditForm({
+                                      modelName: mp.model_name ?? '',
+                                      model: mp.model ?? '',
+                                      apiBase: mp.api_base ?? '',
+                                      apiKey: '',
+                                    });
+                                    setEditSubmitError(null);
+                                  }}
+                                  disabled={editSubmitting}
+                                >
+                                  恢复本次加载的数据
+                                </button>
+                                <button
+                                  type="submit"
+                                  className="agents-btn agents-btn-primary"
+                                  disabled={!editFormValid || editSubmitting}
+                                >
+                                  {editSubmitting ? '保存中…' : '保存并重启'}
+                                </button>
+                              </div>
+                            </form>
+                          </>
+                        ) : null}
                       </div>
                     ) : null}
-                    <ErrorBoundary>
-                      <ChatContainer messages={messages} isTyping={isTyping} onClear={clearMessages} />
-                    </ErrorBoundary>
-                    <InputArea
-                      onSend={send}
-                      disabled={chatWsStatus !== 'connected'}
-                      placeholder={`向「${detailName}」发送消息…`}
-                      compact
-                    />
                   </div>
                 </div>
               ) : (
@@ -510,7 +816,7 @@ export default function AgentsPage() {
                     💬
                   </div>
                   <p className="contacts-detail-placeholder-title">选择左侧 Agent</p>
-                  <p className="contacts-detail-placeholder-sub">点选列表中的条目，在右侧開始对话与管理。</p>
+                  <p className="contacts-detail-placeholder-sub">点选列表中的条目进行管理；对话请使用右下角 Finclaw AI 浮窗。</p>
                 </div>
               )}
             </main>
@@ -844,7 +1150,7 @@ const PAGE_CSS = `
   overflow: hidden;
 }
 
-.contacts-agent-split {
+.contacts-agent-detail {
   flex: 1;
   min-height: 0;
   display: flex;
@@ -853,9 +1159,13 @@ const PAGE_CSS = `
 }
 
 .contacts-agent-header {
-  flex-shrink: 0;
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   padding: clamp(14px, 2vw, 20px) clamp(16px, 2.5vw, 22px);
-  border-bottom: 1px solid var(--fc-border);
+  border-bottom: none;
   background: var(--fc-bg-panel);
 }
 
@@ -883,46 +1193,6 @@ const PAGE_CSS = `
   font-size: 20px;
 }
 
-.contacts-chat-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  font-size: 12px;
-  color: var(--fc-text-muted);
-  font-family: var(--fc-font-mono);
-}
-
-.contacts-ws-label {
-  white-space: nowrap;
-}
-
-.contacts-ws-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background: var(--fc-text-dim);
-}
-
-.contacts-ws-dot--connected {
-  background: var(--fc-success);
-  box-shadow: 0 0 8px rgba(22, 163, 74, 0.35);
-}
-
-.contacts-ws-dot--connecting {
-  background: #ca8a04;
-  animation: pulse 1.2s ease-in-out infinite;
-}
-
-.contacts-ws-dot--error {
-  background: var(--fc-danger);
-}
-
-.contacts-ws-dot--idle {
-  background: var(--fc-text-dim);
-}
-
 .contacts-agent-hint {
   font-size: 12px;
   color: var(--fc-text-muted);
@@ -930,41 +1200,58 @@ const PAGE_CSS = `
   margin: 12px 0 0;
 }
 
+.contacts-runtime-warn {
+  margin-top: 12px;
+}
+
+.contacts-agent-meta-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--fc-text-muted);
+}
+
+.contacts-runtime-info {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--fc-border);
+  background: var(--fc-bg-app);
+}
+
+.contacts-agent-edit {
+  margin-top: 14px;
+  padding: 14px 14px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--fc-border);
+  background: var(--fc-bg-app);
+}
+
+.contacts-agent-edit-intro {
+  font-size: 12px;
+  color: var(--fc-text-muted);
+  line-height: 1.55;
+  margin: 0 0 12px;
+}
+
+.contacts-agent-edit-status {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--fc-text-muted);
+}
+
+.contacts-agent-edit-retry {
+  margin-top: 10px;
+}
+
+.contacts-agent-edit .agents-presets {
+  margin-bottom: 12px;
+}
+
 .contacts-agent-toolbar {
   margin-top: 14px;
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-}
-
-.contacts-agent-chat {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding: 12px clamp(14px, 2vw, 20px) 16px;
-  background: var(--fc-bg-raised);
-}
-
-.contacts-chat-banner {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 12px;
-  margin-bottom: 8px;
-  border-radius: 8px;
-  border: 1px solid rgba(220, 38, 38, 0.25);
-  background: rgba(220, 38, 38, 0.06);
-  color: var(--fc-danger);
-  font-size: 12px;
-}
-
-.agents-btn-tight {
-  padding: 4px 10px;
-  font-size: 11px;
 }
 
 .contacts-detail-card {

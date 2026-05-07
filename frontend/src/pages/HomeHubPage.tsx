@@ -1,57 +1,13 @@
-import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-/** 工作台首页：问财式大搜索区 + 三栏推荐（静态示例，可后续接 RSS / 后端） */
+/** 工作台首页：三栏推荐（静态示例，可后续接 RSS / 后端） */
 export default function HomeHubPage() {
   const navigate = useNavigate();
-  const [query, setQuery] = useState('');
-  const [scope] = useState('资讯全域');
-
-  const submit = () => {
-    const t = query.trim();
-    navigate('/news', { state: t ? { hubQuery: t } : undefined });
-  };
 
   return (
     <>
       <style>{HUB_CSS}</style>
       <div className="hub-root">
-        <section className="hub-hero">
-          <div className="hub-hero-title-row">
-            <span className="hub-hero-ic" aria-hidden>
-              📊
-            </span>
-            <h1 className="hub-hero-title">Finclaw 智能资讯</h1>
-          </div>
-          <p className="hub-hero-sub">输入关注点，多维筛选与解读，助你快速把握脉络</p>
-
-          <div className="hub-search-card">
-            <textarea
-              className="hub-search-input"
-              rows={4}
-              placeholder="请输入您关注的财经主题或筛选条件；多个条件可用分号隔开"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            <div className="hub-search-toolbar">
-              <div className="hub-search-toolbar-left">
-                <span className="hub-pill hub-pill--scope">{scope}</span>
-                <button type="button" className="hub-soft-btn">
-                  <span aria-hidden>🔎</span> 条件聚焦
-                </button>
-                <button type="button" className="hub-soft-btn" onClick={() => navigate('/news')}>
-                  <span aria-hidden>⭐</span> 我的待读
-                </button>
-              </div>
-              <button type="button" className="hub-send-btn" onClick={submit} aria-label="进入资讯">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                  <path d="M5 12h14M13 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </section>
-
         <div className="hub-grid">
           <section className="hub-panel">
             <header className="hub-panel-head">
@@ -86,14 +42,24 @@ export default function HomeHubPage() {
             <div className="hub-queries">
               <div className="hub-queries-col">
                 {QUERIES_COL_A.map((q) => (
-                  <button key={q} type="button" className="hub-query-chip" onClick={() => setQuery(q)}>
+                  <button
+                    key={q}
+                    type="button"
+                    className="hub-query-chip"
+                    onClick={() => navigate('/news', { state: { hubQuery: q } })}
+                  >
                     <span aria-hidden>💬</span> {q}
                   </button>
                 ))}
               </div>
               <div className="hub-queries-col">
                 {QUERIES_COL_B.map((q) => (
-                  <button key={q} type="button" className="hub-query-chip" onClick={() => setQuery(q)}>
+                  <button
+                    key={q}
+                    type="button"
+                    className="hub-query-chip"
+                    onClick={() => navigate('/news', { state: { hubQuery: q } })}
+                  >
                     <span aria-hidden>📌</span> {q}
                   </button>
                 ))}
@@ -160,136 +126,6 @@ const HUB_CSS = `
   padding: clamp(20px, 3vw, 40px) clamp(20px, 4vw, 48px) 48px;
   background: var(--fc-bg-app);
   -webkit-overflow-scrolling: touch;
-}
-
-.hub-hero {
-  max-width: 920px;
-  margin: 0 auto 32px;
-  text-align: center;
-}
-
-.hub-hero-title-row {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.hub-hero-ic {
-  font-size: 1.5rem;
-  line-height: 1;
-}
-
-.hub-hero-title {
-  font-size: clamp(1.35rem, 3vw, 1.75rem);
-  font-weight: 700;
-  color: var(--fc-text);
-  letter-spacing: -0.02em;
-  margin: 0;
-}
-
-.hub-hero-sub {
-  margin: 10px 0 0;
-  font-size: 14px;
-  color: var(--fc-text-muted);
-  line-height: 1.6;
-}
-
-.hub-search-card {
-  margin-top: 28px;
-  text-align: left;
-  background: var(--fc-bg-raised);
-  border: 1px solid var(--fc-border);
-  border-radius: 16px;
-  box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06);
-  padding: 16px 16px 12px;
-  position: relative;
-}
-
-.hub-search-input {
-  width: 100%;
-  border: none;
-  outline: none;
-  resize: none;
-  font-size: 15px;
-  line-height: 1.55;
-  color: var(--fc-text);
-  font-family: var(--fc-font-sans);
-  background: transparent;
-  min-height: 96px;
-}
-
-.hub-search-input::placeholder {
-  color: var(--fc-text-dim);
-}
-
-.hub-search-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--fc-border);
-}
-
-.hub-search-toolbar-left {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.hub-pill {
-  font-size: 12px;
-  font-weight: 600;
-  padding: 6px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--fc-border);
-  background: var(--fc-primary-soft);
-  color: var(--fc-primary);
-}
-
-.hub-soft-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  padding: 6px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--fc-border);
-  background: var(--fc-bg-app);
-  color: var(--fc-text-secondary);
-  cursor: pointer;
-  font-family: inherit;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.hub-soft-btn:hover {
-  background: var(--fc-bg-muted);
-  border-color: var(--fc-border-strong);
-}
-
-.hub-send-btn {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  border: none;
-  flex-shrink: 0;
-  background: linear-gradient(145deg, var(--fc-primary) 0%, var(--fc-primary-hover) 100%);
-  color: #fff;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 4px 14px rgba(36, 104, 242, 0.35);
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
-}
-
-.hub-send-btn:hover {
-  transform: scale(1.04);
-  box-shadow: 0 6px 18px rgba(36, 104, 242, 0.4);
 }
 
 .hub-grid {

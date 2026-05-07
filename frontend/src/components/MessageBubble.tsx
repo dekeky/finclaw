@@ -1,14 +1,235 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect, type ReactNode, type CSSProperties } from 'react';
 import type { ChatMessage } from '../types';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { AGGREGATED_TOOL_FEEDBACK_JOIN } from '../utils/foldPicoclawToolFeedback';
+
+/** 折叠详情区内最多展示的独立工具反馈条数（合并气泡按分隔符切分后的条数） */
+const TOOL_RESEARCH_DETAIL_MAX = 5;
+
+/** 仅由前端根据正文特征推断，不依赖 WebSocket 额外字段 */
+type HermesFoldKind = 'thought' | 'tool_feedback';
+
+function inferHermesFoldKind(m: ChatMessage): HermesFoldKind | undefined {
+  if (m.role !== 'assistant') return undefined;
+  const raw = m.content.trimStart();
+  if (!raw) return undefined;
+  // Picoclaw：`FormatToolFeedbackMessage` / loop 内 `\U0001f527 `%s`\n...`
+  if (raw.startsWith('🔧')) return 'tool_feedback';
+  const head = raw.slice(0, 96).toLowerCase();
+  if (
+    head.startsWith('<thinking') ||
+    head.startsWith('<redacted_reasoning') ||
+    head.startsWith('<redacted_thinking')
+  ) {
+    return 'thought';
+  }
+  return undefined;
+}
 
 interface MessageBubbleProps {
   message: ChatMessage;
   /** 侧栏会话：更接近元宝等产品 — 用户偏青绿、助手偏中性底 */
   variant?: 'default' | 'dock';
+}
+
+function ellipsisOneLine(text: string, max: number): string {
+  const t = text.replace(/\s+/g, ' ').trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max).trimEnd()}…`;
+}
+
+function summarizeThought(content: string, dock: boolean): string {
+  const preview = ellipsisOneLine(content, dock ? 52 : 64);
+  return preview ? `思考 · ${preview}` : '思考过程';
+}
+
+function parseToolFeedbackParts(content: string): string[] {
+  return content.split(AGGREGATED_TOOL_FEEDBACK_JOIN).map((s) => s.trim()).filter(Boolean);
+}
+
+/** 摘要行：罗列工具名 + 总规模，便于未展开时了解调研范围 */
+function summarizeToolFeedback(content: string): string {
+  const parts = parseToolFeedbackParts(content);
+  if (parts.length <= 1) {
+    const line = content.split('\n')[0]?.trim() || '';
+    if (!line) return '工具调研';
+    const one = ellipsisOneLine(line, 88);
+    return one.startsWith('🔧') ? `工具调研 · ${one.replace(/^🔧\s*/, '')}` : `工具调研 · ${one}`;
+  }
+  const names: string[] = [];
+  for (const p of parts) {
+    const first = p.split('\n')[0]?.trim() || '';
+    const m = /^🔧\s*`([^`]+)`/.exec(first);
+    if (m) names.push(m[1]);
+  }
+  if (names.length > 0) {
+    const head = names.slice(0, 3).join('、');
+    const suf = names.length > 3 ? ` 等 ${names.length} 个` : '';
+    return `工具调研 · ${head}${suf}`;
+  }
+  return `工具调研 · ${parts.length} 项`;
+}
+
+function HermesDetails({ summaryLabel, dock, children }: { summaryLabel: string; dock: boolean; children: ReactNode }) {
+  return (
+    <details style={dock ? collapsible.detailsDock : collapsible.details}>
+      <summary style={dock ? collapsible.summaryDock : collapsible.summary}>{summaryLabel}</summary>
+      <div style={dock ? collapsible.bodyDock : collapsible.body}>{children}</div>
+    </details>
+  );
+}
+
+function HermesToolFeedbackFold({
+  message,
+  dock,
+  copiedId,
+  handleCopy,
+}: {
+  message: ChatMessage;
+  dock: boolean;
+  copiedId: string | null;
+  handleCopy: (code: string, id: string) => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const content = message.content;
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const id = requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [content]);
+
+  const parts = parseToolFeedbackParts(content);
+  const shown = parts.slice(0, TOOL_RESEARCH_DETAIL_MAX);
+  const detailMarkdown =
+    shown.length > 0 ? shown.join(AGGREGATED_TOOL_FEEDBACK_JOIN) : content.trim() || '';
+
+  const summaryLabel = summarizeToolFeedback(content);
+
+  return (
+    <details style={dock ? collapsible.detailsDock : collapsible.details}>
+      <summary style={dock ? collapsible.summaryDock : collapsible.summary}>{summaryLabel}</summary>
+      <div ref={scrollRef} style={dock ? collapsible.bodyDock : collapsible.body}>
+        <AssistantMarkdownBody
+          messageId={message.id}
+          content={detailMarkdown}
+          copiedId={copiedId}
+          handleCopy={handleCopy}
+        />
+        {parts.length > TOOL_RESEARCH_DETAIL_MAX ? (
+          <div style={dock ? toolResearchHintDock : toolResearchHint}>
+            共 {parts.length} 条工具记录；详情滚动区仅展示前 {TOOL_RESEARCH_DETAIL_MAX} 条摘要。
+          </div>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+const toolResearchHint: CSSProperties = {
+  marginTop: 12,
+  paddingTop: 10,
+  borderTop: '1px dashed var(--fc-border-strong)',
+  fontSize: 11.5,
+  color: 'var(--fc-text-muted)',
+  lineHeight: 1.5,
+};
+const toolResearchHintDock: CSSProperties = {
+  ...toolResearchHint,
+  marginTop: 10,
+  paddingTop: 8,
+  fontSize: 11,
+};
+
+interface AssistantMarkdownBodyProps {
+  messageId: string;
+  content: string;
+  copiedId: string | null;
+  handleCopy: (code: string, id: string) => void;
+}
+
+function AssistantMarkdownBody({ messageId, content, copiedId, handleCopy }: AssistantMarkdownBodyProps) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        code({ className, children, ...props }) {
+          const match = /language-(\w+)/.exec(className || '');
+          const code = String(children).replace(/\n$/, '');
+          const codeId = `${messageId}-${match ? match[1] : 'inline'}`;
+          if (match) {
+            return (
+              <div style={{ position: 'relative', margin: '10px 0' }}>
+                <button
+                  style={{
+                    ...copyBtn,
+                    ...(copiedId === codeId ? copyBtnSuccess : {}),
+                  }}
+                  type="button"
+                  onClick={() => handleCopy(code, codeId)}
+                  title="Copy code"
+                >
+                  {copiedId === codeId ? (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    </svg>
+                  )}
+                </button>
+                <SyntaxHighlighter
+                  style={oneDark}
+                  language={match[1]}
+                  PreTag="div"
+                  customStyle={{
+                    borderRadius: 8,
+                    fontSize: 13,
+                    background: '#1a1a2e',
+                  }}
+                  {...(props as object)}
+                >
+                  {code}
+                </SyntaxHighlighter>
+              </div>
+            );
+          }
+          return (
+            <code className={className} style={styles.inlineCode} {...props}>
+              {children}
+            </code>
+          );
+        },
+        a({ href, children }) {
+          return (
+            <a href={href} target="_blank" rel="noopener noreferrer" style={styles.link}>
+              {children}
+            </a>
+          );
+        },
+        table({ children }) {
+          return (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={styles.table}>{children}</table>
+            </div>
+          );
+        },
+        blockquote({ children }) {
+          return <blockquote style={styles.blockquote}>{children}</blockquote>;
+        },
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
 }
 
 export function MessageBubble({ message, variant = 'default' }: MessageBubbleProps) {
@@ -35,6 +256,44 @@ export function MessageBubble({ message, variant = 'default' }: MessageBubblePro
   const userBu = dock ? styles.userBubbleDock : styles.userBubble;
   const aiBu = dock ? styles.aiBubbleDock : styles.aiBubble;
 
+  const foldKind = !isUser ? inferHermesFoldKind(message) : undefined;
+  const useHermesCollapse = foldKind !== undefined;
+
+  const assistantMarkdown = (
+    <AssistantMarkdownBody messageId={message.id} content={message.content} copiedId={copiedId} handleCopy={handleCopy} />
+  );
+
+  const assistantBubbleBody = () => {
+    if (useHermesCollapse && foldKind === 'thought') {
+      const summaryLabel = summarizeThought(message.content, dock);
+      return (
+        <HermesDetails summaryLabel={summaryLabel} dock={dock}>
+          {assistantMarkdown}
+        </HermesDetails>
+      );
+    }
+    if (useHermesCollapse && foldKind === 'tool_feedback') {
+      return (
+        <HermesToolFeedbackFold
+          message={message}
+          dock={dock}
+          copiedId={copiedId}
+          handleCopy={handleCopy}
+        />
+      );
+    }
+    return assistantMarkdown;
+  };
+
+  const bubbleTone =
+    useHermesCollapse && foldKind
+      ? {
+          ...(isUser ? userBu : aiBu),
+          borderLeft: dock ? '3px solid rgba(45,212,191,0.45)' : '3px solid rgba(36,104,242,0.35)',
+          paddingLeft: dock ? '12px 14px' : '13px 16px',
+        }
+      : { ...(isUser ? userBu : aiBu) };
+
   return (
     <div
       style={{ ...styles.message, ...(dock ? styles.messageDock : {}), ...(isUser ? styles.user : styles.assistant) }}
@@ -44,83 +303,15 @@ export function MessageBubble({ message, variant = 'default' }: MessageBubblePro
         {isUser ? '我' : 'AI'}
       </div>
       <div style={styles.content}>
-        <div style={{ ...styles.bubble, ...(isUser ? userBu : aiBu) }} className="finclaw-bubble">
-          {isUser ? (
-            <span style={styles.text}>{message.content}</span>
-          ) : (
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                code({ node, className, children, ...props }) {
-                  const match = /language-(\w+)/.exec(className || '');
-                  const code = String(children).replace(/\n$/, '');
-                  const codeId = `${message.id}-${match ? match[1] : 'inline'}`;
-                  if (match) {
-                    return (
-                      <div style={{ position: 'relative', margin: '10px 0' }}>
-                        <button
-                          style={{
-                            ...copyBtn,
-                            ...(copiedId === codeId ? copyBtnSuccess : {}),
-                          }}
-                          onClick={() => handleCopy(code, codeId)}
-                          title="Copy code"
-                        >
-                          {copiedId === codeId ? (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                              <polyline points="20 6 9 17 4 12" />
-                            </svg>
-                          ) : (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                            </svg>
-                          )}
-                        </button>
-                        <SyntaxHighlighter
-                          style={oneDark}
-                          language={match[1]}
-                          PreTag="div"
-                          customStyle={{
-                            borderRadius: 8,
-                            fontSize: 13,
-                            background: '#1a1a2e',
-                          }}
-                          {...(props as object)}
-                        >
-                          {code}
-                        </SyntaxHighlighter>
-                      </div>
-                    );
-                  }
-                  return (
-                    <code className={className} style={styles.inlineCode} {...props}>
-                      {children}
-                    </code>
-                  );
-                },
-                a({ href, children }) {
-                  return (
-                    <a href={href} target="_blank" rel="noopener noreferrer" style={styles.link}>
-                      {children}
-                    </a>
-                  );
-                },
-                table({ children }) {
-                  return (
-                    <div style={{ overflowX: 'auto' }}>
-                      <table style={styles.table}>{children}</table>
-                    </div>
-                  );
-                },
-                blockquote({ children }) {
-                  return <blockquote style={styles.blockquote}>{children}</blockquote>;
-                },
-              }}
-            >
-              {message.content}
-            </ReactMarkdown>
-          )}
+        <div
+          style={{
+            ...styles.bubble,
+            ...bubbleTone,
+            ...(useHermesCollapse ? { whiteSpace: 'normal' as const } : {}),
+          }}
+          className={`finclaw-bubble${useHermesCollapse ? ' finclaw-hermes' : ''}`}
+        >
+          {isUser ? <span style={styles.text}>{message.content}</span> : assistantBubbleBody()}
         </div>
         <div style={{ ...styles.time, ...(isUser ? { textAlign: 'right' } : {}) }}>{time}</div>
       </div>
@@ -128,7 +319,62 @@ export function MessageBubble({ message, variant = 'default' }: MessageBubblePro
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
+const collapsible = {
+  details: {
+    borderRadius: 8,
+    border: '1px solid rgba(15,23,42,0.08)',
+    background: 'var(--fc-bg-app)',
+    padding: '8px 10px',
+    marginTop: 2,
+  } as CSSProperties,
+  detailsDock: {
+    borderRadius: 10,
+    border: '1px solid var(--fc-border)',
+    background: 'var(--fc-bg-app)',
+    padding: '6px 8px',
+    marginTop: 2,
+  } as CSSProperties,
+  summary: {
+    cursor: 'pointer',
+    fontSize: 12,
+    fontWeight: 550,
+    color: 'var(--fc-text-muted)',
+    listStyle: 'none',
+    userSelect: 'none',
+    lineHeight: 1.45,
+  } as CSSProperties,
+  summaryDock: {
+    cursor: 'pointer',
+    fontSize: 11.5,
+    fontWeight: 600,
+    color: 'var(--fc-text-muted)',
+    listStyle: 'none',
+    userSelect: 'none',
+    lineHeight: 1.4,
+  } as CSSProperties,
+  body: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTop: '1px dashed var(--fc-border-strong)',
+    fontSize: 13,
+    color: 'var(--fc-text)',
+    lineHeight: 1.6,
+    maxHeight: 'min(520px, 42vh)',
+    overflowY: 'auto' as const,
+  } as CSSProperties,
+  bodyDock: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTop: '1px dashed var(--fc-border-strong)',
+    fontSize: 12.5,
+    color: 'var(--fc-text)',
+    lineHeight: 1.55,
+    maxHeight: 'min(400px, 36vh)',
+    overflowY: 'auto' as const,
+  } as CSSProperties,
+};
+
+const styles: Record<string, CSSProperties> = {
   message: {
     display: 'flex',
     gap: 12,
@@ -215,7 +461,7 @@ const styles: Record<string, React.CSSProperties> = {
   time: { fontSize: 11, color: 'var(--fc-text-dim)', fontFamily: 'JetBrains Mono, monospace', padding: '0 4px' },
 };
 
-const copyBtn: React.CSSProperties = {
+const copyBtn: CSSProperties = {
   position: 'absolute',
   top: 10,
   right: 10,
@@ -232,7 +478,7 @@ const copyBtn: React.CSSProperties = {
   zIndex: 1,
 };
 
-const copyBtnSuccess: React.CSSProperties = {
+const copyBtnSuccess: CSSProperties = {
   color: '#4ade80',
   borderColor: 'rgba(74,222,128,0.3)',
   background: 'rgba(74,222,128,0.08)',
