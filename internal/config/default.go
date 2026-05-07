@@ -5,18 +5,16 @@ import (
 	"path/filepath"
 
 	"github.com/finclaw/pkg/channels/finclaw"
-	"github.com/sipeed/picoclaw/pkg/config"
 )
 
 const (
-	FinclawHomeEnv     = "FINCLAW_HOME"
-	PicoClawConfigFile = "picoclaw.json" // 相当于picoclaw config.json文件
-	FinclawConfigFile  = "finclaw.toml"
-	FinclawWorkspace   = "workspace"
-	RssSourceFile      = "rss.config"
+	FinclawHomeEnv    = "FINCLAW_HOME"
+	FinclawConfigFile = "finclaw.toml"
+	FinclawWorkspace  = "workspace"
+	RssSourceFile     = "rss.config"
 )
 
-func finclawHomePath() string {
+func FinclawHomePath() string {
 	var err error
 	home := os.Getenv(FinclawHomeEnv)
 	if home == "" {
@@ -29,34 +27,21 @@ func finclawHomePath() string {
 	return home
 }
 
-func picoConfigPath() string {
-	return filepath.Join(finclawHomePath(), PicoClawConfigFile)
-}
-
 func finConfigPath() string {
-	return filepath.Join(finclawHomePath(), FinclawConfigFile)
+	return filepath.Join(FinclawHomePath(), FinclawConfigFile)
 }
 
-func finWorkspacePath() string {
-	return filepath.Join(finclawHomePath(), FinclawWorkspace)
+// FinWorkspacePath is the FinClaw sandbox directory (skills, RSS cache, Picoclaw tools, etc.).
+func FinWorkspacePath() string {
+	return filepath.Join(FinclawHomePath(), FinclawWorkspace)
 }
 
 func RssConfigPath() string {
-	return filepath.Join(finclawHomePath(), RssSourceFile)
+	return filepath.Join(FinclawHomePath(), RssSourceFile)
 }
 
 func RssStoragePath() string {
-	return filepath.Join(finWorkspacePath(), RssSourceFile)
-}
-
-func defaultConfig() *FinclawConfig {
-	picoClawConfig := config.DefaultConfig()
-	// 设置picoclaw的workspace路径为finclaw的workspace路径
-	picoClawConfig.Agents.Defaults.Workspace = finWorkspacePath()
-	return &FinclawConfig{
-		Config:              picoClawConfig,
-		FinclawConfigServer: defaultFinclawConfig(),
-	}
+	return filepath.Join(FinWorkspacePath(), RssSourceFile)
 }
 
 func defaultFinclawConfig() *FinclawConfigServer {

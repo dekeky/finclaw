@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { ChatMessage, ConnectionStatus, WSMessage } from '../types';
+import { foldConsecutivePicoclawToolFeedback } from '../utils/foldPicoclawToolFeedback';
 
 const RECONNECT_DELAY = 2000;
 const MAX_RECONNECT = 5;
 const PING_INTERVAL = 30000;
+/** 长时间无助手回复时收起「正在思考」（避免一直转圈） */
+const TYPING_FALLBACK_MS = 120_000;
 
 function genId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
@@ -29,7 +32,13 @@ export interface UseWebSocketReturn {
   reconnect: () => void;
 }
 
-export function useWebSocket(url: string): UseWebSocketReturn {
+/**
+ * useWebSocket：维护一条与 Finclaw 后端的 WS 长连接。
+ *
+ * 当 `url` 为 `null` 时表示尚未选定 Agent，hook 会保持 idle 状态、不发起连接，
+ * 也会在 url 切换时主动断开旧连接并清空历史，避免不同 Agent 的消息串流。
+ */
+export function useWebSocket(url: string | null): UseWebSocketReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ConnectionStatus>('idle');
   const [isTyping, setIsTyping] = useState(false);
@@ -38,9 +47,15 @@ export function useWebSocket(url: string): UseWebSocketReturn {
   const sessionIdRef = useRef<string | null>(null);
   const reconnectCountRef = useRef(0);
   const pingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const typingFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  const urlRef = useRef<string | null>(url);
 
   const reset = useCallback(() => {
+    if (typingFallbackRef.current) {
+      clearTimeout(typingFallbackRef.current);
+      typingFallbackRef.current = null;
+    }
     if (pingTimerRef.current) clearInterval(pingTimerRef.current);
     pingTimerRef.current = null;
     if (wsRef.current) {
@@ -60,6 +75,20 @@ export function useWebSocket(url: string): UseWebSocketReturn {
   }, []);
 
   const handleIncoming = useCallback((msg: WSMessage) => {
+    const clearTypingFallback = () => {
+      if (typingFallbackRef.current) {
+        clearTimeout(typingFallbackRef.current);
+        typingFallbackRef.current = null;
+      }
+    };
+    const armTypingFallback = () => {
+      clearTypingFallback();
+      typingFallbackRef.current = setTimeout(() => {
+        typingFallbackRef.current = null;
+        setIsTyping(false);
+      }, TYPING_FALLBACK_MS);
+    };
+
     console.log('[Finclaw WS] Received:', msg.type, msg.payload);
     switch (msg.type) {
       case 'connected':
@@ -73,49 +102,61 @@ export function useWebSocket(url: string): UseWebSocketReturn {
         setMessages((prev) => {
           const ids = new Set(prev.map((m) => m.id));
           const deduped = history.filter((m) => !ids.has(m.id));
-          return [...prev, ...deduped];
+          return foldConsecutivePicoclawToolFeedback([...prev, ...deduped]);
         });
         break;
       }
 
       case 'message.send':
       case 'message_create': {
-        const content = msg.payload?.content || msg.content || '';
+        const content = typeof msg.payload?.content === 'string' ? msg.payload.content : msg.content ?? '';
         const role = msg.payload?.role || 'assistant';
         if (!content) {
           console.warn('[Finclaw WS] Empty content in message.send:', msg);
           break;
         }
-        setMessages((prev) => [
-          ...prev,
-          { id: msg.id || genId(), role, content, timestamp: new Date() },
-        ]);
+        if (role !== 'user') {
+          clearTypingFallback();
+          setIsTyping(false);
+        }
+        setMessages((prev) =>
+          foldConsecutivePicoclawToolFeedback([
+            ...prev,
+            { id: msg.id || genId(), role, content, timestamp: new Date() },
+          ]),
+        );
         break;
       }
 
       case 'typing_start':
         setIsTyping(true);
+        armTypingFallback();
         break;
 
       case 'typing_stop':
+        clearTypingFallback();
         setIsTyping(false);
         break;
 
       case 'error': {
+        clearTypingFallback();
+        setIsTyping(false);
         // @ts-ignore backend sends {type:"error", payload:{message:"..."}}
         const errContent = (msg.payload as any)?.message || msg.payload?.content;
         if (errContent) {
           console.error('[Finclaw WS] Server error:', errContent);
           // 把服务器错误追加为一条 assistant 消息，让用户看到
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: msg.id || genId(),
-              role: 'assistant',
-              content: `⚠️ Error: ${errContent}`,
-              timestamp: new Date(),
-            },
-          ]);
+          setMessages((prev) =>
+            foldConsecutivePicoclawToolFeedback([
+              ...prev,
+              {
+                id: msg.id || genId(),
+                role: 'assistant',
+                content: `⚠️ Error: ${errContent}`,
+                timestamp: new Date(),
+              },
+            ]),
+          );
         }
         break;
       }
@@ -123,6 +164,11 @@ export function useWebSocket(url: string): UseWebSocketReturn {
   }, []);
 
   const connect = useCallback(() => {
+    const target = urlRef.current;
+    if (!target) {
+      setStatus('idle');
+      return;
+    }
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
     // 达到最大重试次数后不再自动重试，留给用户手动触发
     if (reconnectCountRef.current > MAX_RECONNECT) {
@@ -133,7 +179,7 @@ export function useWebSocket(url: string): UseWebSocketReturn {
     setStatus('connecting');
 
     try {
-      const ws = new WebSocket(url);
+      const ws = new WebSocket(target);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -184,14 +230,20 @@ export function useWebSocket(url: string): UseWebSocketReturn {
     } catch {
       setStatus('error');
     }
-  }, [url, startPing, handleIncoming]);
+  }, [startPing, handleIncoming]);
 
   const clearMessages = useCallback(() => {
+    if (typingFallbackRef.current) {
+      clearTimeout(typingFallbackRef.current);
+      typingFallbackRef.current = null;
+    }
+    setIsTyping(false);
     setMessages([]);
   }, []);
 
   const reconnect = useCallback(() => {
     reconnectCountRef.current = 0;
+    setIsTyping(false);
     reset();
     connect();
   }, [reset, connect]);
@@ -208,10 +260,18 @@ export function useWebSocket(url: string): UseWebSocketReturn {
 
       // 即时添加到本地消息列表，保证用户看到自己的消息
       const id = genId();
-      setMessages((prev) => [
-        ...prev,
-        { id, role: 'user', content, timestamp: new Date() },
-      ]);
+      setMessages((prev) =>
+        foldConsecutivePicoclawToolFeedback([...prev, { id, role: 'user', content, timestamp: new Date() }]),
+      );
+      // 元宝式：发出后即显示「正在思考」，不依赖服务端 typing_start
+      setIsTyping(true);
+      if (typingFallbackRef.current) {
+        clearTimeout(typingFallbackRef.current);
+      }
+      typingFallbackRef.current = setTimeout(() => {
+        typingFallbackRef.current = null;
+        setIsTyping(false);
+      }, TYPING_FALLBACK_MS);
 
       const msg = {
         type: 'message.send',
@@ -225,14 +285,26 @@ export function useWebSocket(url: string): UseWebSocketReturn {
     []
   );
 
+  // url 变更或挂载/卸载时：重置连接、清空消息（避免上一个 Agent 的内容混入新会话）
   useEffect(() => {
     mountedRef.current = true;
-    connect();
+    urlRef.current = url;
+    sessionIdRef.current = null;
+    reconnectCountRef.current = 0;
+    setSendError(null);
+    setIsTyping(false);
+    setMessages([]);
+    reset();
+    if (url) {
+      connect();
+    } else {
+      setStatus('idle');
+    }
     return () => {
       mountedRef.current = false;
       reset();
     };
-  }, [connect, reset]);
+  }, [url, reset, connect]);
 
   return { messages, status, isTyping, sendError, send, clearMessages, reconnect };
 }
