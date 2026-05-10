@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { ChatMessage, ConnectionStatus, WSMessage } from '../types';
 import { foldConsecutivePicoclawToolFeedback } from '../utils/foldPicoclawToolFeedback';
+import { clearDraft, loadDraft, saveDraft } from '@/lib/chatPersistence';
 
 const RECONNECT_DELAY = 2000;
 const MAX_RECONNECT = 5;
@@ -32,13 +33,19 @@ export interface UseWebSocketReturn {
   reconnect: () => void;
 }
 
+export interface UseWebSocketOptions {
+  /** 传入后将把当前会话草稿存入 localStorage（按 Agent 隔离），刷新后可恢复 */
+  persistAgentKey?: string | null;
+}
+
 /**
  * useWebSocket：维护一条与 Finclaw 后端的 WS 长连接。
  *
  * 当 `url` 为 `null` 时表示尚未选定 Agent，hook 会保持 idle 状态、不发起连接，
  * 也会在 url 切换时主动断开旧连接并清空历史，避免不同 Agent 的消息串流。
  */
-export function useWebSocket(url: string | null): UseWebSocketReturn {
+export function useWebSocket(url: string | null, options?: UseWebSocketOptions): UseWebSocketReturn {
+  const persistAgentKey = options?.persistAgentKey ?? null;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ConnectionStatus>('idle');
   const [isTyping, setIsTyping] = useState(false);
@@ -50,6 +57,8 @@ export function useWebSocket(url: string | null): UseWebSocketReturn {
   const typingFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const urlRef = useRef<string | null>(url);
+  /** 切换 Agent 后跳过首轮持久化，避免把上一 Agent 的消息写入新 Agent */
+  const skipPersistRef = useRef(false);
 
   const reset = useCallback(() => {
     if (typingFallbackRef.current) {
@@ -239,7 +248,8 @@ export function useWebSocket(url: string | null): UseWebSocketReturn {
     }
     setIsTyping(false);
     setMessages([]);
-  }, []);
+    if (persistAgentKey) clearDraft(persistAgentKey);
+  }, [persistAgentKey]);
 
   const reconnect = useCallback(() => {
     reconnectCountRef.current = 0;
@@ -285,7 +295,7 @@ export function useWebSocket(url: string | null): UseWebSocketReturn {
     []
   );
 
-  // url 变更或挂载/卸载时：重置连接、清空消息（避免上一个 Agent 的内容混入新会话）
+  // url 变更或挂载/卸载时：重置连接；若有 persistAgentKey 则从本地恢复该 Agent 草稿
   useEffect(() => {
     mountedRef.current = true;
     urlRef.current = url;
@@ -293,7 +303,12 @@ export function useWebSocket(url: string | null): UseWebSocketReturn {
     reconnectCountRef.current = 0;
     setSendError(null);
     setIsTyping(false);
-    setMessages([]);
+    skipPersistRef.current = true;
+    if (persistAgentKey && url) {
+      setMessages(loadDraft(persistAgentKey));
+    } else {
+      setMessages([]);
+    }
     reset();
     if (url) {
       connect();
@@ -304,7 +319,17 @@ export function useWebSocket(url: string | null): UseWebSocketReturn {
       mountedRef.current = false;
       reset();
     };
-  }, [url, reset, connect]);
+  }, [url, persistAgentKey, reset, connect]);
+
+  useEffect(() => {
+    if (!persistAgentKey) return;
+    if (skipPersistRef.current) {
+      skipPersistRef.current = false;
+      return;
+    }
+    const t = setTimeout(() => saveDraft(persistAgentKey, messages), 400);
+    return () => clearTimeout(t);
+  }, [messages, persistAgentKey]);
 
   return { messages, status, isTyping, sendError, send, clearMessages, reconnect };
 }

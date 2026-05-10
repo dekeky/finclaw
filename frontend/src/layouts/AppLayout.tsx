@@ -1,40 +1,26 @@
 import { Outlet } from 'react-router-dom';
+import { AppHeader } from '../components/chrome/AppHeader';
 import { AppSidebar } from '../components/AppSidebar';
-import { RssAiChatDock } from '../components/rss/RssAiChatDock';
-import { useAiDock } from '../state/aiDock';
-import { GLOBAL_CSS } from '../styles/globalCss';
+import { SidebarProvider } from '@/components/ui/sidebar';
+import { SidebarInset } from '@/components/ui/sidebar';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { Toaster } from 'sonner';
 
 export function AppLayout() {
-  const dock = useAiDock();
-
   return (
-    <>
-      <style>{GLOBAL_CSS}</style>
-      <div style={layout.shell}>
-        <AppSidebar />
-        <main className="fc-main">
-          <Outlet />
-        </main>
+    <TooltipProvider>
+      <SidebarProvider className="flex h-dvh flex-col overflow-hidden">
+        <AppHeader />
 
-        {/* 统一右下角浮窗：所有页面共用一个实例 */}
-        <RssAiChatDock
-          listEntries={dock.listEntries}
-          selectedKeys={dock.selectedKeys}
-          onToggleSelectKey={dock.toggleKey}
-          onClearSelection={dock.clearSelection}
-        />
-      </div>
-    </>
+        <div className="flex flex-1 overflow-hidden">
+          <AppSidebar />
+          <SidebarInset>
+            <Outlet />
+          </SidebarInset>
+        </div>
+
+        <Toaster position="bottom-center" />
+      </SidebarProvider>
+    </TooltipProvider>
   );
 }
-
-const layout: Record<string, React.CSSProperties> = {
-  shell: {
-    minHeight: '100dvh',
-    height: '100dvh',
-    display: 'flex',
-    background: 'var(--fc-bg-app)',
-    overflow: 'hidden',
-  },
-};
-
