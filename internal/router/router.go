@@ -1,10 +1,12 @@
 package router
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 
 	"github.com/finclaw/internal/rss"
+	"github.com/finclaw/internal/webui"
 	agentruntime "github.com/finclaw/pkg/agent"
 	"github.com/gin-gonic/gin"
 )
@@ -22,21 +24,28 @@ func NewFinClawRouter(rssServerAddr string, agentManager *agentruntime.AgentMana
 }
 
 // RoutesInit configures all HTTP and WebSocket routes
-func (fr *FinClawRouter) RoutesInit() {
+func (fr *FinClawRouter) RoutesInit() error {
 	fr.r = gin.Default()
-
-	// CORS middleware
 	fr.r.Use(CORSMiddleware())
+
+	dist, err := webui.DistFS()
+	if err != nil {
+		return fmt.Errorf("webui: %w", err)
+	}
+	fr.r.Use(webui.AgentsDocumentFallback(dist))
 
 	fr.webSocketRouter()
 	fr.rssRouter()
 	fr.agentManagerRouter()
 
+	fr.r.NoRoute(webui.SPANoRoute(dist))
+
 	log.Println("📡 Routes initialized")
+	return nil
 }
 
 func (fr *FinClawRouter) webSocketRouter() {
-	// WebSocket chat endpoints
+	fr.r.GET("/ws/chat/:agentName", fr.handleWebSocket)
 	fr.r.GET("/chat/:agentName", fr.handleWebSocket)
 
 	// Health check

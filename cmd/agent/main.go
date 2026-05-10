@@ -35,7 +35,9 @@ func main() {
 
 	frouter := router.NewFinClawRouter(finclawConf.RSSServerAddr, agentManager)
 
-	frouter.RoutesInit()
+	if err := frouter.RoutesInit(); err != nil {
+		log.Fatalf("❌ Failed to init routes: %v", err)
+	}
 	if err := frouter.Run(finclawConf.ServerAddr); err != nil {
 		log.Fatalf("❌ Failed to run router: %v", err)
 	}
