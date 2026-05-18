@@ -30,9 +30,16 @@ export function ChatContainer({
   readOnly = false,
 }: ChatContainerProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const userScrolledUpRef = useRef(false);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = bottomRef.current?.parentElement;
+    if (!el) return;
+    const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    userScrolledUpRef.current = !isAtBottom;
+    if (!userScrolledUpRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
   }, [messages, isTyping]);
 
   if (messages.length === 0) {

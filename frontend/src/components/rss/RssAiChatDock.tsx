@@ -948,7 +948,8 @@ const DOCK_CSS = `
   display: flex;
   flex-direction: column;
   padding: 0 12px;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .rss-ai-dock-inputwrap form {

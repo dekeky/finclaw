@@ -1,7 +1,6 @@
 import {
   IconChartAreaLine,
   IconChevronRight,
-  IconHome2,
   IconMessageCircle,
   IconNews,
   IconPuzzle,
@@ -52,7 +51,6 @@ const NAV_GROUPS: NavGroup[] = [
     label: '开始',
     defaultOpen: true,
     items: [
-      { title: '工作台', url: '/', icon: IconHome2 },
       { title: '对话', url: '/chat', icon: IconMessageCircle },
     ],
   },
