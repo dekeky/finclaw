@@ -66,22 +66,37 @@ export interface AgentWorkspaceFilesBody {
   files: AgentPersonaFile[];
 }
 
+/** GET /agents/:name/skills — 与后端 AgentSkillsSummary 对齐。 */
+export interface AgentSubSkillItem {
+  name: string;
+  description?: string;
+  file: string;
+}
+
+export interface AgentSkillItem {
+  name: string;
+  description: string;
+  /** workspace | global | builtin */
+  source: string;
+  /** AGENT.md frontmatter 未限制时全部为 true；有限制时仅 listed skill 为 true。 */
+  active: boolean;
+  sub_skills?: AgentSubSkillItem[];
+}
+
+export interface AgentSkillsBody {
+  workspace: string;
+  configured_skills?: string[];
+  skills: AgentSkillItem[];
+  total_count: number;
+}
+
 export type PersonaFileName = 'AGENT.md' | 'SOUL.md' | 'USER.md';
 
-export const PERSONA_FILE_LABELS: Record<PersonaFileName, { title: string; hint: string }> = {
-  'AGENT.md': {
-    title: '行为指南',
-    hint:
-      'PicoClaw 格式：首行 --- → YAML frontmatter（name/description 等）→ --- → Markdown 正文；仅正文进入 prompt。',
-  },
-  'SOUL.md': {
-    title: '灵魂 / 性格',
-    hint: '整文件 Markdown 注入 prompt；不要用 --- frontmatter，从 # Soul 等标题直接开始。',
-  },
-  'USER.md': {
-    title: '用户偏好',
-    hint: '整文件 Markdown 注入 prompt；不要用 --- frontmatter，从 # User 等标题直接开始。',
-  },
+/** 人设文件在 UI 中的展示名称（文件名 AGENT.md 等仅用于 API）。 */
+export const PERSONA_FILE_LABELS: Record<PersonaFileName, { title: string }> = {
+  'AGENT.md': { title: '行为指南' },
+  'SOUL.md': { title: '灵魂 / 性格' },
+  'USER.md': { title: '用户偏好' },
 };
 
 async function parseGinx<T>(res: Response): Promise<GinxResponse<T>> {
@@ -173,6 +188,32 @@ export async function updateAgent(name: string, req: UpdateAgentRequest): Promis
 export async function deleteAgent(name: string): Promise<void> {
   const res = await fetch(`/agents/${encodeURIComponent(name)}`, { method: 'DELETE' });
   await parseGinx<AgentStatusBody | null>(res);
+}
+
+/** GET /agents/:name/skills —— 列出 Agent 可用 Skill。 */
+export async function getAgentSkills(name: string): Promise<AgentSkillsBody> {
+  const res = await fetch(`/agents/${encodeURIComponent(name)}/skills`);
+  let json: GinxResponse<AgentSkillsBody | null> | null = null;
+  try {
+    json = (await res.json()) as GinxResponse<AgentSkillsBody | null>;
+  } catch {
+    // 非 JSON
+  }
+  if (!res.ok) {
+    if (res.status === 404 && !json?.errMsg) {
+      throw new Error(
+        'HTTP 404：后端未识别 GET /agents/:name/skills。请重新编译并重启 Agent（cmd/agent）后再试。',
+      );
+    }
+    throw new Error(json?.errMsg || `HTTP ${res.status}`);
+  }
+  if (!json) throw new Error('Empty response');
+  if (json.errMsg) throw new Error(json.errMsg);
+  if (typeof json.code === 'number' && json.code !== 200 && json.code !== 201) {
+    throw new Error(`unexpected code: ${json.code}`);
+  }
+  if (!json.body) throw new Error('empty body');
+  return json.body;
 }
 
 /** GET /agents/:name/workspace-files —— 读取人设 Markdown 文件。 */

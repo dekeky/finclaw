@@ -1,4 +1,5 @@
-import { IconAlertTriangle, IconHistory, IconRobot, IconTrash } from '@tabler/icons-react';
+import { IconAlertTriangle, IconHistory, IconTrash } from '@tabler/icons-react';
+import { AgentAvatar } from '../components/AgentAvatar';
 import { ChatContainer } from '../components/ChatContainer';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -106,9 +107,10 @@ export default function ChatPage() {
               {agentsLoadStatus === 'loading' ? '加载 Agent…' : agentsLoadStatus === 'error' ? 'Agent 列表加载失败' : '暂无 Agent'}
             </Badge>
           ) : (
-            <label className="relative flex min-w-0 items-center gap-1.5">
+            <div className="flex min-w-0 items-center gap-2">
+              {currentAgent && <AgentAvatar name={currentAgent} size="sm" />}
+              <label className="relative flex min-w-0 flex-1 items-center">
               <span className="sr-only">选择对话使用的 Agent</span>
-              <IconRobot size={13} className="pointer-events-none absolute left-2 top-1/2 z-[1] -translate-y-1/2 text-muted-foreground" aria-hidden />
               <select
                 aria-label="选择对话使用的 Agent"
                 value={currentAgent ?? ''}
@@ -117,7 +119,7 @@ export default function ChatPage() {
                   selectAgent(v ? v : null);
                 }}
                 className={cn(
-                  'h-7 max-w-[min(100%,18rem)] min-w-[10rem] cursor-pointer appearance-none rounded-md border border-input bg-background py-1 pl-7 pr-8 text-xs shadow-xs outline-none transition-colors',
+                  'h-7 max-w-[min(100%,18rem)] min-w-[10rem] cursor-pointer appearance-none rounded-md border border-input bg-background py-1 pl-3 pr-8 text-xs shadow-xs outline-none transition-colors',
                   'hover:bg-accent/50 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50',
                 )}
               >
@@ -139,6 +141,7 @@ export default function ChatPage() {
                 <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </label>
+            </div>
           )}
 
           {agentsLoadStatus === 'error' && agentsLoadError && (
@@ -196,9 +199,7 @@ export default function ChatPage() {
       {/* No Agent Selected State */}
       {!currentAgent && (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-500/10">
-            <IconRobot className="size-7 text-violet-500" />
-          </div>
+          <AgentAvatar name="?" size="xl" className="opacity-60" />
           <div className="text-sm font-medium text-muted-foreground">请先选择 Agent</div>
           <p className="max-w-xs text-xs text-muted-foreground">从上方 Agent 选择框中选一位开始对话</p>
         </div>
@@ -209,7 +210,12 @@ export default function ChatPage() {
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 md:px-8 lg:px-24 xl:px-48 [scrollbar-gutter:stable]">
           <div className="mx-auto flex w-full max-w-[64rem] flex-col gap-8">
             <ErrorBoundary>
-              <ChatContainer messages={messages} isTyping={isTyping} onClear={handleArchiveAndClear} />
+              <ChatContainer
+                messages={messages}
+                isTyping={isTyping}
+                onClear={handleArchiveAndClear}
+                agentName={currentAgent}
+              />
             </ErrorBoundary>
           </div>
         </div>

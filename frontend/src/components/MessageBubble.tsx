@@ -5,12 +5,13 @@ import { MarkdownContent } from './MarkdownContent';
 import { AGGREGATED_TOOL_FEEDBACK_JOIN, isPicoclawToolFeedbackContent } from '../utils/foldPicoclawToolFeedback';
 import { splitAssistantContent } from '../utils/splitAssistantContent';
 import * as Collapsible from '@radix-ui/react-collapsible';
-import { AssistantAvatar } from './ChatMascot';
+import { AgentAvatar } from './AgentAvatar';
 
 const TOOL_EMOJI = '\u{1F527}';
 
 interface MessageBubbleProps {
   message: ChatMessage;
+  agentName: string;
   variant?: 'default' | 'dock';
   toolOutputActive?: boolean;
   thoughtOutputActive?: boolean;
@@ -377,7 +378,7 @@ function ThinkingPanel({
   );
 }
 
-export function MessageBubble({ message, toolOutputActive, thoughtOutputActive }: MessageBubbleProps) {
+export function MessageBubble({ message, agentName, toolOutputActive, thoughtOutputActive }: MessageBubbleProps) {
   const time = message.timestamp.toLocaleTimeString('zh-CN', {
     hour: '2-digit',
     minute: '2-digit',
@@ -422,11 +423,11 @@ export function MessageBubble({ message, toolOutputActive, thoughtOutputActive }
       className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} animate-in duration-300 fade-in-0 slide-in-from-bottom-2`}
     >
       {isUser ? (
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-500 text-xs font-semibold text-white">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-violet-600 text-xs font-semibold text-white shadow-sm shadow-violet-500/25">
           我
         </div>
       ) : (
-        <AssistantAvatar />
+        <AgentAvatar name={agentName} />
       )}
 
       <div className={`flex max-w-[90%] flex-col gap-1.5 ${isUser ? 'items-end' : 'items-start'}`}>

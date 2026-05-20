@@ -27,6 +27,7 @@ func NewAgentManagerRouter(agentManager *AgentManager, r *gin.Engine) *AgentMana
 func (ar *AgentManagerRouter) ConfigRouter() {
 	group := ar.r.Group("/agents")
 	// 子资源路由须在 /:name 之前注册，避免被单段路由抢占。
+	group.GET("/:name/skills", ar.getAgentSkills)
 	group.GET("/:name/workspace-files", ar.getWorkspaceFiles)
 	group.POST("/:name/workspace-files/:file/generate", ar.generateWorkspaceFile)
 	group.PUT("/:name/workspace-files/:file", ar.putWorkspaceFile)
@@ -342,6 +343,22 @@ func (ar *AgentManagerRouter) resolveAgentWorkspace(name string) (string, error)
 		return "", fmt.Errorf("stat agent config: %w", err)
 	}
 	return picoclaw.AgentWorkspacePath(home, name), nil
+}
+
+// GET /agents/:name/skills — list skills visible to the agent (workspace / global / builtin).
+func (ar *AgentManagerRouter) getAgentSkills(c *gin.Context) {
+	name := c.Param("name")
+	workspace, err := ar.resolveAgentWorkspace(name)
+	if err != nil {
+		ginx.NewRender(c, http.StatusNotFound).Err(err)
+		return
+	}
+	summary, err := picoclaw.ListAgentSkills(workspace)
+	if err != nil {
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	ginx.NewRender(c).Data(summary)
 }
 
 // GET /agents/:name/workspace-files — read AGENT.md, SOUL.md, USER.md.

@@ -527,6 +527,7 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
                   messages={messages}
                   isTyping={isTyping}
                   onClear={clearMessages}
+                  agentName={currentAgent}
                   variant="dock"
                   onQuickPrompt={handleSend}
                 />

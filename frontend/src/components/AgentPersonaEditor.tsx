@@ -15,6 +15,7 @@ import {
   setGenerateStepStatus,
   type GenerateStep,
 } from './PersonaGenerateDialog';
+import { IconChevronDown, IconSparkles } from '@tabler/icons-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/cn';
@@ -41,7 +42,6 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
   const [viewMode, setViewMode] = useState<ViewMode>('edit');
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [workspace, setWorkspace] = useState('');
   const [files, setFiles] = useState<Record<PersonaFileName, AgentPersonaFile> | null>(null);
   const [drafts, setDrafts] = useState<Record<PersonaFileName, string>>({
     'AGENT.md': '',
@@ -56,6 +56,7 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [initBusy, setInitBusy] = useState(false);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
@@ -74,7 +75,6 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
       const body = await getAgentWorkspaceFiles(agentName);
       if (gen !== loadGenRef.current) return;
       const mapped = fileMap(body.files);
-      setWorkspace(body.workspace);
       setFiles(mapped);
       const nextDrafts = {
         'AGENT.md': mapped['AGENT.md'].content,
@@ -97,6 +97,7 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
   }, [load]);
 
   useEffect(() => {
+    setAiPanelOpen(false);
     setAiPrompt('');
     setGenerateError(null);
   }, [activeTab]);
@@ -110,7 +111,6 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
   const dirty = activeDraft !== savedDrafts[activeTab];
   const showEdit = viewMode === 'edit';
   const showPreview = viewMode === 'edit' || viewMode === 'preview';
-  const tabMeta = PERSONA_FILE_LABELS[activeTab];
 
   const onSave = async () => {
     if (saving || !dirty) return;
@@ -134,7 +134,6 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
     try {
       const body = await initAgentWorkspaceFiles(agentName);
       const mapped = fileMap(body.files);
-      setWorkspace(body.workspace);
       setFiles(mapped);
       const nextDrafts = {
         'AGENT.md': mapped['AGENT.md'].content,
@@ -202,32 +201,7 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
         error={generateError}
         phase={generatePhase}
       />
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/40 px-4 py-2.5">
-        <div className="min-w-0">
-          <p className="text-[11px] text-muted-foreground">
-            <span className="font-mono text-foreground/80">{activeTab}</span>
-            {' — '}
-            {tabMeta.hint}
-          </p>
-          {workspace && (
-            <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground/80" title={workspace}>
-              {workspace}
-            </p>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {missingCount > 0 && (
-            <Button type="button" variant="outline" size="sm" disabled={initBusy || loading} onClick={() => void onInitMissing()}>
-              {initBusy ? '初始化中…' : `初始化缺失 (${missingCount})`}
-            </Button>
-          )}
-          <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => void load()}>
-            刷新
-          </Button>
-        </div>
-      </div>
-
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/30 px-4 py-2">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/40 px-4 py-2">
         <div className="flex flex-wrap gap-1">
           {PERSONA_TABS.map((name) => {
             const label = PERSONA_FILE_LABELS[name].title;
@@ -252,20 +226,30 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
             );
           })}
         </div>
-        <div className="flex rounded-lg border border-border/60 p-0.5">
-          {(['edit', 'preview'] as const).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => setViewMode(mode)}
-              className={cn(
-                'rounded-md px-2.5 py-1 text-[11px] transition-colors',
-                viewMode === mode ? 'bg-background font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {mode === 'edit' ? '编辑' : '预览'}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          {missingCount > 0 && (
+            <Button type="button" variant="outline" size="sm" disabled={initBusy || loading} onClick={() => void onInitMissing()}>
+              {initBusy ? '初始化中…' : `初始化缺失 (${missingCount})`}
+            </Button>
+          )}
+          <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => void load()}>
+            刷新
+          </Button>
+          <div className="flex rounded-lg border border-border/60 p-0.5">
+            {(['edit', 'preview'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setViewMode(mode)}
+                className={cn(
+                  'rounded-md px-2.5 py-1 text-[11px] transition-colors',
+                  viewMode === mode ? 'bg-background font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {mode === 'edit' ? '编辑' : '预览'}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -276,39 +260,76 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
           <div className="text-xs text-destructive">⚠️ {loadError}</div>
         ) : (
           <>
-            <div className="mb-3 shrink-0 rounded-lg border border-violet-500/20 bg-violet-500/5 p-3">
-              <p className="mb-2 text-xs font-medium text-foreground">AI 生成</p>
-              <div className="flex flex-col gap-2 lg:flex-row">
-                <Input
-                  value={aiPrompt}
-                  onChange={(e) => setAiPrompt(e.target.value)}
-                  placeholder={
-                    activeTab === 'SOUL.md'
-                      ? '例如：沉稳专业的价值投资顾问，说话简洁，少用 emoji'
-                      : activeTab === 'USER.md'
-                        ? '例如：中文用户，东八区，偏好简洁直接的回答'
-                        : '例如：专注 A 股量化选股的助手，擅长财务分析与风险提示'
-                  }
-                  disabled={generating || saving}
-                  className="min-w-0 flex-1 text-sm"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      void onGenerate();
-                    }
-                  }}
+            <div className="mb-3 shrink-0 overflow-hidden rounded-lg border border-violet-500/25 bg-gradient-to-r from-violet-500/[0.08] via-fuchsia-500/[0.05] to-violet-500/[0.08]">
+              <button
+                type="button"
+                onClick={() => setAiPanelOpen((open) => !open)}
+                disabled={generating}
+                aria-expanded={aiPanelOpen}
+                className={cn(
+                  'flex w-full items-center gap-3 px-3.5 py-2.5 text-left transition-colors',
+                  'hover:from-violet-500/12 hover:via-fuchsia-500/8 hover:to-violet-500/12',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                  generating && 'cursor-wait opacity-80',
+                )}
+              >
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow-sm shadow-violet-500/30">
+                  <IconSparkles className="size-4" stroke={1.75} aria-hidden />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-xs font-medium text-violet-800 dark:text-violet-200">AI 生成</span>
+                  <span className="block truncate text-[11px] text-muted-foreground">
+                    {aiPanelOpen
+                      ? '收起提示词输入'
+                      : `点击用自然语言生成 ${PERSONA_FILE_LABELS[activeTab].title}`}
+                  </span>
+                </span>
+                <IconChevronDown
+                  className={cn(
+                    'size-4 shrink-0 text-violet-600/70 transition-transform duration-200 dark:text-violet-300/70',
+                    aiPanelOpen && 'rotate-180',
+                  )}
+                  stroke={1.75}
+                  aria-hidden
                 />
-                <Button
-                  type="button"
-                  size="sm"
-                  className="shrink-0 lg:min-w-[6.5rem]"
-                  disabled={!aiPrompt.trim() || generating || saving}
-                  onClick={() => void onGenerate()}
-                >
-                  {generating ? '生成中…' : 'AI 生成'}
-                </Button>
-              </div>
-              {generateError && <p className="mt-2 text-xs text-destructive">{generateError}</p>}
+              </button>
+
+              {aiPanelOpen && (
+                <div className="border-t border-violet-500/15 bg-background/60 px-3.5 py-3 backdrop-blur-sm">
+                  <div className="flex flex-col gap-2 lg:flex-row">
+                    <Input
+                      value={aiPrompt}
+                      onChange={(e) => setAiPrompt(e.target.value)}
+                      placeholder={
+                        activeTab === 'SOUL.md'
+                          ? '例如：沉稳专业的价值投资顾问，说话简洁，少用 emoji'
+                          : activeTab === 'USER.md'
+                            ? '例如：中文用户，东八区，偏好简洁直接的回答'
+                            : '例如：专注 A 股量化选股的助手，擅长财务分析与风险提示'
+                      }
+                      disabled={generating || saving}
+                      className="min-w-0 flex-1 border-violet-500/20 text-sm focus-visible:ring-violet-500/30"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          void onGenerate();
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="shrink-0 bg-violet-600 hover:bg-violet-600/90 lg:min-w-[6.5rem]"
+                      disabled={!aiPrompt.trim() || generating || saving}
+                      onClick={() => void onGenerate()}
+                    >
+                      {generating ? '生成中…' : '开始生成'}
+                    </Button>
+                  </div>
+                  {generateError && <p className="mt-2 text-xs text-destructive">{generateError}</p>}
+                </div>
+              )}
             </div>
 
             <div
@@ -325,7 +346,7 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
                     onChange={(e) => setDrafts((prev) => ({ ...prev, [activeTab]: e.target.value }))}
                     spellCheck={false}
                     className="min-h-0 w-full flex-1 resize-none rounded-lg border border-border bg-background px-4 py-3 font-mono text-[13px] leading-relaxed text-foreground outline-none focus-visible:ring-2 focus-visible:ring-violet-500/30"
-                    placeholder={`在此编辑 ${activeTab}，或使用上方 AI 生成…`}
+                    placeholder="在此编辑 Markdown，或点击上方 AI 条生成…"
                     disabled={saving || generating}
                   />
                 </div>

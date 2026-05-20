@@ -14,7 +14,7 @@ export function AppLayout() {
 
         <div className="flex flex-1 overflow-hidden">
           <AppSidebar />
-          <SidebarInset>
+          <SidebarInset className="min-h-0 overflow-hidden">
             <Outlet />
           </SidebarInset>
         </div>

@@ -31,7 +31,6 @@ import {
   SidebarSeparator,
   useSidebar,
 } from '@/components/ui/sidebar';
-import { Badge } from '@/components/ui/badge';
 
 interface NavItem {
   title: string;
@@ -126,10 +125,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                             </Link>
                           </SidebarMenuButton>
                           {item.badge && (
-                            <SidebarMenuBadge>
-                              <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                                {item.badge}
-                              </Badge>
+                            <SidebarMenuBadge className="h-auto min-w-0 rounded-full border border-border/60 bg-muted/40 px-1.5 py-0 text-[10px] font-normal text-muted-foreground">
+                              {item.badge}
                             </SidebarMenuBadge>
                           )}
                         </SidebarMenuItem>

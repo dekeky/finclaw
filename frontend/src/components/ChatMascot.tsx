@@ -25,13 +25,3 @@ export function ChatMascot({ size = 64, className, style, decorative }: ChatMasc
   );
 }
 
-/** 消息列表中的助手头像（36px） */
-export function AssistantAvatar({ className }: { className?: string }) {
-  return (
-    <ChatMascot
-      size={36}
-      decorative
-      className={`h-9 w-9 shrink-0 rounded-xl ring-1 ring-border/40 ${className ?? ''}`}
-    />
-  );
-}

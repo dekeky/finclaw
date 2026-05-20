@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { IconCpu, IconFileDescription, IconPuzzle, IconTrash } from '@tabler/icons-react';
 import { useAgents } from '../state/agents';
 import { getAgent, type AgentDetailBody } from '../api/agents';
+import { AgentAvatar } from '../components/AgentAvatar';
 import { AgentPersonaEditor } from '../components/AgentPersonaEditor';
+import { AgentSkillsPanel } from '../components/AgentSkillsPanel';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { cn } from '@/lib/cn';
 
 type FormState = { name: string; model: string; apiBase: string; apiKey: string };
 type EditFormState = { model: string; apiBase: string; apiKey: string };
@@ -23,9 +27,9 @@ const PRESETS = [
 function ModelFieldHint() {
   return (
     <p className="mt-1 text-[11px] text-muted-foreground">
-      格式：<span className="font-mono">provider/模型ID</span>，例如{' '}
+      格式为 <span className="font-mono">服务商/模型名</span>，例如{' '}
       <span className="font-mono">deepseek/deepseek-chat</span>、{' '}
-      <span className="font-mono">openai/gpt-4o</span>。provider 决定使用哪类 API 客户端。
+      <span className="font-mono">openai/gpt-4o</span>。
     </p>
   );
 }
@@ -33,6 +37,38 @@ function ModelFieldHint() {
 function sectionKey(name: string): string {
   const ch = name.trim().charAt(0);
   return /[a-zA-Z]/.test(ch) ? ch.toUpperCase() : '#';
+}
+
+type DetailTab = 'persona' | 'skills' | 'config';
+
+const DETAIL_TAB_STORAGE_KEY = 'finclaw.agents.detailTab';
+
+const DETAIL_TABS: Array<{
+  id: DetailTab;
+  label: string;
+  icon: typeof IconFileDescription;
+}> = [
+  { id: 'persona', label: '人设文件', icon: IconFileDescription },
+  { id: 'skills', label: 'Skills', icon: IconPuzzle },
+  { id: 'config', label: '模型配置', icon: IconCpu },
+];
+
+function loadDetailTab(): DetailTab {
+  try {
+    const v = sessionStorage.getItem(DETAIL_TAB_STORAGE_KEY);
+    if (v === 'persona' || v === 'skills' || v === 'config') return v;
+  } catch {
+    /* private mode */
+  }
+  return 'persona';
+}
+
+function saveDetailTab(tab: DetailTab) {
+  try {
+    sessionStorage.setItem(DETAIL_TAB_STORAGE_KEY, tab);
+  } catch {
+    /* private mode */
+  }
 }
 
 function groupAgents(names: string[]): Array<{ key: string; names: string[] }> {
@@ -52,7 +88,7 @@ function groupAgents(names: string[]): Array<{ key: string; names: string[] }> {
 }
 
 export default function AgentsPage() {
-  const { agents, currentAgent, selectAgent, refresh, createAgent, updateAgent, deleteAgent } = useAgents();
+  const { agents, currentAgent, refresh, createAgent, updateAgent, deleteAgent } = useAgents();
 
   const [search, setSearch] = useState('');
   const [selectedName, setSelectedName] = useState<string | null>(null);
@@ -72,7 +108,12 @@ export default function AgentsPage() {
   const [agentRuntime, setAgentRuntime] = useState<AgentDetailBody | null>(null);
   const [agentRuntimeLoading, setAgentRuntimeLoading] = useState(false);
   const [agentRuntimeError, setAgentRuntimeError] = useState<string | null>(null);
-  const [detailTab, setDetailTab] = useState<'persona' | 'config'>('persona');
+  const [detailTab, setDetailTabState] = useState<DetailTab>(loadDetailTab);
+
+  const setDetailTab = useCallback((tab: DetailTab) => {
+    saveDetailTab(tab);
+    setDetailTabState(tab);
+  }, []);
 
   useEffect(() => { void refresh(); }, []);
 
@@ -84,6 +125,7 @@ export default function AgentsPage() {
 
   const sections = useMemo(() => groupAgents(filtered), [filtered]);
 
+  // 仅在校正无效选中项时同步，避免切换列表项时因 currentAgent 变化触发多余更新
   useEffect(() => {
     setSelectedName((prev) => {
       if (prev && agents.includes(prev)) return prev;
@@ -102,7 +144,6 @@ export default function AgentsPage() {
     setEditBaseline(null);
     setEditForm(EMPTY_EDIT_FORM);
     setEditSubmitError(null);
-    setDetailTab('persona');
   }, [detailName]);
 
   const loadLatestForEdit = useCallback(async () => {
@@ -234,7 +275,15 @@ export default function AgentsPage() {
           <h1 className="text-base font-medium tracking-tight text-foreground/90">Agent 管理</h1>
           <Badge variant="outline" className="text-[10px]">{agents.length}</Badge>
         </div>
-        <Button variant="ghost" size="sm" onClick={() => { void refresh(); setAddOpen(true); }} className="text-xs">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-xs md:hidden"
+          onClick={() => {
+            void refresh();
+            setAddOpen(true);
+          }}
+        >
           添加 Agent
         </Button>
       </div>
@@ -268,18 +317,18 @@ export default function AgentsPage() {
                         <button
                           key={name}
                           type="button"
-                          onClick={() => { setAddOpen(false); setSelectedName(name); selectAgent(name); }}
+                          onClick={() => {
+                            setAddOpen(false);
+                            setSelectedName(name);
+                          }}
                           className={`w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${selected ? 'bg-accent/80 font-medium' : 'hover:bg-muted/60'}`}
                         >
-                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-violet-600 text-xs font-semibold text-white">
-                            {name.slice(0, 1).toUpperCase()}
-                          </div>
+                          <AgentAvatar name={name} />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
                               <span className="truncate text-sm text-foreground">{name}</span>
                               {chatting && <Badge variant="secondary" className="text-[10px]">当前</Badge>}
                             </div>
-                            <span className="font-mono text-[10px] text-muted-foreground">/ws/chat/{name}</span>
                           </div>
                         </button>
                       );
@@ -289,6 +338,19 @@ export default function AgentsPage() {
               </div>
             )}
           </ScrollArea>
+          <div className="shrink-0 border-t border-border/50 p-3">
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full text-xs"
+              onClick={() => {
+                void refresh();
+                setAddOpen(true);
+              }}
+            >
+              添加 Agent
+            </Button>
+          </div>
         </div>
 
         {/* Right Pane - Detail */}
@@ -333,7 +395,7 @@ export default function AgentsPage() {
                   <div>
                     <label className="mb-1.5 block text-xs font-medium text-muted-foreground">api_key *</label>
                     <Input type="password" value={form.apiKey} onChange={(e) => setForm((s) => ({ ...s, apiKey: e.target.value }))} placeholder="sk-..." />
-                    <p className="mt-1 text-[11px] text-muted-foreground">仅发往后端，不会在浏览器里长期保存。</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">密钥仅用于保存到服务端，不会留在浏览器中。</p>
                   </div>
                   {submitError && <p className="text-xs text-destructive">{submitError}</p>}
                   <div className="flex justify-end gap-2">
@@ -345,41 +407,62 @@ export default function AgentsPage() {
             </ScrollArea>
           ) : detailName ? (
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border/50 px-4 py-3">
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-violet-600 text-lg font-bold text-white">
-                    {detailName.slice(0, 1).toUpperCase()}
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/50 px-4 py-2.5">
+                <nav className="flex flex-wrap gap-1.5">
+                  {DETAIL_TABS.map(({ id, label, icon: Icon }) => {
+                    const active = detailTab === id;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setDetailTab(id)}
+                        className={cn(
+                          'inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm transition-colors',
+                          active
+                            ? 'bg-violet-500 font-medium text-white shadow-sm shadow-violet-500/25'
+                            : 'bg-muted/50 text-muted-foreground hover:bg-violet-500/10 hover:text-violet-700 dark:hover:text-violet-300',
+                        )}
+                      >
+                        <Icon className="h-4 w-4" stroke={active ? 2 : 1.75} />
+                        {label}
+                      </button>
+                    );
+                  })}
+                </nav>
+                {detailTab === 'config' && (
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="bg-violet-600 hover:bg-violet-600/90"
+                      onClick={() => {
+                        setEditConfigOpen(!editConfigOpen);
+                        if (!editConfigOpen) void loadLatestForEdit();
+                      }}
+                    >
+                      {editConfigOpen ? '收起编辑' : '更新配置'}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() => void onDelete(detailName)}
+                      disabled={pendingDelete === detailName}
+                    >
+                      <IconTrash className="mr-1.5 h-3.5 w-3.5" stroke={1.75} />
+                      {pendingDelete === detailName ? '移除中…' : '移除'}
+                    </Button>
                   </div>
-                  <div className="min-w-0">
-                    <h2 className="truncate text-base font-semibold text-foreground">{detailName}</h2>
-                    <code className="text-[11px] text-muted-foreground">/ws/chat/{detailName}</code>
-                  </div>
-                </div>
-                <div className="flex rounded-lg border border-border/60 p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => setDetailTab('persona')}
-                    className={`rounded-md px-3 py-1.5 text-xs transition-colors ${detailTab === 'persona' ? 'bg-background font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                  >
-                    人设文件
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDetailTab('config')}
-                    className={`rounded-md px-3 py-1.5 text-xs transition-colors ${detailTab === 'config' ? 'bg-background font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                  >
-                    模型配置
-                  </button>
-                </div>
+                )}
               </div>
 
               {detailTab === 'persona' ? (
                 <AgentPersonaEditor key={detailName} agentName={detailName} className="min-h-0 flex-1" />
+              ) : detailTab === 'skills' ? (
+                <AgentSkillsPanel key={detailName} agentName={detailName} className="min-h-0 flex-1" />
               ) : (
                 <ScrollArea className="flex-1">
                   <div className="max-w-3xl p-4 md:p-5">
-                    <p className="mb-4 text-xs text-muted-foreground">本页仅做配置与管理。与 Agent 聊天请使用右下角浮窗。</p>
-
                     {agentRuntimeError && (
                       <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-destructive">⚠️ {agentRuntimeError}</div>
                     )}
@@ -390,12 +473,6 @@ export default function AgentsPage() {
                       <Card size="sm" className="mb-4">
                         <CardContent className="p-4">
                           <dl className="grid gap-2 text-sm">
-                            {agentRuntime.workspace && (
-                              <div className="grid grid-cols-[80px_1fr] gap-2">
-                                <dt className="text-xs text-muted-foreground">工作目录</dt>
-                                <dd className="break-all font-mono text-xs">{agentRuntime.workspace}</dd>
-                              </div>
-                            )}
                             <div className="grid grid-cols-[80px_1fr] gap-2">
                               <dt className="text-xs text-muted-foreground">模型</dt>
                               <dd className="break-all font-mono text-xs">{agentRuntime.model_provider.model || '—'}</dd>
@@ -415,18 +492,12 @@ export default function AgentsPage() {
                       </Card>
                     ) : null}
 
-                    <div className="flex flex-wrap gap-2">
-                      <Button variant="outline" size="sm" onClick={() => { setEditConfigOpen(!editConfigOpen); if (!editConfigOpen) void loadLatestForEdit(); }}>
-                        {editConfigOpen ? '收起' : '更新配置'}
-                      </Button>
-                      <Button variant="destructive" size="sm" onClick={() => void onDelete(detailName)} disabled={pendingDelete === detailName}>
-                        {pendingDelete === detailName ? '移除中…' : '移除'}
-                      </Button>
-                    </div>
-
                     {editConfigOpen && (
                       <div className="mt-4 rounded-xl border border-border bg-muted/20 p-4">
-                        <p className="mb-3 text-xs text-muted-foreground">保存后将重启该 Agent。{editBaseline?.model_provider.has_api_key ? '若已配置密钥，可留空 api_key 以沿用。' : '必须填写 api_key。'}</p>
+                        <p className="mb-3 text-xs text-muted-foreground">
+                          保存后将重启该 Agent。
+                          {editBaseline?.model_provider.has_api_key ? ' 若已配置密钥，可留空以沿用。' : ' 请填写 API 密钥。'}
+                        </p>
 
                         {editFetchLoading ? (
                           <p className="text-xs text-muted-foreground">加载配置中…</p>

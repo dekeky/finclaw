@@ -62,7 +62,7 @@ export function PersonaGenerateDialog({
             AI 生成 {label}
           </Dialog.Title>
           <Dialog.Description className="mt-1 text-xs text-muted-foreground">
-            正在根据提示词生成 <span className="font-mono">{fileName}</span>
+            正在根据你的描述生成内容…
           </Dialog.Description>
 
           <div className="mt-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
@@ -104,9 +104,9 @@ export function PersonaGenerateDialog({
 }
 
 export const PERSONA_GENERATE_STEP_DEFS = [
-  { id: 'validate', label: '校验提示词与文件类型' },
-  { id: 'call', label: '调用 Agent 绑定的模型' },
-  { id: 'finalize', label: '整理 Markdown 并写入编辑器' },
+  { id: 'validate', label: '校验输入' },
+  { id: 'call', label: '正在生成' },
+  { id: 'finalize', label: '写入编辑器' },
 ] as const;
 
 export function initialGenerateSteps(): GenerateStep[] {
