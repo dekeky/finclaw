@@ -23,7 +23,11 @@ func LoadAgentByConfig(rootDir, agentName string) (*agent.AgentLoop, *bus.Messag
 		return nil, nil, fmt.Errorf("failed to load agent config: %w", err)
 	}
 	conf.Agents.Defaults.ToolFeedback.Enabled = true
-	conf.Agents.Defaults.Workspace = agentWorkspacePath(rootDir, agentName)
+	workspace := agentWorkspacePath(rootDir, agentName)
+	conf.Agents.Defaults.Workspace = workspace
+	if err := EnsurePersonaFiles(workspace); err != nil {
+		return nil, nil, fmt.Errorf("init persona files: %w", err)
+	}
 	provider, _, err := providers.CreateProvider(conf)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create provider for agent: %w", err)
@@ -52,7 +56,11 @@ func NewPicoclawAgent(rootDir string, msgBus *bus.MessageBus, modelConf *picocla
 		return nil, err
 	}
 	picoConf.Agents.Defaults.ToolFeedback.Enabled = true
-	picoConf.Agents.Defaults.Workspace = agentWorkspacePath(rootDir, agentName)
+	workspace := agentWorkspacePath(rootDir, agentName)
+	picoConf.Agents.Defaults.Workspace = workspace
+	if err := EnsurePersonaFiles(workspace); err != nil {
+		return nil, fmt.Errorf("init persona files: %w", err)
+	}
 
 	if err := applyModelConfig(picoConf, modelConf); err != nil {
 		return nil, err
@@ -107,10 +115,20 @@ func applyModelConfig(picoConf *picoclawconfig.Config, modelConf *picoclawconfig
 	return nil
 }
 
-func agentWorkspacePath(rootDir, agentName string) string {
+// AgentWorkspacePath returns the PicoClaw workspace directory for an agent.
+func AgentWorkspacePath(rootDir, agentName string) string {
 	return filepath.Join(rootDir, agentName, "workspace")
 }
 
-func agentConfigPath(rootDir, agentName string) string {
+// AgentConfigPath returns the PicoClaw config.json path for an agent.
+func AgentConfigPath(rootDir, agentName string) string {
 	return filepath.Join(rootDir, agentName, "config.json")
+}
+
+func agentWorkspacePath(rootDir, agentName string) string {
+	return AgentWorkspacePath(rootDir, agentName)
+}
+
+func agentConfigPath(rootDir, agentName string) string {
+	return AgentConfigPath(rootDir, agentName)
 }

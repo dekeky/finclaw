@@ -1,6 +1,11 @@
 import { useEffect, useRef } from 'react';
 import type { ChatMessage } from '../types';
 import { MessageBubble } from './MessageBubble';
+import { formatElapsedSeconds, useElapsedSeconds } from '../hooks/useElapsedSeconds';
+import { isToolMessage } from '../utils/foldPicoclawToolFeedback';
+import { isThoughtMessage } from '../utils/foldThoughtMessages';
+import { splitAssistantContent } from '../utils/splitAssistantContent';
+import { ChatMascot } from './ChatMascot';
 
 const DOCK_QUICK_PROMPTS = [
   '用要点列表总结我已选文章',
@@ -32,6 +37,21 @@ export function ChatContainer({
   const bottomRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
 
+  function isThoughtOutputActive(msg: ChatMessage, index: number): boolean {
+    if (index !== messages.length - 1) return false;
+    if (isThoughtMessage(msg)) return true;
+    if (isTyping && msg.role === 'assistant') {
+      return Boolean(splitAssistantContent(msg.content).thought);
+    }
+    return false;
+  }
+
+  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : undefined;
+  const thoughtPanelActive =
+    lastMsg != null && isThoughtOutputActive(lastMsg, messages.length - 1);
+  const showTypingBubble = isTyping && !readOnly && !thoughtPanelActive;
+  const typingTiming = useElapsedSeconds(showTypingBubble);
+
   useEffect(() => {
     const el = bottomRef.current?.parentElement;
     if (!el) return;
@@ -46,7 +66,11 @@ export function ChatContainer({
     if (variant === 'dock') {
       return (
         <div className="flex flex-1 flex-col items-center justify-center px-6 py-8 text-center">
-          <div className="mb-3 text-4xl" aria-hidden>✨</div>
+          <ChatMascot
+            size={72}
+            decorative
+            className="mb-3 rounded-2xl shadow-md ring-2 ring-violet-500/15"
+          />
           <h3 className="mb-2 text-base font-medium text-foreground">想问点什么？</h3>
           <p className="mb-4 max-w-xs text-xs text-muted-foreground leading-relaxed">
             可直接输入问题；在资讯列表勾选文章后提问，会自动带上原文链接。
@@ -70,13 +94,15 @@ export function ChatContainer({
     }
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-16">
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-violet-600 text-3xl text-white shadow-lg shadow-violet-500/20">
-          💼
-        </div>
+        <ChatMascot
+          size={112}
+          decorative
+          className="rounded-3xl shadow-lg shadow-violet-500/15 ring-2 ring-violet-500/20"
+        />
         <div className="text-center">
-          <h2 className="mb-2 text-xl font-medium text-foreground/90">Welcome to Finclaw</h2>
+          <h2 className="mb-2 text-xl font-medium text-foreground/90">欢迎使用 Finclaw</h2>
           <p className="max-w-sm text-sm text-muted-foreground">
-            Your AI-powered financial assistant. Ask questions about markets, analysis, or any financial topic.
+            你的 AI 金融助手。可以问我市场、分析或任何财经相关的问题。
           </p>
         </div>
       </div>
@@ -99,18 +125,24 @@ export function ChatContainer({
         </div>
       )}
 
-      {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} variant={variant === 'dock' ? 'dock' : 'default'} />
+      {messages.map((msg, index) => (
+        <MessageBubble
+          key={msg.id}
+          message={msg}
+          variant={variant === 'dock' ? 'dock' : 'default'}
+          toolOutputActive={index === messages.length - 1 && isToolMessage(msg)}
+          thoughtOutputActive={isThoughtOutputActive(msg, index)}
+        />
       ))}
 
-      {isTyping && !readOnly && (
+      {showTypingBubble && (
         <div className="flex items-start gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-100 to-amber-200 text-xs font-semibold text-amber-700 dark:from-amber-900/50 dark:to-amber-950/30">
-            AI
-          </div>
+          <ChatMascot size={36} decorative className="h-9 w-9 shrink-0 rounded-xl ring-1 ring-border/40" />
           <div className="rounded-2xl rounded-tl-sm border border-border/60 bg-card px-4 py-3">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-muted-foreground">正在思考…</span>
+              <span className="text-xs font-medium tabular-nums text-muted-foreground">
+                努力工作中 · {formatElapsedSeconds(typingTiming.seconds)}
+              </span>
               <div className="flex gap-1">
                 {[0, 0.2, 0.4].map((delay) => (
                   <span

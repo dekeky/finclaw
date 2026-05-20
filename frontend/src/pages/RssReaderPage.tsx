@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { MarkdownContent } from '../components/MarkdownContent';
 import { fetchAllRssData, fetchRssSectorData, fetchRssSources } from '../api/rss';
 import { useReadGuids } from '../hooks/useReadGuids';
 import type { RssData, RssItem, RssSourceIndex } from '../types/rss';
@@ -338,8 +337,8 @@ function Description({ text }: { text: string }) {
     );
   }
   return (
-    <div className="prose prose-sm max-w-none dark:prose-invert text-foreground/80 text-[13px] leading-relaxed">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
-    </div>
+    <MarkdownContent size="sm" className="text-foreground/80">
+      {text}
+    </MarkdownContent>
   );
 }

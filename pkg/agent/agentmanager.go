@@ -12,6 +12,7 @@ import (
 	"github.com/finclaw/internal/config"
 	"github.com/finclaw/pkg/agent/picoclaw"
 	"github.com/finclaw/pkg/channels/finclaw"
+	picoagent "github.com/sipeed/picoclaw/pkg/agent"
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
@@ -51,6 +52,15 @@ func (m *AgentManager) AddAgent(name string, agent Agent, msgBus *bus.MessageBus
 	finclawChannel := finclaw.NewFinChannel(m.ctx, msgBus, m.finclawConf.FinClawChannelConf)
 	go finclawChannel.ProcessAgentMessage(msgBus.OutboundChan())
 	m.finclawChannel[name] = finclawChannel
+
+	if loop, ok := agent.(*picoagent.AgentLoop); ok {
+		if err := loop.MountHook(newFinReasoningHook(msgBus)); err != nil {
+			logger.WarnCF("agent", "Failed to mount fin reasoning hook", map[string]any{
+				"name":  name,
+				"error": err.Error(),
+			})
+		}
+	}
 
 	if entry, ok := m.agents[name]; ok {
 		entry.cancel()

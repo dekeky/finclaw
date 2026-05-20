@@ -136,3 +136,14 @@ export function listArchived(agentName: string): ArchivedChat[] {
   const root = readRoot();
   return [...(root.agents[agentName]?.archived ?? [])];
 }
+
+export function deleteArchived(agentName: string, archiveId: string): boolean {
+  const root = readRoot();
+  const prev = root.agents[agentName];
+  if (!prev?.archived?.length) return false;
+  const next = prev.archived.filter((a) => a.id !== archiveId);
+  if (next.length === prev.archived.length) return false;
+  root.agents[agentName] = { ...prev, archived: next };
+  writeRoot(root);
+  return true;
+}

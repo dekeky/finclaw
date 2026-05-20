@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import type { ChatMessage, ConnectionStatus, WSMessage } from '../types';
-import { foldConsecutivePicoclawToolFeedback } from '../utils/foldPicoclawToolFeedback';
+import type { ChatMessage, ConnectionStatus, MessageKind, WSMessage } from '../types';
+import { foldConsecutiveThoughtMessages } from '../utils/foldThoughtMessages';
+import {
+  foldConsecutivePicoclawToolFeedback,
+  isPicoclawToolFeedbackContent,
+} from '../utils/foldPicoclawToolFeedback';
+import { isAssistantThoughtOnlyContent } from '../utils/splitAssistantContent';
 import { clearDraft, loadDraft, saveDraft } from '@/lib/chatPersistence';
 
 const RECONNECT_DELAY = 2000;
@@ -13,14 +18,40 @@ function genId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
+function inferMessageKind(content: string, messageKind?: string): MessageKind | undefined {
+  if (messageKind === 'reasoning') return 'thought';
+  if (isPicoclawToolFeedbackContent(content)) return 'tool';
+  return 'reply';
+}
+
+function parseWsChatMessage(msg: WSMessage, content: string, role: 'user' | 'assistant'): ChatMessage {
+  const messageKind =
+    typeof msg.payload?.message_kind === 'string' ? msg.payload.message_kind : undefined;
+  return {
+    id: msg.id || genId(),
+    role,
+    content,
+    timestamp: new Date(),
+    kind: role === 'assistant' ? inferMessageKind(content, messageKind) : undefined,
+  };
+}
+
+function foldChatMessages(msgs: ChatMessage[]): ChatMessage[] {
+  return foldConsecutiveThoughtMessages(foldConsecutivePicoclawToolFeedback(msgs));
+}
+
 function parseHistory(raw: WSMessage): ChatMessage[] {
   if (!raw.payload?.messages) return [];
-  return raw.payload.messages.map((m) => ({
-    id: m.id || genId(),
-    role: m.role === 'user' ? 'user' : 'assistant',
-    content: m.content,
-    timestamp: m.timestamp ? new Date(m.timestamp) : new Date(),
-  }));
+  return raw.payload.messages.map((m) => {
+    const role = m.role === 'user' ? 'user' : 'assistant';
+    return {
+      id: m.id || genId(),
+      role,
+      content: m.content,
+      timestamp: m.timestamp ? new Date(m.timestamp) : new Date(),
+      kind: role === 'assistant' ? inferMessageKind(m.content) : undefined,
+    };
+  });
 }
 
 export interface UseWebSocketReturn {
@@ -30,6 +61,8 @@ export interface UseWebSocketReturn {
   sendError: string | null;
   send: (content: string) => void;
   clearMessages: () => void;
+  /** 将归档/历史消息载入当前会话并写入本地草稿 */
+  restoreMessages: (messages: ChatMessage[]) => void;
   reconnect: () => void;
 }
 
@@ -111,7 +144,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         setMessages((prev) => {
           const ids = new Set(prev.map((m) => m.id));
           const deduped = history.filter((m) => !ids.has(m.id));
-          return foldConsecutivePicoclawToolFeedback([...prev, ...deduped]);
+          return foldChatMessages([...prev, ...deduped]);
         });
         break;
       }
@@ -124,14 +157,26 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
           console.warn('[Finclaw WS] Empty content in message.send:', msg);
           break;
         }
+        const messageKind =
+          typeof msg.payload?.message_kind === 'string' ? msg.payload.message_kind : undefined;
         if (role !== 'user') {
-          clearTypingFallback();
-          setIsTyping(false);
+          // 工具进度 / 思考流 / 仅思考块：仍算进行中，直到出现正文回复
+          const inProgress =
+            messageKind === 'reasoning' ||
+            isPicoclawToolFeedbackContent(content) ||
+            isAssistantThoughtOnlyContent(content);
+          if (!inProgress) {
+            clearTypingFallback();
+            setIsTyping(false);
+          } else {
+            setIsTyping(true);
+            armTypingFallback();
+          }
         }
         setMessages((prev) =>
-          foldConsecutivePicoclawToolFeedback([
+          foldChatMessages([
             ...prev,
-            { id: msg.id || genId(), role, content, timestamp: new Date() },
+            parseWsChatMessage(msg, content, role === 'user' ? 'user' : 'assistant'),
           ]),
         );
         break;
@@ -156,13 +201,14 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
           console.error('[Finclaw WS] Server error:', errContent);
           // 把服务器错误追加为一条 assistant 消息，让用户看到
           setMessages((prev) =>
-            foldConsecutivePicoclawToolFeedback([
+            foldChatMessages([
               ...prev,
               {
                 id: msg.id || genId(),
                 role: 'assistant',
                 content: `⚠️ Error: ${errContent}`,
                 timestamp: new Date(),
+                kind: 'reply',
               },
             ]),
           );
@@ -251,6 +297,24 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     if (persistAgentKey) clearDraft(persistAgentKey);
   }, [persistAgentKey]);
 
+  const restoreMessages = useCallback(
+    (msgs: ChatMessage[]) => {
+      if (typingFallbackRef.current) {
+        clearTimeout(typingFallbackRef.current);
+        typingFallbackRef.current = null;
+      }
+      setIsTyping(false);
+      setSendError(null);
+      const folded = foldChatMessages(msgs);
+      setMessages(folded);
+      if (persistAgentKey) {
+        saveDraft(persistAgentKey, folded);
+        skipPersistRef.current = true;
+      }
+    },
+    [persistAgentKey],
+  );
+
   const reconnect = useCallback(() => {
     reconnectCountRef.current = 0;
     setIsTyping(false);
@@ -271,7 +335,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       // 即时添加到本地消息列表，保证用户看到自己的消息
       const id = genId();
       setMessages((prev) =>
-        foldConsecutivePicoclawToolFeedback([...prev, { id, role: 'user', content, timestamp: new Date() }]),
+        foldChatMessages([...prev, { id, role: 'user', content, timestamp: new Date() }]),
       );
       // 元宝式：发出后即显示「正在思考」，不依赖服务端 typing_start
       setIsTyping(true);
@@ -331,5 +395,5 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     return () => clearTimeout(t);
   }, [messages, persistAgentKey]);
 
-  return { messages, status, isTyping, sendError, send, clearMessages, reconnect };
+  return { messages, status, isTyping, sendError, send, clearMessages, restoreMessages, reconnect };
 }

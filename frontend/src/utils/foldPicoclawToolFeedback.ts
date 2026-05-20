@@ -8,6 +8,10 @@ export function isPicoclawToolFeedbackContent(content: string): boolean {
   return content.trimStart().startsWith('🔧');
 }
 
+export function isToolMessage(m: ChatMessage): boolean {
+  return m.role === 'assistant' && (m.kind === 'tool' || isPicoclawToolFeedbackContent(m.content));
+}
+
 /**
  * 将连续的助手「工具反馈」气泡合并为一条，避免刷屏。
  * 仅在两条均为 assistant + 🔧 时合并；中间夹着用户或其它正文则断开。
@@ -20,13 +24,17 @@ export function foldConsecutivePicoclawToolFeedback(msgs: ChatMessage[]): ChatMe
       continue;
     }
     const last = out[out.length - 1];
-    if (last?.role === 'assistant' && isPicoclawToolFeedbackContent(last.content)) {
+    const lastIsTool =
+      last?.role === 'assistant' &&
+      (last.kind === 'tool' || isPicoclawToolFeedbackContent(last.content));
+    if (lastIsTool) {
       out[out.length - 1] = {
         ...last,
+        kind: 'tool',
         content: `${last.content}${AGGREGATED_TOOL_FEEDBACK_JOIN}${m.content}`,
       };
     } else {
-      out.push({ ...m });
+      out.push({ ...m, kind: 'tool' });
     }
   }
   return out;

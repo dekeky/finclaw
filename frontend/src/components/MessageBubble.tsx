@@ -1,43 +1,25 @@
-import { useState, useCallback } from 'react';
+﻿import { useRef, useLayoutEffect, useEffect, useState } from 'react';
 import type { ChatMessage } from '../types';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { AGGREGATED_TOOL_FEEDBACK_JOIN } from '../utils/foldPicoclawToolFeedback';
+import { formatElapsedSeconds, useElapsedSeconds } from '../hooks/useElapsedSeconds';
+import { MarkdownContent } from './MarkdownContent';
+import { AGGREGATED_TOOL_FEEDBACK_JOIN, isPicoclawToolFeedbackContent } from '../utils/foldPicoclawToolFeedback';
+import { splitAssistantContent } from '../utils/splitAssistantContent';
+import * as Collapsible from '@radix-ui/react-collapsible';
+import { AssistantAvatar } from './ChatMascot';
 
-type HermesFoldKind = 'thought' | 'tool_feedback';
-
-function inferHermesFoldKind(m: ChatMessage): HermesFoldKind | undefined {
-  if (m.role !== 'assistant') return undefined;
-  const raw = m.content.trimStart();
-  if (!raw) return undefined;
-  if (raw.startsWith('🔧')) return 'tool_feedback';
-  const head = raw.slice(0, 96).toLowerCase();
-  if (
-    head.startsWith('<thinking') ||
-    head.startsWith('<redacted_reasoning') ||
-    head.startsWith('<redacted_thinking')
-  ) {
-    return 'thought';
-  }
-  return undefined;
-}
+const TOOL_EMOJI = '\u{1F527}';
 
 interface MessageBubbleProps {
   message: ChatMessage;
   variant?: 'default' | 'dock';
+  toolOutputActive?: boolean;
+  thoughtOutputActive?: boolean;
 }
 
 function ellipsisOneLine(text: string, max: number): string {
   const t = text.replace(/\s+/g, ' ').trim();
   if (t.length <= max) return t;
-  return `${t.slice(0, max).trimEnd()}…`;
-}
-
-function summarizeThought(content: string): string {
-  const preview = ellipsisOneLine(content, 64);
-  return preview ? `思考 · ${preview}` : '思考过程';
+  return `${t.slice(0, max).trimEnd()}\u2026`;
 }
 
 function parseToolFeedbackParts(content: string): string[] {
@@ -48,114 +30,102 @@ function summarizeToolFeedback(content: string): string {
   const parts = parseToolFeedbackParts(content);
   if (parts.length <= 1) {
     const line = content.split('\n')[0]?.trim() || '';
-    if (!line) return '工具调研';
+    if (!line) return '\u5de5\u5177\u6267\u884c';
     const one = ellipsisOneLine(line, 88);
-    return one.startsWith('🔧') ? `工具调研 · ${one.replace(/^🔧\s*/, '')}` : `工具调研 · ${one}`;
+    return one.startsWith(TOOL_EMOJI)
+      ? `\u5de5\u5177\u6267\u884c \u00b7 ${one.replace(new RegExp(`^${TOOL_EMOJI}\\s*`), '')}`
+      : `\u5de5\u5177\u6267\u884c \u00b7 ${one}`;
   }
   const names: string[] = [];
   for (const p of parts) {
     const first = p.split('\n')[0]?.trim() || '';
-    const m = /^🔧\s*`([^`]+)`/.exec(first);
+    const m = new RegExp(`^${TOOL_EMOJI}\\s*\`([^\`]+)\``).exec(first);
     if (m) names.push(m[1]);
   }
   if (names.length > 0) {
-    const head = names.slice(0, 3).join('、');
-    const suf = names.length > 3 ? ` 等 ${names.length} 个` : '';
-    return `工具调研 · ${head}${suf}`;
+    const head = names.slice(0, 3).join('\u3001');
+    const suf = names.length > 3 ? ` \u7b49 ${names.length} \u4e2a` : '';
+    return `\u5de5\u5177\u6267\u884c \u00b7 ${head}${suf}`;
   }
-  return `工具调研 · ${parts.length} 项`;
+  return `\u5de5\u5177\u6267\u884c \u00b7 ${parts.length} \u9879`;
 }
 
-interface AssistantMarkdownBodyProps {
-  messageId: string;
-  content: string;
-  copiedId: string | null;
-  handleCopy: (code: string, id: string) => void;
-}
-
-function CopyButton({ code, id, copied, onCopy }: { code: string; id: string; copied: boolean; onCopy: (code: string, id: string) => void }) {
+function AssistantMarkdownBody({ messageId, content }: { messageId: string; content: string }) {
   return (
-    <button
-      type="button"
-      onClick={() => onCopy(code, id)}
-      className="absolute top-2 right-2 rounded-md bg-muted/80 p-1.5 text-muted-foreground backdrop-blur transition-all hover:bg-muted hover:text-foreground"
-    >
-      {copied ? (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-      ) : (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-        </svg>
-      )}
-    </button>
-  );
-}
-
-function AssistantMarkdownBody({ messageId, content, copiedId, handleCopy }: AssistantMarkdownBodyProps) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        code({ className, children, ...props }) {
-          const match = /language-(\w+)/.exec(className || '');
-          const code = String(children).replace(/\n$/, '');
-          const codeId = `${messageId}-${match ? match[1] : 'inline'}`;
-          if (match) {
-            return (
-              <div className="group/code relative">
-                <CopyButton code={code} id={codeId} copied={copiedId === codeId} onCopy={handleCopy} />
-                <SyntaxHighlighter
-                  style={oneDark}
-                  language={match[1]}
-                  PreTag="div"
-                  customStyle={{ borderRadius: '0.5rem', fontSize: '13px' }}
-                >
-                  {code}
-                </SyntaxHighlighter>
-              </div>
-            );
-          }
-          return (
-            <code className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[13px]" {...props}>
-              {children}
-            </code>
-          );
-        },
-        a({ href, children }) {
-          return (
-            <a href={href} target="_blank" rel="noopener noreferrer" className="text-violet-500 underline underline-offset-2 hover:text-violet-600">
-              {children}
-            </a>
-          );
-        },
-        table({ children }) {
-          return (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-[13px]">{children}</table>
-            </div>
-          );
-        },
-        blockquote({ children }) {
-          return <blockquote className="border-l-3 border-violet-500/40 pl-4 my-3 text-muted-foreground">{children}</blockquote>;
-        },
-      }}
-    >
+    <MarkdownContent idPrefix={messageId} size="md">
       {content}
-    </ReactMarkdown>
+    </MarkdownContent>
   );
 }
 
-function HermesDetails({ summaryLabel, children }: { summaryLabel: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
+type ProcessPanelTone = 'thought' | 'tool';
+
+function CollapsibleProcessPanel({
+  tone,
+  summaryLabel,
+  content,
+  isActive,
+  children,
+}: {
+  tone: ProcessPanelTone;
+  summaryLabel: string;
+  content: string;
+  isActive?: boolean;
+  children: React.ReactNode;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const userPinnedRef = useRef(false);
+  const userExpandedRef = useRef(false);
+  const [open, setOpen] = useState(Boolean(isActive));
+
+  useEffect(() => {
+    if (isActive) {
+      setOpen(true);
+      userExpandedRef.current = false;
+      userPinnedRef.current = false;
+    } else if (!userExpandedRef.current) {
+      setOpen(false);
+    }
+  }, [isActive]);
+
+  useLayoutEffect(() => {
+    if (!open || !isActive) return;
+    const el = scrollRef.current;
+    if (!el || userPinnedRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [content, open, isActive]);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    userPinnedRef.current = !atBottom;
+  };
+
+  const handleToggle = () => {
+    userExpandedRef.current = true;
+    setOpen((v) => !v);
+  };
+
+  const timing = useElapsedSeconds(Boolean(isActive));
+  const isThought = tone === 'thought';
+  const shellClass = isThought
+    ? 'border-amber-500/25 bg-amber-500/5'
+    : 'border-border/50 bg-muted/15';
+  const headerClass = isThought
+    ? 'border-amber-500/20 bg-amber-500/10 hover:bg-amber-500/15'
+    : 'border-border/30 bg-muted/25 hover:bg-muted/35';
+  const pulseClass = isThought ? 'bg-amber-500' : 'bg-emerald-500';
+  const statusClass = isThought
+    ? 'text-amber-700/80 dark:text-amber-300/80'
+    : 'text-emerald-600/80 dark:text-emerald-400/80';
+
   return (
-    <div className="rounded-lg border border-border/50 bg-muted/20 mt-2">
+    <div className={`w-full overflow-hidden rounded-lg border ${shellClass}`}>
       <button
         type="button"
-        onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/30"
+        onClick={handleToggle}
+        className={`flex w-full items-center gap-2 border-b px-3 py-2 text-left transition-colors ${headerClass}`}
       >
         <svg
           width="12"
@@ -164,14 +134,39 @@ function HermesDetails({ summaryLabel, children }: { summaryLabel: string; child
           fill="none"
           stroke="currentColor"
           strokeWidth="2"
-          className={`transition-transform ${open ? 'rotate-90' : ''}`}
+          className={`shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`}
         >
           <polyline points="9 18 15 12 9 6" />
         </svg>
-        {summaryLabel}
+        {isActive && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${pulseClass} animate-pulse`} aria-hidden />}
+        <span
+          className={`min-w-0 flex-1 truncate text-xs font-medium ${
+            isThought ? 'text-amber-800/90 dark:text-amber-200/90' : 'text-muted-foreground'
+          }`}
+        >
+          {summaryLabel}
+        </span>
+        {timing.running && (
+          <span className={`shrink-0 text-[10px] tabular-nums ${statusClass}`}>
+            {isThought ? '\u52aa\u529b\u5de5\u4f5c\u4e2d' : '\u5de5\u5177\u6267\u884c\u4e2d'} \u00b7 {formatElapsedSeconds(timing.seconds)}
+          </span>
+        )}
+        {timing.completed && timing.seconds > 0 && (
+          <span className={`shrink-0 text-[10px] tabular-nums ${statusClass}`}>
+            耗时 {formatElapsedSeconds(timing.seconds)}
+          </span>
+        )}
       </button>
       {open && (
-        <div className="border-t border-border/30 px-3 py-3 text-[13px] leading-relaxed text-foreground max-h-[520px] overflow-y-auto">
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className={`overflow-y-auto overflow-x-hidden px-3 py-3 text-[13px] leading-relaxed scroll-smooth [scrollbar-gutter:stable] ${
+            isThought
+              ? 'max-h-[min(280px,45vh)] text-muted-foreground'
+              : 'max-h-[min(360px,50vh)] text-foreground'
+          }`}
+        >
           {children}
         </div>
       )}
@@ -179,75 +174,279 @@ function HermesDetails({ summaryLabel, children }: { summaryLabel: string; child
   );
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+interface ReasoningStep {
+  icon: string;
+  label: string;
+  content: string;
+}
 
+const STEP_INDICATORS: Record<string, string> = {
+  search: '\u{1F50D}',
+  '\u5206\u6790': '\u{1F4CA}',
+  '\u63a8\u7406': '\u{1F4A1}',
+  '\u7ed3\u8bba': '\u2713',
+  '\u9a8c\u8bc1': '\u2705',
+  default: '\u{1F4AD}',
+};
+
+function parseThinkingSteps(content: string): ReasoningStep[] {
+  const steps: ReasoningStep[] = [];
+  const lines = content.split('\n');
+  let currentStep: ReasoningStep | null = null;
+  let currentContent: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    const stepMatch = /^([\u{1F50D}\u{1F4CA}\u{1F4A1}\u2713\u2705\u2753])\s*([^\n:]+)[:：]?\s*(.*)$/u.exec(trimmed);
+    const headerMatch = /^##?\s*([^\n]+)$/.exec(trimmed);
+
+    if (stepMatch) {
+      if (currentStep) {
+        currentStep.content = currentContent.join('\n').trim();
+        steps.push(currentStep);
+      }
+      currentStep = { icon: stepMatch[1], label: stepMatch[2] || '\u6b65\u9aa4', content: stepMatch[3] || '' };
+      currentContent = [];
+    } else if (headerMatch && currentStep) {
+      const headerText = headerMatch[1].toLowerCase();
+      let icon = STEP_INDICATORS.default;
+      for (const [key, val] of Object.entries(STEP_INDICATORS)) {
+        if (headerText.includes(key)) {
+          icon = val;
+          break;
+        }
+      }
+      currentStep.icon = icon;
+      currentStep.label = headerMatch[1];
+    } else if (currentStep) {
+      currentContent.push(trimmed);
+    } else {
+      currentStep = { icon: '\u{1F4AD}', label: '\u601d\u8003', content: trimmed };
+      currentContent = [];
+    }
+  }
+
+  if (currentStep) {
+    currentStep.content = currentContent.join('\n').trim() || currentStep.content;
+    if (currentStep.content) steps.push(currentStep);
+  }
+
+  if (steps.length === 0 && content.trim()) {
+    steps.push({ icon: '\u{1F4AD}', label: '\u601d\u8003\u8fc7\u7a0b', content: content.trim() });
+  }
+
+  return steps;
+}
+
+function ThinkingPanel({
+  content,
+  isActive,
+  messageId,
+}: {
+  content: string;
+  isActive?: boolean;
+  messageId: string;
+}) {
+  const steps = parseThinkingSteps(content);
+  const [collapsed, setCollapsed] = useState(!isActive);
+  const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set([0]));
+  const timing = useElapsedSeconds(Boolean(isActive));
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const userPinnedRef = useRef(false);
+
+  useEffect(() => {
+    if (isActive) setCollapsed(false);
+  }, [isActive]);
+
+  useLayoutEffect(() => {
+    if (collapsed || !isActive) return;
+    const el = scrollRef.current;
+    if (!el || userPinnedRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [content, collapsed, isActive]);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    userPinnedRef.current = !atBottom;
+  };
+
+  const toggleStep = (idx: number) => {
+    setExpandedSteps((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  };
+
+  const isSingleStep = steps.length <= 1;
+
+  return (
+    <Collapsible.Root open={!collapsed} onOpenChange={(open) => setCollapsed(!open)}>
+      <div className="overflow-hidden rounded-lg border border-amber-500/25 bg-amber-500/5">
+        <Collapsible.Trigger asChild>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 py-2 text-left transition-colors hover:bg-amber-500/15"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className={`shrink-0 text-muted-foreground transition-transform ${collapsed ? '' : 'rotate-90'}`}
+            >
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+            {isActive && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500 animate-pulse" aria-hidden />}
+            <span className="min-w-0 flex-1 truncate text-xs font-medium text-amber-800/90 dark:text-amber-200/90">
+              思考过程{steps.length > 1 ? ` · ${steps.length} 个步骤` : ''}
+            </span>
+            {timing.running && (
+              <span className="shrink-0 text-[10px] tabular-nums text-amber-700/80 dark:text-amber-300/80">
+                努力工作中 · {formatElapsedSeconds(timing.seconds)}
+              </span>
+            )}
+            {timing.completed && timing.seconds > 0 && (
+              <span className="shrink-0 text-[10px] tabular-nums text-amber-700/80 dark:text-amber-300/80">
+                耗时 {formatElapsedSeconds(timing.seconds)}
+              </span>
+            )}
+            {!timing.running && !timing.completed && !collapsed && (
+              <span className="shrink-0 text-[10px] text-amber-700/80 dark:text-amber-300/80">点击折叠</span>
+            )}
+          </button>
+        </Collapsible.Trigger>
+
+        <Collapsible.Content>
+          <div
+            ref={scrollRef}
+            onScroll={handleScroll}
+            className="max-h-[min(320px,50vh)] overflow-y-auto overflow-x-hidden scroll-smooth px-3 py-3 text-[13px] leading-relaxed text-muted-foreground [scrollbar-gutter:stable]"
+          >
+            {steps.map((step, idx) => {
+              const isExpanded = expandedSteps.has(idx);
+              const isLastActive = isActive && idx === steps.length - 1;
+
+              if (isSingleStep) {
+                return (
+                  <div key={idx} className="space-y-2">
+                    <AssistantMarkdownBody messageId={`${messageId}-step-${idx}`} content={step.content} />
+                  </div>
+                );
+              }
+
+              return (
+                <div key={idx} className="mb-3 last:mb-0">
+                  <button type="button" onClick={() => toggleStep(idx)} className="group flex w-full items-center gap-2 text-left">
+                    <span className="shrink-0 text-base">{step.icon}</span>
+                    <span className="text-xs font-medium text-amber-700/90 transition-colors group-hover:text-amber-600/90 dark:text-amber-300/90">
+                      {step.label}
+                    </span>
+                    {isLastActive && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500 animate-pulse" aria-hidden />}
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      className={`ml-auto shrink-0 text-muted-foreground transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                    >
+                      <polyline points="9 18 15 12 9 6" />
+                    </svg>
+                  </button>
+                  {isExpanded && (
+                    <div className="mt-2 border-l border-amber-500/20 pl-6">
+                      <AssistantMarkdownBody messageId={`${messageId}-step-${idx}`} content={step.content} />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Collapsible.Content>
+      </div>
+    </Collapsible.Root>
+  );
+}
+
+export function MessageBubble({ message, toolOutputActive, thoughtOutputActive }: MessageBubbleProps) {
   const time = message.timestamp.toLocaleTimeString('zh-CN', {
     hour: '2-digit',
     minute: '2-digit',
   });
 
   const isUser = message.role === 'user';
+  const isThoughtMessage = !isUser && message.kind === 'thought';
+  const isToolFeedback = !isUser && (message.kind === 'tool' || isPicoclawToolFeedbackContent(message.content));
+  const { thought, body } =
+    !isUser && !isToolFeedback && !isThoughtMessage
+      ? splitAssistantContent(message.content)
+      : { thought: null as string | null, body: isThoughtMessage ? '' : message.content };
 
-  const handleCopy = useCallback((code: string, id: string) => {
-    navigator.clipboard.writeText(code).then(() => {
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 2000);
-    });
-  }, []);
-
-  const foldKind = !isUser ? inferHermesFoldKind(message) : undefined;
-  const useHermesCollapse = foldKind !== undefined;
-
-  const assistantMarkdown = (
-    <AssistantMarkdownBody messageId={message.id} content={message.content} copiedId={copiedId} handleCopy={handleCopy} />
+  const renderMarkdown = (content: string, suffix = '') => (
+    <AssistantMarkdownBody messageId={`${message.id}${suffix}`} content={content} />
   );
 
-  const assistantBubbleBody = () => {
-    if (useHermesCollapse && foldKind === 'thought') {
-      return (
-        <HermesDetails summaryLabel={summarizeThought(message.content)}>
-          {assistantMarkdown}
-        </HermesDetails>
-      );
-    }
-    if (useHermesCollapse && foldKind === 'tool_feedback') {
-      return (
-        <HermesDetails summaryLabel={summarizeToolFeedback(message.content)}>
-          {assistantMarkdown}
-        </HermesDetails>
-      );
-    }
-    return assistantMarkdown;
-  };
+  if (isThoughtMessage || isToolFeedback) {
+    const panel = isThoughtMessage ? (
+      <ThinkingPanel content={message.content} isActive={thoughtOutputActive} messageId={`${message.id}-thinking`} />
+    ) : (
+      <CollapsibleProcessPanel
+        tone="tool"
+        summaryLabel={summarizeToolFeedback(message.content)}
+        content={message.content}
+        isActive={toolOutputActive}
+      >
+        {renderMarkdown(message.content)}
+      </CollapsibleProcessPanel>
+    );
+
+    return (
+      <div className="ml-12 flex max-w-[calc(90%-3rem)] animate-in flex-col gap-1 duration-200 fade-in-0 slide-in-from-bottom-1">
+        {panel}
+        <span className="px-1 font-mono text-[10px] text-muted-foreground/60">{time}</span>
+      </div>
+    );
+  }
 
   return (
     <div
-      className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} animate-in fade-in-0 slide-in-from-bottom-2 duration-300`}
+      className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} animate-in duration-300 fade-in-0 slide-in-from-bottom-2`}
     >
-      {/* Avatar */}
-      <div
-        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-semibold ${
-          isUser
-            ? 'bg-violet-500 text-white'
-            : 'bg-gradient-to-br from-amber-100 to-amber-200 text-amber-700 dark:from-amber-900/50 dark:to-amber-950/30'
-        }`}
-      >
-        {isUser ? '我' : 'AI'}
-      </div>
-
-      {/* Content */}
-      <div className={`flex max-w-[90%] flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}`}>
-        <div
-          className={`rounded-2xl px-4 py-3 text-[15px] leading-relaxed ${
-            isUser
-              ? 'rounded-tr-sm bg-violet-500 text-white'
-              : 'rounded-tl-sm border border-border/60 bg-card text-foreground'
-          }`}
-        >
-          {isUser ? <span>{message.content}</span> : assistantBubbleBody()}
+      {isUser ? (
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-500 text-xs font-semibold text-white">
+          我
         </div>
-        <span className="px-1 text-[10px] font-mono text-muted-foreground/60">{time}</span>
+      ) : (
+        <AssistantAvatar />
+      )}
+
+      <div className={`flex max-w-[90%] flex-col gap-1.5 ${isUser ? 'items-end' : 'items-start'}`}>
+        {isUser ? (
+          <div className="rounded-2xl rounded-tr-sm bg-violet-500 px-4 py-3 text-[15px] leading-relaxed text-white">
+            <span>{message.content}</span>
+          </div>
+        ) : (
+          <div className="flex w-full flex-col gap-2">
+            {thought && (
+              <ThinkingPanel content={thought} isActive={thoughtOutputActive} messageId={`${message.id}-thinking`} />
+            )}
+            {body && (
+              <div className="rounded-2xl rounded-tl-sm border border-border/60 bg-card px-4 py-3 text-[15px] leading-relaxed text-foreground">
+                {renderMarkdown(body, '-body')}
+              </div>
+            )}
+          </div>
+        )}
+        <span className="px-1 font-mono text-[10px] text-muted-foreground/60">{time}</span>
       </div>
     </div>
   );

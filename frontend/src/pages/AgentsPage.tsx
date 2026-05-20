@@ -1,23 +1,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAgents } from '../state/agents';
 import { getAgent, type AgentDetailBody } from '../api/agents';
+import { AgentPersonaEditor } from '../components/AgentPersonaEditor';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
-type FormState = { name: string; modelName: string; model: string; apiBase: string; apiKey: string };
-type EditFormState = { modelName: string; model: string; apiBase: string; apiKey: string };
-const EMPTY_FORM: FormState = { name: '', modelName: '', model: '', apiBase: '', apiKey: '' };
-const EMPTY_EDIT_FORM: EditFormState = { modelName: '', model: '', apiBase: '', apiKey: '' };
+type FormState = { name: string; model: string; apiBase: string; apiKey: string };
+type EditFormState = { model: string; apiBase: string; apiKey: string };
+const EMPTY_FORM: FormState = { name: '', model: '', apiBase: '', apiKey: '' };
+const EMPTY_EDIT_FORM: EditFormState = { model: '', apiBase: '', apiKey: '' };
 
 const PRESETS = [
-  { label: 'DeepSeek Chat', modelName: 'deepseek-chat', model: 'deepseek-chat', apiBase: 'https://api.deepseek.com/v1' },
-  { label: 'DeepSeek Reasoner', modelName: 'deepseek-reasoner', model: 'deepseek-reasoner', apiBase: 'https://api.deepseek.com/v1' },
-  { label: 'OpenAI GPT-4o', modelName: 'gpt-4o', model: 'gpt-4o', apiBase: 'https://api.openai.com/v1' },
-  { label: 'Qwen Plus', modelName: 'qwen-plus', model: 'qwen-plus', apiBase: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  { label: 'DeepSeek Chat', model: 'deepseek/deepseek-chat', apiBase: 'https://api.deepseek.com/v1' },
+  { label: 'DeepSeek Reasoner', model: 'deepseek/deepseek-reasoner', apiBase: 'https://api.deepseek.com/v1' },
+  { label: 'OpenAI GPT-4o', model: 'openai/gpt-4o', apiBase: 'https://api.openai.com/v1' },
+  { label: 'Qwen Plus', model: 'qwen/qwen-plus', apiBase: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
 ];
+
+function ModelFieldHint() {
+  return (
+    <p className="mt-1 text-[11px] text-muted-foreground">
+      格式：<span className="font-mono">provider/模型ID</span>，例如{' '}
+      <span className="font-mono">deepseek/deepseek-chat</span>、{' '}
+      <span className="font-mono">openai/gpt-4o</span>。provider 决定使用哪类 API 客户端。
+    </p>
+  );
+}
 
 function sectionKey(name: string): string {
   const ch = name.trim().charAt(0);
@@ -61,6 +72,7 @@ export default function AgentsPage() {
   const [agentRuntime, setAgentRuntime] = useState<AgentDetailBody | null>(null);
   const [agentRuntimeLoading, setAgentRuntimeLoading] = useState(false);
   const [agentRuntimeError, setAgentRuntimeError] = useState<string | null>(null);
+  const [detailTab, setDetailTab] = useState<'persona' | 'config'>('persona');
 
   useEffect(() => { void refresh(); }, []);
 
@@ -90,6 +102,7 @@ export default function AgentsPage() {
     setEditBaseline(null);
     setEditForm(EMPTY_EDIT_FORM);
     setEditSubmitError(null);
+    setDetailTab('persona');
   }, [detailName]);
 
   const loadLatestForEdit = useCallback(async () => {
@@ -106,7 +119,7 @@ export default function AgentsPage() {
       setAgentRuntime(d);
       setEditBaseline(d);
       const mp = d.model_provider;
-      setEditForm({ modelName: mp.model_name ?? '', model: mp.model ?? '', apiBase: mp.api_base ?? '', apiKey: '' });
+      setEditForm({ model: mp.model ?? '', apiBase: mp.api_base ?? '', apiKey: '' });
     } catch (err) {
       if (gen !== editLoadGenRef.current) return;
       setEditFetchError(err instanceof Error ? err.message : String(err));
@@ -126,11 +139,21 @@ export default function AgentsPage() {
     return () => { cancelled = true; };
   }, [detailName]);
 
-  const formValid = useMemo(() => form.name.trim() && form.modelName.trim() && form.model.trim() && form.apiBase.trim() && form.apiKey.trim(), [form]);
+  const formValid = useMemo(
+    () => form.name.trim() && form.model.trim() && form.apiBase.trim() && form.apiKey.trim(),
+    [form],
+  );
 
   const editFormValid = useMemo(() => {
     const hasStoredKey = editBaseline?.model_provider.has_api_key === true;
-    return !!editBaseline && !editFetchLoading && !editFetchError && editForm.modelName.trim() && editForm.model.trim() && editForm.apiBase.trim() && (editForm.apiKey.trim().length > 0 || hasStoredKey);
+    return (
+      !!editBaseline
+      && !editFetchLoading
+      && !editFetchError
+      && editForm.model.trim()
+      && editForm.apiBase.trim()
+      && (editForm.apiKey.trim().length > 0 || hasStoredKey)
+    );
   }, [editBaseline, editFetchError, editFetchLoading, editForm]);
 
   const onSubmit = async (e: React.FormEvent) => {
@@ -139,7 +162,14 @@ export default function AgentsPage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      await createAgent({ name: form.name.trim(), model_provider: { model_name: form.modelName.trim(), model: form.model.trim(), api_base: form.apiBase.trim(), api_key: form.apiKey.trim() } });
+      await createAgent({
+        name: form.name.trim(),
+        model_provider: {
+          model: form.model.trim(),
+          api_base: form.apiBase.trim(),
+          api_key: form.apiKey.trim(),
+        },
+      });
       setForm(EMPTY_FORM);
       setAddOpen(false);
     } catch (err) {
@@ -163,8 +193,10 @@ export default function AgentsPage() {
     }
   };
 
-  const applyPreset = (preset: typeof PRESETS[number]) => setForm((prev) => ({ ...prev, modelName: preset.modelName, model: preset.model, apiBase: preset.apiBase }));
-  const applyEditPreset = (preset: typeof PRESETS[number]) => setEditForm((prev) => ({ ...prev, modelName: preset.modelName, model: preset.model, apiBase: preset.apiBase }));
+  const applyPreset = (preset: (typeof PRESETS)[number]) =>
+    setForm((prev) => ({ ...prev, model: preset.model, apiBase: preset.apiBase }));
+  const applyEditPreset = (preset: (typeof PRESETS)[number]) =>
+    setEditForm((prev) => ({ ...prev, model: preset.model, apiBase: preset.apiBase }));
 
   const onEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -172,8 +204,19 @@ export default function AgentsPage() {
     setEditSubmitting(true);
     setEditSubmitError(null);
     try {
-      await updateAgent(detailName, { model_provider: { model_name: editForm.modelName.trim(), model: editForm.model.trim(), api_base: editForm.apiBase.trim(), api_key: editForm.apiKey.trim() } });
-      try { const d = await getAgent(detailName); setAgentRuntime(d); } catch { /* ignore */ }
+      await updateAgent(detailName, {
+        model_provider: {
+          model: editForm.model.trim(),
+          api_base: editForm.apiBase.trim(),
+          api_key: editForm.apiKey.trim(),
+        },
+      });
+      try {
+        const d = await getAgent(detailName);
+        setAgentRuntime(d);
+      } catch {
+        /* ignore */
+      }
       setEditForm(EMPTY_EDIT_FORM);
       setEditConfigOpen(false);
     } catch (err) {
@@ -197,9 +240,9 @@ export default function AgentsPage() {
       </div>
 
       {/* Content */}
-      <div className="flex min-h-0 flex-1 gap-0 overflow-hidden p-4">
+      <div className="flex min-h-0 flex-1 gap-3 overflow-hidden p-3">
         {/* Left Pane - Agent List */}
-        <div className="hidden w-[18rem] shrink-0 flex-col rounded-xl border border-border bg-card md:flex">
+        <div className="hidden w-[14rem] shrink-0 flex-col rounded-xl border border-border bg-card lg:w-[15rem] xl:w-[16rem] md:flex">
           <div className="border-b border-border/50 p-4">
             <Input
               placeholder="搜索 Agent..."
@@ -272,13 +315,15 @@ export default function AgentsPage() {
                       <label className="mb-1.5 block text-xs font-medium text-muted-foreground">显示名称 *</label>
                       <Input value={form.name} onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))} placeholder="例如：deepseek-default" />
                     </div>
-                    <div>
-                      <label className="mb-1.5 block text-xs font-medium text-muted-foreground">model_name *</label>
-                      <Input value={form.modelName} onChange={(e) => setForm((s) => ({ ...s, modelName: e.target.value }))} placeholder="deepseek-chat" />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-xs font-medium text-muted-foreground">model *</label>
-                      <Input value={form.model} onChange={(e) => setForm((s) => ({ ...s, model: e.target.value }))} placeholder="deepseek-chat" />
+                    <div className="sm:col-span-2">
+                      <label className="mb-1.5 block text-xs font-medium text-muted-foreground">模型 *</label>
+                      <Input
+                        value={form.model}
+                        onChange={(e) => setForm((s) => ({ ...s, model: e.target.value }))}
+                        placeholder="deepseek/deepseek-chat"
+                        className="font-mono text-sm"
+                      />
+                      <ModelFieldHint />
                     </div>
                     <div>
                       <label className="mb-1.5 block text-xs font-medium text-muted-foreground">api_base *</label>
@@ -299,106 +344,136 @@ export default function AgentsPage() {
               </div>
             </ScrollArea>
           ) : detailName ? (
-            <ScrollArea className="flex-1">
-              <div className="p-6">
-                {/* Profile Header */}
-                <div className="mb-6 flex items-center gap-4">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-violet-600 text-xl font-bold text-white">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border/50 px-4 py-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-violet-600 text-lg font-bold text-white">
                     {detailName.slice(0, 1).toUpperCase()}
                   </div>
-                  <div>
-                    <h2 className="text-lg font-semibold text-foreground">{detailName}</h2>
-                    <code className="text-xs text-muted-foreground">/ws/chat/{detailName}</code>
+                  <div className="min-w-0">
+                    <h2 className="truncate text-base font-semibold text-foreground">{detailName}</h2>
+                    <code className="text-[11px] text-muted-foreground">/ws/chat/{detailName}</code>
                   </div>
                 </div>
-
-                <p className="mb-4 text-xs text-muted-foreground">本页仅做配置与管理。与 Agent 聊天请使用右下角浮窗。</p>
-
-                {agentRuntimeError && (
-                  <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-destructive">⚠️ {agentRuntimeError}</div>
-                )}
-
-                {agentRuntimeLoading ? (
-                  <p className="text-xs text-muted-foreground">正在同步配置…</p>
-                ) : agentRuntime ? (
-                  <Card size="sm" className="mb-4">
-                    <CardContent className="p-4">
-                      <dl className="grid gap-2 text-sm">
-                        {agentRuntime.workspace && (
-                          <div className="grid grid-cols-[80px_1fr] gap-2">
-                            <dt className="text-xs text-muted-foreground">工作目录</dt>
-                            <dd className="font-mono text-xs">{agentRuntime.workspace}</dd>
-                          </div>
-                        )}
-                        <div className="grid grid-cols-[80px_1fr] gap-2">
-                          <dt className="text-xs text-muted-foreground">model</dt>
-                          <dd className="font-mono text-xs">{agentRuntime.model_provider.model_name || '—'}</dd>
-                        </div>
-                        <div className="grid grid-cols-[80px_1fr] gap-2">
-                          <dt className="text-xs text-muted-foreground">API</dt>
-                          <dd className="font-mono text-xs">{agentRuntime.model_provider.has_api_key ? '已配置' : '未检测到密钥'}</dd>
-                        </div>
-                      </dl>
-                    </CardContent>
-                  </Card>
-                ) : null}
-
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" onClick={() => { setEditConfigOpen(!editConfigOpen); if (!editConfigOpen) void loadLatestForEdit(); }}>
-                    {editConfigOpen ? '收起' : '更新配置'}
-                  </Button>
-                  <Button variant="destructive" size="sm" onClick={() => void onDelete(detailName)} disabled={pendingDelete === detailName}>
-                    {pendingDelete === detailName ? '移除中…' : '移除'}
-                  </Button>
+                <div className="flex rounded-lg border border-border/60 p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setDetailTab('persona')}
+                    className={`rounded-md px-3 py-1.5 text-xs transition-colors ${detailTab === 'persona' ? 'bg-background font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    人设文件
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDetailTab('config')}
+                    className={`rounded-md px-3 py-1.5 text-xs transition-colors ${detailTab === 'config' ? 'bg-background font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    模型配置
+                  </button>
                 </div>
-
-                {editConfigOpen && (
-                  <div className="mt-4 rounded-xl border border-border bg-muted/20 p-4">
-                    <p className="mb-3 text-xs text-muted-foreground">保存后将重启该 Agent。{editBaseline?.model_provider.has_api_key ? '若已配置密钥，可留空 api_key 以沿用。' : '必须填写 api_key。'}</p>
-
-                    {editFetchLoading ? (
-                      <p className="text-xs text-muted-foreground">加载配置中…</p>
-                    ) : editFetchError && !editBaseline ? (
-                      <div className="text-xs text-destructive">⚠️ {editFetchError}</div>
-                    ) : editBaseline ? (
-                      <>
-                        <div className="mb-3 flex flex-wrap gap-2">
-                          {PRESETS.map((p) => (
-                            <button key={p.label} type="button" onClick={() => applyEditPreset(p)} className="rounded-full border border-violet-500/20 bg-violet-500/5 px-2 py-1 text-[10px] text-violet-600 hover:bg-violet-500/10">
-                              {p.label}
-                            </button>
-                          ))}
-                        </div>
-                        <form onSubmit={onEditSubmit} className="flex flex-col gap-3">
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <div>
-                              <label className="mb-1 block text-xs text-muted-foreground">model_name *</label>
-                              <Input value={editForm.modelName} onChange={(e) => setEditForm((s) => ({ ...s, modelName: e.target.value }))} disabled={editSubmitting} />
-                            </div>
-                            <div>
-                              <label className="mb-1 block text-xs text-muted-foreground">model *</label>
-                              <Input value={editForm.model} onChange={(e) => setEditForm((s) => ({ ...s, model: e.target.value }))} disabled={editSubmitting} />
-                            </div>
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">api_base *</label>
-                            <Input value={editForm.apiBase} onChange={(e) => setEditForm((s) => ({ ...s, apiBase: e.target.value }))} disabled={editSubmitting} />
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs text-muted-foreground">api_key {editBaseline.model_provider.has_api_key ? '（可选）' : '*'}</label>
-                            <Input type="password" value={editForm.apiKey} onChange={(e) => setEditForm((s) => ({ ...s, apiKey: e.target.value }))} placeholder={editBaseline.model_provider.has_api_key ? '留空沿用已有密钥' : 'sk-...'} disabled={editSubmitting} />
-                          </div>
-                          {editSubmitError && <p className="text-xs text-destructive">{editSubmitError}</p>}
-                          <div className="flex justify-end">
-                            <Button type="submit" size="sm" disabled={!editFormValid || editSubmitting}>{editSubmitting ? '保存中…' : '保存'}</Button>
-                          </div>
-                        </form>
-                      </>
-                    ) : null}
-                  </div>
-                )}
               </div>
-            </ScrollArea>
+
+              {detailTab === 'persona' ? (
+                <AgentPersonaEditor key={detailName} agentName={detailName} className="min-h-0 flex-1" />
+              ) : (
+                <ScrollArea className="flex-1">
+                  <div className="max-w-3xl p-4 md:p-5">
+                    <p className="mb-4 text-xs text-muted-foreground">本页仅做配置与管理。与 Agent 聊天请使用右下角浮窗。</p>
+
+                    {agentRuntimeError && (
+                      <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-destructive">⚠️ {agentRuntimeError}</div>
+                    )}
+
+                    {agentRuntimeLoading ? (
+                      <p className="text-xs text-muted-foreground">正在同步配置…</p>
+                    ) : agentRuntime ? (
+                      <Card size="sm" className="mb-4">
+                        <CardContent className="p-4">
+                          <dl className="grid gap-2 text-sm">
+                            {agentRuntime.workspace && (
+                              <div className="grid grid-cols-[80px_1fr] gap-2">
+                                <dt className="text-xs text-muted-foreground">工作目录</dt>
+                                <dd className="break-all font-mono text-xs">{agentRuntime.workspace}</dd>
+                              </div>
+                            )}
+                            <div className="grid grid-cols-[80px_1fr] gap-2">
+                              <dt className="text-xs text-muted-foreground">模型</dt>
+                              <dd className="break-all font-mono text-xs">{agentRuntime.model_provider.model || '—'}</dd>
+                            </div>
+                            {agentRuntime.model_provider.api_base && (
+                              <div className="grid grid-cols-[80px_1fr] gap-2">
+                                <dt className="text-xs text-muted-foreground">api_base</dt>
+                                <dd className="break-all font-mono text-xs">{agentRuntime.model_provider.api_base}</dd>
+                              </div>
+                            )}
+                            <div className="grid grid-cols-[80px_1fr] gap-2">
+                              <dt className="text-xs text-muted-foreground">API Key</dt>
+                              <dd className="font-mono text-xs">{agentRuntime.model_provider.has_api_key ? '已配置' : '未检测到密钥'}</dd>
+                            </div>
+                          </dl>
+                        </CardContent>
+                      </Card>
+                    ) : null}
+
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" onClick={() => { setEditConfigOpen(!editConfigOpen); if (!editConfigOpen) void loadLatestForEdit(); }}>
+                        {editConfigOpen ? '收起' : '更新配置'}
+                      </Button>
+                      <Button variant="destructive" size="sm" onClick={() => void onDelete(detailName)} disabled={pendingDelete === detailName}>
+                        {pendingDelete === detailName ? '移除中…' : '移除'}
+                      </Button>
+                    </div>
+
+                    {editConfigOpen && (
+                      <div className="mt-4 rounded-xl border border-border bg-muted/20 p-4">
+                        <p className="mb-3 text-xs text-muted-foreground">保存后将重启该 Agent。{editBaseline?.model_provider.has_api_key ? '若已配置密钥，可留空 api_key 以沿用。' : '必须填写 api_key。'}</p>
+
+                        {editFetchLoading ? (
+                          <p className="text-xs text-muted-foreground">加载配置中…</p>
+                        ) : editFetchError && !editBaseline ? (
+                          <div className="text-xs text-destructive">⚠️ {editFetchError}</div>
+                        ) : editBaseline ? (
+                          <>
+                            <div className="mb-3 flex flex-wrap gap-2">
+                              {PRESETS.map((p) => (
+                                <button key={p.label} type="button" onClick={() => applyEditPreset(p)} className="rounded-full border border-violet-500/20 bg-violet-500/5 px-2 py-1 text-[10px] text-violet-600 hover:bg-violet-500/10">
+                                  {p.label}
+                                </button>
+                              ))}
+                            </div>
+                            <form onSubmit={onEditSubmit} className="flex flex-col gap-3">
+                              <div>
+                                <label className="mb-1 block text-xs text-muted-foreground">模型 *</label>
+                                <Input
+                                  value={editForm.model}
+                                  onChange={(e) => setEditForm((s) => ({ ...s, model: e.target.value }))}
+                                  placeholder="deepseek/deepseek-chat"
+                                  className="font-mono text-sm"
+                                  disabled={editSubmitting}
+                                />
+                                <ModelFieldHint />
+                              </div>
+                              <div>
+                                <label className="mb-1 block text-xs text-muted-foreground">api_base *</label>
+                                <Input value={editForm.apiBase} onChange={(e) => setEditForm((s) => ({ ...s, apiBase: e.target.value }))} disabled={editSubmitting} />
+                              </div>
+                              <div>
+                                <label className="mb-1 block text-xs text-muted-foreground">api_key {editBaseline.model_provider.has_api_key ? '（可选）' : '*'}</label>
+                                <Input type="password" value={editForm.apiKey} onChange={(e) => setEditForm((s) => ({ ...s, apiKey: e.target.value }))} placeholder={editBaseline.model_provider.has_api_key ? '留空沿用已有密钥' : 'sk-...'} disabled={editSubmitting} />
+                              </div>
+                              {editSubmitError && <p className="text-xs text-destructive">{editSubmitError}</p>}
+                              <div className="flex justify-end">
+                                <Button type="submit" size="sm" disabled={!editFormValid || editSubmitting}>{editSubmitting ? '保存中…' : '保存'}</Button>
+                              </div>
+                            </form>
+                          </>
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
+              )}
+            </div>
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
               <div className="text-4xl" aria-hidden>💬</div>

@@ -328,13 +328,17 @@ func (fchannel *FinClawChannel) ProcessAgentMessage(outbound <-chan bus.Outbound
 
 		// Format message for frontend - match frontend's expected format
 		msgId := uuid.New().String()
+		payload := map[string]any{
+			"content": agentMsg.Content,
+			"role":    "assistant",
+		}
+		if kind := agentMsg.Metadata["message_kind"]; kind != "" {
+			payload["message_kind"] = kind
+		}
 		response := map[string]any{
-			"type": TypeMessageSend,
-			"id":   msgId,
-			"payload": map[string]any{
-				"content": agentMsg.Content,
-				"role":    "assistant",
-			},
+			"type":    TypeMessageSend,
+			"id":      msgId,
+			"payload": payload,
 		}
 
 		// 并行发送给所有订阅该 session 的客户端，一个慢客户端不 block 其他客户端

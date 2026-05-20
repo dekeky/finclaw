@@ -1,4 +1,4 @@
-import { IconAlertTriangle, IconChevronLeft, IconHistory, IconRobot } from '@tabler/icons-react';
+import { IconAlertTriangle, IconHistory, IconRobot, IconTrash } from '@tabler/icons-react';
 import { ChatContainer } from '../components/ChatContainer';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -10,8 +10,14 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { archiveConversation, listArchived, persistedToMessages, type ArchivedChat } from '@/lib/chatPersistence';
-import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
+import {
+  archiveConversation,
+  deleteArchived,
+  listArchived,
+  persistedToMessages,
+  type ArchivedChat,
+} from '@/lib/chatPersistence';
+import { useState, useRef, useMemo, useEffect, useCallback, type MouseEvent } from 'react';
 import { cn } from '@/lib/cn';
 
 const WS_STATUS_CONFIG = {
@@ -37,13 +43,12 @@ export default function ChatPage() {
     return `${proto}://${window.location.host}/ws/chat/${encodeURIComponent(currentAgent)}`;
   }, [currentAgent]);
 
-  const { messages, status, isTyping, sendError, send, clearMessages, reconnect } = useWebSocket(wsUrl, {
+  const { messages, status, isTyping, sendError, send, clearMessages, restoreMessages, reconnect } = useWebSocket(wsUrl, {
     persistAgentKey: currentAgent,
   });
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyRev, setHistoryRev] = useState(0);
-  const [viewingArchive, setViewingArchive] = useState<ArchivedChat | null>(null);
 
   const archivedList = useMemo(() => {
     if (!currentAgent) return [];
@@ -59,6 +64,23 @@ export default function ChatPage() {
     }
     clearMessages();
   }, [currentAgent, messages, clearMessages, bumpHistory]);
+
+  const handleRestoreArchive = useCallback(
+    (item: ArchivedChat) => {
+      restoreMessages(persistedToMessages(item.messages));
+      setHistoryOpen(false);
+    },
+    [restoreMessages],
+  );
+
+  const handleDeleteArchive = useCallback(
+    (e: MouseEvent, archiveId: string) => {
+      e.stopPropagation();
+      if (!currentAgent) return;
+      if (deleteArchived(currentAgent, archiveId)) bumpHistory();
+    },
+    [currentAgent, bumpHistory],
+  );
 
   const statusCfg = WS_STATUS_CONFIG[status] || WS_STATUS_CONFIG.idle;
 
@@ -144,10 +166,7 @@ export default function ChatPage() {
               variant="ghost"
               size="sm"
               className="text-xs"
-              onClick={() => {
-                setViewingArchive(null);
-                setHistoryOpen(true);
-              }}
+              onClick={() => setHistoryOpen(true)}
             >
               <IconHistory size={14} className="mr-1 opacity-80" />
               历史记录
@@ -239,80 +258,53 @@ export default function ChatPage() {
         </div>
       </div>
 
-      <Sheet
-        open={historyOpen}
-        onOpenChange={(open) => {
-          setHistoryOpen(open);
-          if (!open) setViewingArchive(null);
-        }}
-      >
+      <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
         <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-md">
           <SheetHeader className="border-b border-border/60 px-4 py-4 text-left">
-            {viewingArchive ? (
-              <div className="flex flex-col gap-3">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 w-fit -ml-2 px-2 text-xs"
-                  onClick={() => setViewingArchive(null)}
-                >
-                  <IconChevronLeft size={16} className="mr-1" />
-                  返回列表
-                </Button>
-                <SheetTitle className="text-base leading-snug pr-8">{viewingArchive.title}</SheetTitle>
-                <SheetDescription className="text-xs">
-                  {new Date(viewingArchive.updatedAt).toLocaleString()}
-                </SheetDescription>
-              </div>
-            ) : (
-              <>
-                <SheetTitle className="text-base">历史对话</SheetTitle>
-                <SheetDescription className="text-xs">
-                  点击「新对话」时会将当前会话存入此处，仅保存在本机浏览器。
-                </SheetDescription>
-              </>
-            )}
+            <SheetTitle className="text-base">历史对话</SheetTitle>
+            <SheetDescription className="text-xs">
+              点击记录载入主聊天区；点击删除图标可移除该条归档。仅保存在本机浏览器。
+            </SheetDescription>
           </SheetHeader>
 
           <div className="min-h-0 flex-1">
-            {viewingArchive ? (
-              <ScrollArea className="h-[calc(100vh-8rem)] px-4 py-4">
-                <ChatContainer
-                  messages={persistedToMessages(viewingArchive.messages)}
-                  isTyping={false}
-                  onClear={() => {}}
-                  readOnly
-                />
-              </ScrollArea>
-            ) : (
-              <ScrollArea className="h-[calc(100vh-8rem)] px-2 py-2">
-                {!currentAgent ? (
+            <ScrollArea className="h-[calc(100vh-8rem)] px-2 py-2">
+              {!currentAgent ? (
                   <p className="px-3 py-8 text-center text-xs text-muted-foreground">请先选择 Agent</p>
                 ) : archivedList.length === 0 ? (
                   <p className="px-3 py-8 text-center text-xs text-muted-foreground">
                     暂无归档。发起对话后点击「新对话」即可保存本轮记录。
                   </p>
                 ) : (
-                  <ul className="flex flex-col gap-1">
-                    {archivedList.map((item) => (
-                      <li key={item.id}>
-                        <button
-                          type="button"
-                          className="flex w-full flex-col gap-0.5 rounded-lg border border-transparent px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted/80 hover:border-border/60"
-                          onClick={() => setViewingArchive(item)}
-                        >
-                          <span className="line-clamp-2 font-medium leading-snug">{item.title}</span>
-                          <span className="text-[11px] text-muted-foreground">
-                            {new Date(item.updatedAt).toLocaleString()} · {item.messages.length} 条消息
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </ScrollArea>
-            )}
+                <ul className="flex flex-col gap-1">
+                  {archivedList.map((item) => (
+                    <li key={item.id} className="group relative">
+                      <button
+                        type="button"
+                        className="flex w-full flex-col gap-0.5 rounded-lg border border-transparent py-2.5 pl-3 pr-10 text-left text-sm transition-colors hover:bg-muted/80 hover:border-border/60"
+                        onClick={() => handleRestoreArchive(item)}
+                      >
+                        <span className="line-clamp-2 font-medium leading-snug">{item.title}</span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {new Date(item.updatedAt).toLocaleString()} · {item.messages.length} 条消息
+                        </span>
+                      </button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
+                        aria-label="删除此条历史对话"
+                        title="删除"
+                        onClick={(e) => handleDeleteArchive(e, item.id)}
+                      >
+                        <IconTrash size={16} />
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </ScrollArea>
           </div>
         </SheetContent>
       </Sheet>

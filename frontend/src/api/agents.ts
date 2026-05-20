@@ -8,9 +8,9 @@ export interface AgentListBody {
 
 /** 创建 Agent 时使用的模型提供方配置（与后端 ModelProvider 对齐）。 */
 export interface AgentModelProvider {
-  /** 例如 `deepseek-chat`、`gpt-4o`，用于在本地存储路径中区分。 */
-  model_name: string;
-  /** 实际请求 LLM 时使用的模型名（与 model_name 可不同）。 */
+  /** PicoClaw 配置别名；省略时后端用 model 填充，前端无需填写。 */
+  model_name?: string;
+  /** provider/模型 ID，例如 `deepseek/deepseek-chat`。 */
   model: string;
   /** OpenAI 兼容接口的 BaseURL，例如 `https://api.deepseek.com/v1`。 */
   api_base: string;
@@ -40,7 +40,7 @@ export interface AgentStatusBody {
 
 /** GET /agents/:name — 服务端可见的模型配置（不含密钥，与后端 agentModelProviderInfo 对齐）。 */
 export interface AgentModelProviderInfo {
-  model_name: string;
+  /** provider/模型 ID，例如 `deepseek/deepseek-chat`。 */
   model: string;
   api_base: string;
   /** 后端是否配置了非空 API Key（不返回具体内容）。 */
@@ -53,6 +53,36 @@ export interface AgentDetailBody {
   workspace?: string;
   model_provider: AgentModelProviderInfo;
 }
+
+/** PicoClaw 工作区人设文件（AGENT.md / SOUL.md / USER.md）。 */
+export interface AgentPersonaFile {
+  name: string;
+  content: string;
+  exists: boolean;
+}
+
+export interface AgentWorkspaceFilesBody {
+  workspace: string;
+  files: AgentPersonaFile[];
+}
+
+export type PersonaFileName = 'AGENT.md' | 'SOUL.md' | 'USER.md';
+
+export const PERSONA_FILE_LABELS: Record<PersonaFileName, { title: string; hint: string }> = {
+  'AGENT.md': {
+    title: '行为指南',
+    hint:
+      'PicoClaw 格式：首行 --- → YAML frontmatter（name/description 等）→ --- → Markdown 正文；仅正文进入 prompt。',
+  },
+  'SOUL.md': {
+    title: '灵魂 / 性格',
+    hint: '整文件 Markdown 注入 prompt；不要用 --- frontmatter，从 # Soul 等标题直接开始。',
+  },
+  'USER.md': {
+    title: '用户偏好',
+    hint: '整文件 Markdown 注入 prompt；不要用 --- frontmatter，从 # User 等标题直接开始。',
+  },
+};
 
 async function parseGinx<T>(res: Response): Promise<GinxResponse<T>> {
   let json: GinxResponse<T> | null = null;
@@ -143,4 +173,69 @@ export async function updateAgent(name: string, req: UpdateAgentRequest): Promis
 export async function deleteAgent(name: string): Promise<void> {
   const res = await fetch(`/agents/${encodeURIComponent(name)}`, { method: 'DELETE' });
   await parseGinx<AgentStatusBody | null>(res);
+}
+
+/** GET /agents/:name/workspace-files —— 读取人设 Markdown 文件。 */
+export async function getAgentWorkspaceFiles(name: string): Promise<AgentWorkspaceFilesBody> {
+  const res = await fetch(`/agents/${encodeURIComponent(name)}/workspace-files`);
+  const body = await parseGinx<AgentWorkspaceFilesBody | null>(res);
+  if (!body.body) throw new Error('empty body');
+  return body.body;
+}
+
+/** PUT /agents/:name/workspace-files/:file —— 保存单个人设文件。 */
+export async function putAgentWorkspaceFile(
+  name: string,
+  file: PersonaFileName,
+  content: string,
+): Promise<AgentPersonaFile> {
+  const res = await fetch(
+    `/agents/${encodeURIComponent(name)}/workspace-files/${encodeURIComponent(file)}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    },
+  );
+  const body = await parseGinx<AgentPersonaFile | null>(res);
+  if (!body.body) throw new Error('empty body');
+  return body.body;
+}
+
+/** POST /agents/:name/workspace-files/init —— 为缺失文件写入默认模板。 */
+export async function initAgentWorkspaceFiles(name: string): Promise<AgentWorkspaceFilesBody> {
+  const res = await fetch(`/agents/${encodeURIComponent(name)}/workspace-files/init`, {
+    method: 'POST',
+  });
+  const body = await parseGinx<AgentWorkspaceFilesBody | null>(res);
+  if (!body.body) throw new Error('empty body');
+  return body.body;
+}
+
+export interface GeneratePersonaFileRequest {
+  prompt: string;
+  current_content?: string;
+}
+
+export interface GeneratePersonaFileBody {
+  content: string;
+}
+
+/** POST /agents/:name/workspace-files/:file/generate —— 根据提示词 AI 生成人设 Markdown。 */
+export async function generateAgentWorkspaceFile(
+  name: string,
+  file: PersonaFileName,
+  req: GeneratePersonaFileRequest,
+): Promise<GeneratePersonaFileBody> {
+  const res = await fetch(
+    `/agents/${encodeURIComponent(name)}/workspace-files/${encodeURIComponent(file)}/generate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    },
+  );
+  const body = await parseGinx<GeneratePersonaFileBody | null>(res);
+  if (!body.body) throw new Error('empty body');
+  return body.body;
 }
