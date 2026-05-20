@@ -14,8 +14,12 @@ export default function BacktestPage() {
               <IconChartAreaLine className="h-6 w-6 text-violet-500" />
             </div>
             <CardTitle>量化回测即将上线</CardTitle>
-            <CardDescription>
-              这里会放策略回测能力：数据源、策略编辑、回测结果与可视化、参数优化等。
+            <CardDescription className="space-y-2">
+              <p>即将提供两大核心能力：</p>
+              <ul className="list-inside list-disc space-y-1 text-left">
+                <li>量化策略智能生成</li>
+                <li>回测验证</li>
+              </ul>
             </CardDescription>
           </CardHeader>
         </Card>

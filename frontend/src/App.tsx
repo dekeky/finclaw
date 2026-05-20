@@ -4,7 +4,6 @@ import AgentsPage from './pages/AgentsPage';
 import BacktestPage from './pages/BacktestPage';
 import ChatPage from './pages/ChatPage';
 import RssReaderPage from './pages/RssReaderPage';
-import SettingsPage from './pages/SettingsPage';
 import SkillPage from './pages/SkillPage';
 
 export default function App() {
@@ -19,7 +18,6 @@ export default function App() {
         <Route path="/agents" element={<AgentsPage />} />
         <Route path="/backtest" element={<BacktestPage />} />
         <Route path="/skill" element={<SkillPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

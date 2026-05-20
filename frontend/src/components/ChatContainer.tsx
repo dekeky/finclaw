@@ -115,11 +115,11 @@ export function ChatContainer({
           <h2 className="mb-2 text-xl font-medium text-foreground/90">
             {agentName ? `与 ${agentName} 开始对话` : '欢迎使用 Finclaw'}
           </h2>
-          <p className="max-w-sm text-sm text-muted-foreground">
-            {agentName
-              ? '输入问题即可开始；可询问市场、分析或财经相关话题。'
-              : '你的 AI 金融助手。可以问我市场、分析或任何财经相关的问题。'}
-          </p>
+          {!agentName && (
+            <p className="max-w-sm text-sm text-muted-foreground">
+              你的 AI 金融助手。可以问我市场、分析或任何财经相关的问题。
+            </p>
+          )}
         </div>
       </div>
     );

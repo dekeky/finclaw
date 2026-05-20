@@ -5,7 +5,6 @@ import {
   IconNews,
   IconPuzzle,
   IconRobot,
-  IconSettings,
   IconStar,
 } from '@tabler/icons-react';
 import { Link, useLocation } from 'react-router-dom';
@@ -61,7 +60,6 @@ const NAV_GROUPS: NavGroup[] = [
       { title: 'Agent', url: '/agents', icon: IconRobot },
       { title: '量化回测', url: '/backtest', icon: IconChartAreaLine, badge: 'Soon' },
       { title: 'SkillHub', url: '/skill', icon: IconPuzzle, badge: 'Soon' },
-      { title: '设置', url: '/settings', icon: IconSettings, badge: 'Soon' },
     ],
   },
 ];

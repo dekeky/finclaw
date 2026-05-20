@@ -1,0 +1,1 @@
+cd C:\Users\25633\Desktop\finclaw; $env:CGO_ENABLED=0; $env:GOOS="linux"; $env:GOARCH="amd64"; go build -trimpath -ldflags "-s -w" -o dist\finclaw-linux-amd64 .\cmd\agent
