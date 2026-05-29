@@ -51,6 +51,7 @@ func defaultFinclawConfig() *FinclawConfigServer {
 		FinClawChannelConf: &finclaw.FinChannelConfig{
 			ReadTimeout:  60,
 			PingInterval: 30,
+			WriteWait:    10,
 			MaxConn:      1000,
 		},
 	}

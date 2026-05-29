@@ -21,6 +21,7 @@ export interface ArchivedChat {
 interface AgentBucket {
   draft: PersistedMessage[];
   archived: ArchivedChat[];
+  sessionId?: string;
 }
 
 interface PersistRoot {
@@ -146,4 +147,16 @@ export function deleteArchived(agentName: string, archiveId: string): boolean {
   root.agents[agentName] = { ...prev, archived: next };
   writeRoot(root);
   return true;
+}
+
+export function loadSessionId(agentName: string): string | null {
+  const root = readRoot();
+  return root.agents[agentName]?.sessionId ?? null;
+}
+
+export function saveSessionId(agentName: string, sessionId: string | null): void {
+  const root = readRoot();
+  const prev = root.agents[agentName] ?? emptyBucket();
+  root.agents[agentName] = { ...prev, sessionId: sessionId ?? undefined };
+  writeRoot(root);
 }

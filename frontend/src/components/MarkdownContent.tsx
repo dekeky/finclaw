@@ -18,6 +18,8 @@ export interface MarkdownContentProps {
   className?: string;
   /** 是否显示代码块复制按钮 */
   copyableCode?: boolean;
+  /** 工具输出等密集文本：更紧的行距，且不将单换行转 <br> */
+  compact?: boolean;
 }
 
 const SIZE_CLASS: Record<MarkdownSize, string> = {
@@ -64,6 +66,7 @@ export function MarkdownContent({
   size = 'md',
   className,
   copyableCode = true,
+  compact = false,
 }: MarkdownContentProps) {
   const { scheme } = useTheme();
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -207,11 +210,13 @@ export function MarkdownContent({
         return <input type={type} checked={checked} disabled={disabled} readOnly />;
       },
       hr() {
-        return <hr className="my-6 border-border/60" />;
+        return <hr className={compact ? 'my-2 border-border/40' : 'my-6 border-border/60'} />;
       },
     }),
-    [copiedId, copyableCode, handleCopy, idPrefix, syntaxStyle],
+    [compact, copiedId, copyableCode, handleCopy, idPrefix, syntaxStyle],
   );
+
+  const remarkPlugins = compact ? [remarkGfm] : [remarkGfm, remarkBreaks];
 
   if (!children?.trim()) {
     return null;
@@ -222,7 +227,7 @@ export function MarkdownContent({
       className={cn(
         'markdown-body prose max-w-none dark:prose-invert',
         'prose-headings:scroll-mt-20 prose-headings:font-semibold prose-headings:tracking-tight',
-        'prose-p:my-2 prose-p:leading-relaxed',
+        compact ? 'prose-p:my-0.5 prose-p:leading-snug' : 'prose-p:my-2 prose-p:leading-relaxed',
         'prose-pre:bg-transparent prose-pre:p-0',
         'prose-code:before:content-none prose-code:after:content-none',
         'prose-strong:font-semibold prose-strong:text-foreground',
@@ -230,7 +235,7 @@ export function MarkdownContent({
         className,
       )}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components}>
+      <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
         {children}
       </ReactMarkdown>
     </div>

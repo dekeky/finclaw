@@ -4,17 +4,11 @@ import { FinclawMark } from '../FinclawMark';
 import { ChatContainer } from '../ChatContainer';
 import { InputArea } from '../InputArea';
 import { ErrorBoundary } from '../ErrorBoundary';
-import { useWebSocket } from '../../hooks/useWebSocket';
+import { useChatSession } from '../../state/chatSession';
 import { useAgents } from '../../state/agents';
 import { buildAnalysisUserMessage, type EntryForAnalysis } from '../../utils/analysisPrompt';
 import { rssScopedItemKey } from '../../utils/rssScopedKey';
 import { rssSourceDisplayLabel } from '../../utils/rssSourceLabel';
-
-function buildAgentWsUrl(agentName: string | null): string | null {
-  if (!agentName) return null;
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${window.location.host}/ws/chat/${encodeURIComponent(agentName)}`;
-}
 
 type Props = {
   listEntries: EntryForAnalysis[];
@@ -286,8 +280,7 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
   }, []);
 
   const { agents, currentAgent, selectAgent, status: agentsStatus } = useAgents();
-  const wsUrl = buildAgentWsUrl(currentAgent);
-  const { messages, status, isTyping, sendError, send, clearMessages, reconnect } = useWebSocket(wsUrl);
+  const { messages, status, isTyping, sendError, send, clearMessages, reconnect } = useChatSession();
 
   const hasFeed = listEntries.length > 0;
   const noAgent = !currentAgent;

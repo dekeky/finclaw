@@ -1,4 +1,10 @@
 import type { GinxResponse } from '../types/rss';
+import { getToken } from './auth';
+
+function authHeaders(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 /** Agent 列表响应（来自后端 /agents GET）。 */
 export interface AgentListBody {
@@ -123,14 +129,14 @@ async function parseGinx<T>(res: Response): Promise<GinxResponse<T>> {
 
 /** GET /agents —— 列出所有 Agent。 */
 export async function listAgents(): Promise<string[]> {
-  const res = await fetch('/agents');
+  const res = await fetch('/agents', { headers: authHeaders() });
   const body = await parseGinx<AgentListBody | null>(res);
   return body.body?.agents ?? [];
 }
 
 /** GET /agents/:name —— 查询单个 Agent 的运行时配置摘要（无 API Key）。 */
 export async function getAgent(name: string): Promise<AgentDetailBody> {
-  const res = await fetch(`/agents/${encodeURIComponent(name)}`);
+  const res = await fetch(`/agents/${encodeURIComponent(name)}`, { headers: authHeaders() });
   let json: GinxResponse<AgentDetailBody | null> | null = null;
   try {
     json = (await res.json()) as GinxResponse<AgentDetailBody | null>;
@@ -164,7 +170,7 @@ export async function getAgent(name: string): Promise<AgentDetailBody> {
 export async function createAgent(req: CreateAgentRequest): Promise<AgentStatusBody> {
   const res = await fetch('/agents', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(req),
   });
   const body = await parseGinx<AgentStatusBody | null>(res);
@@ -176,7 +182,7 @@ export async function createAgent(req: CreateAgentRequest): Promise<AgentStatusB
 export async function updateAgent(name: string, req: UpdateAgentRequest): Promise<AgentStatusBody> {
   const res = await fetch(`/agents/${encodeURIComponent(name)}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(req),
   });
   const body = await parseGinx<AgentStatusBody | null>(res);
@@ -186,13 +192,13 @@ export async function updateAgent(name: string, req: UpdateAgentRequest): Promis
 
 /** DELETE /agents/:name —— 停止并删除 Agent。 */
 export async function deleteAgent(name: string): Promise<void> {
-  const res = await fetch(`/agents/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  const res = await fetch(`/agents/${encodeURIComponent(name)}`, { method: 'DELETE', headers: authHeaders() });
   await parseGinx<AgentStatusBody | null>(res);
 }
 
 /** GET /agents/:name/skills —— 列出 Agent 可用 Skill。 */
 export async function getAgentSkills(name: string): Promise<AgentSkillsBody> {
-  const res = await fetch(`/agents/${encodeURIComponent(name)}/skills`);
+  const res = await fetch(`/agents/${encodeURIComponent(name)}/skills`, { headers: authHeaders() });
   let json: GinxResponse<AgentSkillsBody | null> | null = null;
   try {
     json = (await res.json()) as GinxResponse<AgentSkillsBody | null>;
@@ -218,7 +224,7 @@ export async function getAgentSkills(name: string): Promise<AgentSkillsBody> {
 
 /** GET /agents/:name/workspace-files —— 读取人设 Markdown 文件。 */
 export async function getAgentWorkspaceFiles(name: string): Promise<AgentWorkspaceFilesBody> {
-  const res = await fetch(`/agents/${encodeURIComponent(name)}/workspace-files`);
+  const res = await fetch(`/agents/${encodeURIComponent(name)}/workspace-files`, { headers: authHeaders() });
   const body = await parseGinx<AgentWorkspaceFilesBody | null>(res);
   if (!body.body) throw new Error('empty body');
   return body.body;
@@ -234,7 +240,7 @@ export async function putAgentWorkspaceFile(
     `/agents/${encodeURIComponent(name)}/workspace-files/${encodeURIComponent(file)}`,
     {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ content }),
     },
   );
@@ -247,6 +253,7 @@ export async function putAgentWorkspaceFile(
 export async function initAgentWorkspaceFiles(name: string): Promise<AgentWorkspaceFilesBody> {
   const res = await fetch(`/agents/${encodeURIComponent(name)}/workspace-files/init`, {
     method: 'POST',
+    headers: authHeaders(),
   });
   const body = await parseGinx<AgentWorkspaceFilesBody | null>(res);
   if (!body.body) throw new Error('empty body');
@@ -272,7 +279,7 @@ export async function generateAgentWorkspaceFile(
     `/agents/${encodeURIComponent(name)}/workspace-files/${encodeURIComponent(file)}/generate`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify(req),
     },
   );

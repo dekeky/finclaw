@@ -34,8 +34,8 @@ function summarizeToolFeedback(content: string): string {
     if (!line) return '\u5de5\u5177\u6267\u884c';
     const one = ellipsisOneLine(line, 88);
     return one.startsWith(TOOL_EMOJI)
-      ? `\u5de5\u5177\u6267\u884c \u00b7 ${one.replace(new RegExp(`^${TOOL_EMOJI}\\s*`), '')}`
-      : `\u5de5\u5177\u6267\u884c \u00b7 ${one}`;
+      ? `\u5de5\u5177\u6267\u884c ${one.replace(new RegExp(`^${TOOL_EMOJI}\\s*`), '')}`
+      : `\u5de5\u5177\u6267\u884c ${one}`;
   }
   const names: string[] = [];
   for (const p of parts) {
@@ -46,9 +46,9 @@ function summarizeToolFeedback(content: string): string {
   if (names.length > 0) {
     const head = names.slice(0, 3).join('\u3001');
     const suf = names.length > 3 ? ` \u7b49 ${names.length} \u4e2a` : '';
-    return `\u5de5\u5177\u6267\u884c \u00b7 ${head}${suf}`;
+    return `\u5de5\u5177\u6267\u884c ${head}${suf}`;
   }
-  return `\u5de5\u5177\u6267\u884c \u00b7 ${parts.length} \u9879`;
+  return `\u5de5\u5177\u6267\u884c ${parts.length} \u9879`;
 }
 
 function AssistantMarkdownBody({ messageId, content }: { messageId: string; content: string }) {
@@ -56,6 +56,28 @@ function AssistantMarkdownBody({ messageId, content }: { messageId: string; cont
     <MarkdownContent idPrefix={messageId} size="md">
       {content}
     </MarkdownContent>
+  );
+}
+
+function ToolFeedbackBody({ messageId, content }: { messageId: string; content: string }) {
+  const parts = parseToolFeedbackParts(content);
+  if (parts.length <= 1) {
+    return (
+      <MarkdownContent idPrefix={messageId} size="sm" compact>
+        {content}
+      </MarkdownContent>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      {parts.map((part, index) => (
+        <div key={index} className={index > 0 ? 'border-t border-border/40 pt-2' : undefined}>
+          <MarkdownContent idPrefix={`${messageId}-tool-${index}`} size="sm" compact>
+            {part}
+          </MarkdownContent>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -149,7 +171,7 @@ function CollapsibleProcessPanel({
         </span>
         {timing.running && (
           <span className={`shrink-0 text-[10px] tabular-nums ${statusClass}`}>
-            {isThought ? '\u52aa\u529b\u5de5\u4f5c\u4e2d' : '\u5de5\u5177\u6267\u884c\u4e2d'} \u00b7 {formatElapsedSeconds(timing.seconds)}
+            {isThought ? '\u52aa\u529b\u5de5\u4f5c\u4e2d' : '\u5de5\u5177\u6267\u884c\u4e2d'} {formatElapsedSeconds(timing.seconds)}
           </span>
         )}
         {timing.completed && timing.seconds > 0 && (
@@ -406,7 +428,7 @@ export function MessageBubble({ message, agentName, toolOutputActive, thoughtOut
         content={message.content}
         isActive={toolOutputActive}
       >
-        {renderMarkdown(message.content)}
+        <ToolFeedbackBody messageId={message.id} content={message.content} />
       </CollapsibleProcessPanel>
     );
 

@@ -1,10 +1,13 @@
 import { IconAlertTriangle, IconHistory, IconTrash } from '@tabler/icons-react';
 import { AgentAvatar } from '../components/AgentAvatar';
 import { ChatContainer } from '../components/ChatContainer';
+import { DocFileTree } from '../components/DocFileTree';
+import { DocReadingPanel } from '../components/DocReadingPanel';
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { useWebSocket } from '../hooks/useWebSocket';
+import { useChatSession } from '@/state/chatSession';
 import { useAiDock } from '@/state/aiDock';
 import { useAgents } from '@/state/agents';
+import { useDocViewer } from '@/state/docViewer';
 import { buildAnalysisUserMessage } from '@/utils/analysisPrompt';
 import { rssScopedItemKey } from '@/utils/rssScopedKey';
 import { Button } from '@/components/ui/button';
@@ -38,18 +41,16 @@ export default function ChatPage() {
     void refresh();
   }, [refresh]);
 
-  const wsUrl = useMemo(() => {
-    if (!currentAgent) return null;
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    return `${proto}://${window.location.host}/ws/chat/${encodeURIComponent(currentAgent)}`;
-  }, [currentAgent]);
-
-  const { messages, status, isTyping, sendError, send, clearMessages, restoreMessages, reconnect } = useWebSocket(wsUrl, {
-    persistAgentKey: currentAgent,
-  });
+  const { messages, status, isTyping, sendError, send, clearMessages, restoreMessages, reconnect } = useChatSession();
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyRev, setHistoryRev] = useState(0);
+  const {
+    bumpRefresh: bumpDocsRefresh,
+    refreshRev: docsRefreshRev,
+    selectedDocPath,
+    setSelectedDocPath,
+  } = useDocViewer();
 
   const archivedList = useMemo(() => {
     if (!currentAgent) return [];
@@ -84,6 +85,14 @@ export default function ChatPage() {
   );
 
   const statusCfg = WS_STATUS_CONFIG[status] || WS_STATUS_CONFIG.idle;
+
+  useEffect(() => {
+    const lastMsg = messages[messages.length - 1];
+    if (!lastMsg || lastMsg.role !== 'assistant' || lastMsg.kind !== 'tool') return;
+    if (lastMsg.content.includes('write_file') && lastMsg.content.includes('docs/')) {
+      bumpDocsRefresh();
+    }
+  }, [messages, bumpDocsRefresh]);
 
   const handleSend = (text: string) => {
     if (!text.trim() || status !== 'connected') return;
@@ -205,64 +214,109 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* Messages */}
+      {/* Main body: file tree sidebar + chat */}
       {currentAgent && (
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 md:px-8 lg:px-24 xl:px-48 [scrollbar-gutter:stable]">
-          <div className="mx-auto flex w-full max-w-[64rem] flex-col gap-8">
-            <ErrorBoundary>
-              <ChatContainer
-                messages={messages}
-                isTyping={isTyping}
-                onClear={handleArchiveAndClear}
-                agentName={currentAgent}
-              />
-            </ErrorBoundary>
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          {/* Agent assets sidebar -- always visible */}
+          <aside className="flex w-56 shrink-0 flex-col border-r border-border/50 bg-muted/20 lg:w-60">
+            <DocFileTree
+              agentName={currentAgent}
+              refreshRev={docsRefreshRev}
+              onFileSelect={setSelectedDocPath}
+              selectedDocPath={selectedDocPath}
+            />
+          </aside>
+
+          {/* Chat area - always visible */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 md:px-8 [scrollbar-gutter:stable]">
+              <div className="mx-auto flex w-full max-w-[64rem] flex-col gap-8">
+                <ErrorBoundary>
+                  <ChatContainer
+                    messages={messages}
+                    isTyping={isTyping}
+                    onClear={handleArchiveAndClear}
+                    agentName={currentAgent}
+                  />
+                </ErrorBoundary>
+              </div>
+            </div>
+
+            <div className="shrink-0 border-t border-border/40 px-4 pb-4 pt-3 md:px-8">
+              <div className="mx-auto max-w-[64rem]">
+                <form ref={formRef} onSubmit={(e) => { e.preventDefault(); handleSend(value); }}>
+                  <div className="relative rounded-2xl border border-border/60 bg-card p-1.5 pr-1 shadow-sm">
+                    <div className="relative flex items-end gap-2">
+                      <textarea
+                        className="min-h-[44px] w-full resize-none bg-transparent px-3 py-2.5 text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
+                        placeholder={dock.selectedKeys.size > 0 ? '已选文章将自动附带到对话中...' : '输入你的问题...'}
+                        rows={1}
+                        value={value}
+                        onChange={(e) => setValue(e.target.value)}
+                        disabled={status !== 'connected'}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            handleSend(value);
+                          }
+                        }}
+                      />
+                      <button
+                        type="submit"
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-500 text-white transition-all hover:bg-violet-600 active:scale-95 disabled:opacity-50"
+                        disabled={status !== 'connected' || !value.trim()}
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="22" y1="2" x2="11" y2="13" />
+                          <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </form>
+                <p className="mt-2 text-center text-[11px] text-muted-foreground">
+                  <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">Enter</kbd> 发送 ·
+                  <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">Shift</kbd>+<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">Enter</kbd> 换行
+                </p>
+                <p className="mt-1 text-center text-[10px] text-muted-foreground/80">
+                  对话内容会缓存在本浏览器（localStorage），刷新后仍可从当前 Agent 恢复。
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Input */}
-      <div className="shrink-0 px-4 pb-4 md:px-8 lg:px-24 xl:px-48">
-        <div className="mx-auto max-w-[64rem]">
-          <form ref={formRef} onSubmit={(e) => { e.preventDefault(); handleSend(value); }}>
-            <div className="relative rounded-2xl border border-border/60 bg-card p-1.5 pr-1 shadow-sm">
-              <div className="relative flex items-end gap-2">
-                <textarea
-                  className="min-h-[44px] w-full resize-none bg-transparent px-3 py-2.5 text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
-                  placeholder={dock.selectedKeys.size > 0 ? '已选文章将自动附带到对话中...' : '输入你的问题...'}
-                  rows={1}
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  disabled={status !== 'connected'}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSend(value);
-                    }
-                  }}
-                />
-                <button
-                  type="submit"
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-500 text-white transition-all hover:bg-violet-600 active:scale-95 disabled:opacity-50"
-                  disabled={status !== 'connected' || !value.trim()}
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="22" y1="2" x2="11" y2="13" />
-                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                  </svg>
-                </button>
+      {/* Input (no agent selected) */}
+      {!currentAgent && (
+        <div className="shrink-0 px-4 pb-4 md:px-8">
+          <div className="mx-auto max-w-[64rem]">
+            <form ref={formRef} onSubmit={(e) => { e.preventDefault(); handleSend(value); }}>
+              <div className="relative rounded-2xl border border-border/60 bg-card p-1.5 pr-1 shadow-sm opacity-60">
+                <div className="relative flex items-end gap-2">
+                  <textarea
+                    className="min-h-[44px] w-full resize-none bg-transparent px-3 py-2.5 text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
+                    placeholder="请先选择 Agent…"
+                    rows={1}
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                    disabled
+                  />
+                </div>
               </div>
-            </div>
-          </form>
-          <p className="mt-2 text-center text-[11px] text-muted-foreground">
-            <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">Enter</kbd> 发送 ·
-            <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">Shift</kbd>+<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">Enter</kbd> 换行
-          </p>
-          <p className="mt-1 text-center text-[10px] text-muted-foreground/80">
-            对话内容会缓存在本浏览器（localStorage），刷新后仍可从当前 Agent 恢复。
-          </p>
+            </form>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Document reading floating panel */}
+      {currentAgent && selectedDocPath && (
+        <DocReadingPanel
+          agentName={currentAgent}
+          filePath={selectedDocPath}
+          onClose={() => setSelectedDocPath(null)}
+        />
+      )}
 
       <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
         <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-md">

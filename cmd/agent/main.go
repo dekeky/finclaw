@@ -16,6 +16,7 @@ import (
 	"context"
 	"log"
 
+	"github.com/finclaw/internal/auth"
 	finclawconfig "github.com/finclaw/internal/config"
 	"github.com/finclaw/internal/router"
 	agentruntime "github.com/finclaw/pkg/agent"
@@ -26,14 +27,21 @@ func main() {
 	// 1. Load configuration
 	finclawConf := finclawconfig.FinConfigGet()
 	// 2. Create message bus (the core of the system)
-	ctx, _ := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	agentManager, err := agentruntime.Init(ctx, finclawConf)
 	if err != nil {
 		log.Fatalf("❌ Failed to init agent manager: %v", err)
 	}
 
-	frouter := router.NewFinClawRouter(finclawConf.RSSServerAddr, agentManager)
+	authStore, err := auth.NewStore()
+	if err != nil {
+		log.Fatalf("❌ Failed to init auth store: %v", err)
+	}
+	defer authStore.Close()
+
+	frouter := router.NewFinClawRouter(finclawConf.RSSServerAddr, agentManager, authStore)
 
 	if err := frouter.RoutesInit(); err != nil {
 		log.Fatalf("❌ Failed to init routes: %v", err)
