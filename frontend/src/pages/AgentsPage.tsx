@@ -1,10 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { IconCpu, IconFileDescription, IconPuzzle, IconTrash } from '@tabler/icons-react';
+import { useSearchParams } from 'react-router-dom';
+import { IconBuildingStore, IconCpu, IconFileDescription, IconPuzzle, IconTrash } from '@tabler/icons-react';
 import { useAgents } from '../state/agents';
-import { getAgent, type AgentDetailBody } from '../api/agents';
+import {
+  getAgent,
+  getAgentSkillFile,
+  writeAgentSkillFile,
+  deleteAgentSkill,
+  type AgentDetailBody,
+} from '../api/agents';
 import { AgentAvatar } from '../components/AgentAvatar';
+import { AgentMarketPanel } from '../components/AgentMarketPanel';
 import { AgentPersonaEditor } from '../components/AgentPersonaEditor';
-import { AgentSkillsPanel } from '../components/AgentSkillsPanel';
+import { AgentSkillsPanel, skillFileKey, type SkillFileTarget } from '../components/AgentSkillsPanel';
+import { DocReadingPanel } from '../components/DocReadingPanel';
+import { ModelConnectivityCheck } from '../components/ModelConnectivityCheck';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -88,11 +99,13 @@ function groupAgents(names: string[]): Array<{ key: string; names: string[] }> {
 }
 
 export default function AgentsPage() {
-  const { agents, currentAgent, refresh, createAgent, updateAgent, deleteAgent } = useAgents();
+  const { agents, currentAgent, refresh, createAgent, updateAgent, deleteAgent, selectAgent } = useAgents();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [search, setSearch] = useState('');
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [marketOpen, setMarketOpen] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -109,6 +122,9 @@ export default function AgentsPage() {
   const [agentRuntimeLoading, setAgentRuntimeLoading] = useState(false);
   const [agentRuntimeError, setAgentRuntimeError] = useState<string | null>(null);
   const [detailTab, setDetailTabState] = useState<DetailTab>(loadDetailTab);
+  const [skillFile, setSkillFile] = useState<SkillFileTarget | null>(null);
+  const [skillsRefreshRev, setSkillsRefreshRev] = useState(0);
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   const setDetailTab = useCallback((tab: DetailTab) => {
     saveDetailTab(tab);
@@ -116,6 +132,15 @@ export default function AgentsPage() {
   }, []);
 
   useEffect(() => { void refresh(); }, []);
+
+  useEffect(() => {
+    if (searchParams.get('market') !== '1') return;
+    setAddOpen(false);
+    setMarketOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('market');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -134,7 +159,68 @@ export default function AgentsPage() {
     });
   }, [agents, currentAgent]);
 
-  const detailName = addOpen ? null : selectedName;
+  const detailName = addOpen || marketOpen ? null : selectedName;
+
+  const openMarket = useCallback(() => {
+    setAddOpen(false);
+    setMarketOpen(true);
+  }, []);
+
+  const handleTemplateInstalled = useCallback(
+    async (name: string) => {
+      setMarketOpen(false);
+      await refresh();
+      selectAgent(name);
+      setSelectedName(name);
+    },
+    [refresh, selectAgent],
+  );
+
+  // 切换 Agent 或离开 Skills 标签时关闭已打开的 skill 文件
+  useEffect(() => {
+    setSkillFile(null);
+  }, [detailName, detailTab]);
+
+  const loadSkillContent = useCallback(
+    (_agent: string, _file: string): Promise<string> => {
+      if (!detailName || !skillFile) return Promise.reject(new Error('未选择 skill 文件'));
+      return getAgentSkillFile(detailName, skillFile.source, skillFile.skill, skillFile.file).then(
+        (b) => b.content,
+      );
+    },
+    [detailName, skillFile],
+  );
+
+  const saveSkillContent = useCallback(
+    async (content: string) => {
+      if (!detailName || !skillFile) return;
+      await writeAgentSkillFile(detailName, skillFile.source, skillFile.skill, skillFile.file, content);
+    },
+    [detailName, skillFile],
+  );
+
+  const handleDeleteSkill = useCallback(
+    async (source: string, skill: string, name: string) => {
+      if (!detailName) return;
+      const ok = await confirm({
+        title: `删除 Skill 包「${name}」`,
+        description: '将永久删除该 Skill 包及其全部文件，操作不可恢复。',
+        confirmText: '删除',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await deleteAgentSkill(detailName, source, skill);
+        if (skillFile && skillFile.source === source && skillFile.skill === skill) {
+          setSkillFile(null);
+        }
+        setSkillsRefreshRev((n) => n + 1);
+      } catch (err) {
+        window.alert(err instanceof Error ? err.message : '删除失败');
+      }
+    },
+    [detailName, skillFile, confirm],
+  );
 
   useEffect(() => {
     setEditConfigOpen(false);
@@ -275,17 +361,23 @@ export default function AgentsPage() {
           <h1 className="text-base font-medium tracking-tight text-foreground/90">Agent 管理</h1>
           <Badge variant="outline" className="text-[10px]">{agents.length}</Badge>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-xs md:hidden"
-          onClick={() => {
-            void refresh();
-            setAddOpen(true);
-          }}
-        >
-          添加 Agent
-        </Button>
+        <div className="flex gap-1 md:hidden">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs"
+            onClick={() => {
+              void refresh();
+              setMarketOpen(false);
+              setAddOpen(true);
+            }}
+          >
+            添加 Agent
+          </Button>
+          <Button variant="ghost" size="sm" className="text-xs" onClick={openMarket}>
+            市场
+          </Button>
+        </div>
       </div>
 
       {/* Content */}
@@ -312,13 +404,14 @@ export default function AgentsPage() {
                     <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">{sec.key}</div>
                     {sec.names.map((name) => {
                       const chatting = name === currentAgent;
-                      const selected = !addOpen && name === selectedName;
+                      const selected = !addOpen && !marketOpen && name === selectedName;
                       return (
                         <button
                           key={name}
                           type="button"
                           onClick={() => {
                             setAddOpen(false);
+                            setMarketOpen(false);
                             setSelectedName(name);
                           }}
                           className={`w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${selected ? 'bg-accent/80 font-medium' : 'hover:bg-muted/60'}`}
@@ -338,24 +431,40 @@ export default function AgentsPage() {
               </div>
             )}
           </ScrollArea>
-          <div className="shrink-0 border-t border-border/50 p-3">
+          <div className="shrink-0 space-y-2 border-t border-border/50 p-3">
             <Button
               variant="outline"
               size="sm"
               className="w-full text-xs"
               onClick={() => {
                 void refresh();
+                setMarketOpen(false);
                 setAddOpen(true);
               }}
             >
               添加 Agent
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              className="w-full bg-violet-600 text-xs hover:bg-violet-600/90"
+              onClick={openMarket}
+            >
+              <IconBuildingStore className="mr-1.5 h-3.5 w-3.5" stroke={1.75} />
+              Agent 市场
             </Button>
           </div>
         </div>
 
         {/* Right Pane - Detail */}
         <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-border bg-card overflow-hidden">
-          {addOpen ? (
+          {marketOpen ? (
+            <AgentMarketPanel
+              existingAgents={agents}
+              onClose={() => setMarketOpen(false)}
+              onInstalled={(name) => void handleTemplateInstalled(name)}
+            />
+          ) : addOpen ? (
             <ScrollArea className="flex-1">
               <div className="p-6">
                 <div className="mb-6">
@@ -397,6 +506,14 @@ export default function AgentsPage() {
                     <Input type="password" value={form.apiKey} onChange={(e) => setForm((s) => ({ ...s, apiKey: e.target.value }))} placeholder="sk-..." />
                     <p className="mt-1 text-[11px] text-muted-foreground">密钥仅用于保存到服务端，不会留在浏览器中。</p>
                   </div>
+                  <ModelConnectivityCheck
+                    fields={{
+                      model: form.model,
+                      apiBase: form.apiBase,
+                      apiKey: form.apiKey,
+                    }}
+                    disabled={submitting}
+                  />
                   {submitError && <p className="text-xs text-destructive">{submitError}</p>}
                   <div className="flex justify-end gap-2">
                     <Button type="button" variant="ghost" size="sm" onClick={() => setForm(EMPTY_FORM)} disabled={submitting}>清空</Button>
@@ -459,7 +576,17 @@ export default function AgentsPage() {
               {detailTab === 'persona' ? (
                 <AgentPersonaEditor key={detailName} agentName={detailName} className="min-h-0 flex-1" />
               ) : detailTab === 'skills' ? (
-                <AgentSkillsPanel key={detailName} agentName={detailName} className="min-h-0 flex-1" />
+                <AgentSkillsPanel
+                  key={detailName}
+                  agentName={detailName}
+                  className="min-h-0 flex-1"
+                  onOpenFile={setSkillFile}
+                  activeFileKey={
+                    skillFile ? skillFileKey(skillFile.source, skillFile.skill, skillFile.file) : null
+                  }
+                  onDeleteSkill={handleDeleteSkill}
+                  refreshRev={skillsRefreshRev}
+                />
               ) : (
                 <ScrollArea className="flex-1">
                   <div className="max-w-3xl p-4 md:p-5">
@@ -532,6 +659,18 @@ export default function AgentsPage() {
                                 <label className="mb-1 block text-xs text-muted-foreground">api_key {editBaseline.model_provider.has_api_key ? '（可选）' : '*'}</label>
                                 <Input type="password" value={editForm.apiKey} onChange={(e) => setEditForm((s) => ({ ...s, apiKey: e.target.value }))} placeholder={editBaseline.model_provider.has_api_key ? '留空沿用已有密钥' : 'sk-...'} disabled={editSubmitting} />
                               </div>
+                              <ModelConnectivityCheck
+                                fields={{
+                                  model: editForm.model,
+                                  apiBase: editForm.apiBase,
+                                  apiKey: editForm.apiKey,
+                                  agentName:
+                                    editForm.apiKey.trim() || editBaseline.model_provider.has_api_key
+                                      ? detailName ?? undefined
+                                      : undefined,
+                                }}
+                                disabled={editSubmitting}
+                              />
                               {editSubmitError && <p className="text-xs text-destructive">{editSubmitError}</p>}
                               <div className="flex justify-end">
                                 <Button type="submit" size="sm" disabled={!editFormValid || editSubmitting}>{editSubmitting ? '保存中…' : '保存'}</Button>
@@ -554,6 +693,19 @@ export default function AgentsPage() {
           )}
         </div>
       </div>
+
+      {detailName && skillFile && (
+        <DocReadingPanel
+          key={skillFileKey(skillFile.source, skillFile.skill, skillFile.file)}
+          agentName={detailName}
+          filePath={`${skillFile.skill}/${skillFile.file}`}
+          loadContent={loadSkillContent}
+          onClose={() => setSkillFile(null)}
+          onSave={saveSkillContent}
+        />
+      )}
+
+      {confirmDialog}
     </div>
   );
 }

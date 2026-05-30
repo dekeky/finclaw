@@ -2,6 +2,8 @@ import { useCallback, useMemo, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
+import rehypeSlug from 'rehype-slug';
+import type { PluggableList } from 'unified';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -20,6 +22,8 @@ export interface MarkdownContentProps {
   copyableCode?: boolean;
   /** 工具输出等密集文本：更紧的行距，且不将单换行转 <br> */
   compact?: boolean;
+  /** 额外的 rehype 插件（rehype-slug 已内置） */
+  rehypePlugins?: PluggableList;
 }
 
 const SIZE_CLASS: Record<MarkdownSize, string> = {
@@ -67,6 +71,7 @@ export function MarkdownContent({
   className,
   copyableCode = true,
   compact = false,
+  rehypePlugins,
 }: MarkdownContentProps) {
   const { scheme } = useTheme();
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -235,7 +240,11 @@ export function MarkdownContent({
         className,
       )}
     >
-      <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
+      <ReactMarkdown
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={[rehypeSlug, ...(rehypePlugins ?? [])]}
+        components={components}
+      >
         {children}
       </ReactMarkdown>
     </div>

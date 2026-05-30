@@ -153,9 +153,9 @@ export function ChatContainer({
       ))}
 
       {showTypingBubble && (
-        <div className="flex items-start gap-3">
+        <div className="flex w-full items-start gap-3">
           <AgentAvatar name={agentName ?? 'Agent'} />
-          <div className="rounded-2xl rounded-tl-sm border border-border/60 bg-card px-4 py-3">
+          <div className="min-w-0 flex-1 rounded-2xl rounded-tl-sm border border-border/60 bg-card px-4 py-3">
             <div className="flex items-center gap-2">
               <span className="text-xs font-medium tabular-nums text-muted-foreground">
                 努力工作中 · {formatElapsedSeconds(typingTiming.seconds)}

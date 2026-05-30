@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { IconX, IconFileDescription, IconRefresh, IconLoader2 } from '@tabler/icons-react';
+import { IconX, IconFileDescription, IconRefresh, IconLoader2, IconPencil, IconDeviceFloppy } from '@tabler/icons-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { MarkdownContent } from '@/components/MarkdownContent';
+import { DocTocSidebar } from '@/components/DocTocSidebar';
+import { useTocHeadings } from '@/hooks/useTocHeadings';
 import { getAgentDocFile } from '@/api/agentDocs';
 import { cn } from '@/lib/cn';
 
@@ -165,6 +167,116 @@ const DOC_DOCK_CSS = `
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+
+/* ─── 内容区 flex 容器 ─── */
+.doc-dock-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ─── 目录侧边栏 ─── */
+.doc-dock-toc-sidebar {
+  flex-shrink: 0;
+  width: 220px;
+  border-right: 1px solid var(--fc-border-strong, rgba(120,120,140,0.15));
+  background: var(--fc-bg-raised, #fafafa);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.doc-dock-toc-inner {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.doc-dock-toc-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fc-text-muted, #888);
+  padding: 10px 8px 8px 14px;
+  border-bottom: 1px solid var(--fc-border-strong, rgba(120,120,140,0.1));
+}
+.doc-dock-toc-collapse {
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 5px;
+  background: transparent; border: none; cursor: pointer;
+  color: var(--fc-text-muted, #888);
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+}
+.doc-dock-toc-collapse:hover {
+  background: rgba(139,92,246,0.1);
+  color: #7c3aed;
+}
+
+/* 收起态窄轨 */
+.doc-dock-toc-rail {
+  flex-shrink: 0;
+  width: 34px;
+  border-right: 1px solid var(--fc-border-strong, rgba(120,120,140,0.15));
+  background: var(--fc-bg-raised, #fafafa);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+}
+.doc-dock-toc-expand {
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 30px; border-radius: 6px;
+  background: transparent; border: none; cursor: pointer;
+  color: var(--fc-text-muted, #888);
+  transition: background 0.12s, color 0.12s;
+}
+.doc-dock-toc-expand:hover {
+  background: rgba(139,92,246,0.1);
+  color: #7c3aed;
+}
+.doc-dock-toc-rail-label {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  color: var(--fc-text-muted, #999);
+  user-select: none;
+}
+.doc-dock-toc-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-left: 2px solid transparent;
+  padding: 5px 12px 5px 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fc-text-muted, #666);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.doc-dock-toc-item:hover {
+  background: rgba(139,92,246,0.07);
+  color: var(--fc-text, #1a1a2e);
+}
+.doc-dock-toc-item--active {
+  border-left-color: #8b5cf6;
+  background: rgba(139,92,246,0.09);
+  color: #7c3aed;
+  font-weight: 600;
+}
 `;
 
 /* ─── 主组件 ─── */
@@ -173,12 +285,45 @@ interface DocReadingPanelProps {
   agentName: string;
   filePath: string;
   onClose: () => void;
+  /**
+   * 自定义内容加载器，返回文件文本。默认读取 agent 的 docs/ 文件。
+   * 用于复用本面板渲染其它来源的 Markdown（如 skills）。
+   */
+  loadContent?: (agentName: string, filePath: string) => Promise<string>;
+  /** 提供则显示「编辑」按钮，保存时调用。 */
+  onSave?: (content: string) => Promise<void>;
+  /** 文档目录侧边栏默认是否折叠（无本地记录时生效）。 */
+  defaultTocCollapsed?: boolean;
+  /** 目录折叠状态的 localStorage key。 */
+  tocStorageKey?: string;
 }
 
-export function DocReadingPanel({ agentName, filePath, onClose }: DocReadingPanelProps) {
+export function DocReadingPanel({
+  agentName,
+  filePath,
+  onClose,
+  loadContent,
+  onSave,
+  defaultTocCollapsed,
+  tocStorageKey,
+}: DocReadingPanelProps) {
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // 编辑态
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // 用 ref 保存加载器，避免内联函数导致的重复加载
+  const loadRef = useRef(loadContent);
+  loadRef.current = loadContent;
+  const runLoad = useCallback((a: string, f: string): Promise<string> => {
+    const fn = loadRef.current ?? ((an: string, fp: string) => getAgentDocFile(an, fp).then((b) => b.content));
+    return fn(a, f);
+  }, []);
 
   // 浮窗位置
   const [dockLayout, setDockLayout] = useState<DockRect>(() => readStoredDock() ?? defaultDockLayout());
@@ -187,6 +332,9 @@ export function DocReadingPanel({ agentName, filePath, onClose }: DocReadingPane
   const dockResizeRef = useRef<{ pointerId: number; sx: number; sy: number; orig: DockRect } | null>(null);
   const dockMovedRef = useRef(false);
 
+  // TOC 侧边栏
+  const scrollAreaRef = useRef<HTMLDivElement | null>(null);
+
   // 文件路径变化时加载内容
   useEffect(() => {
     if (!agentName || !filePath) return;
@@ -194,11 +342,13 @@ export function DocReadingPanel({ agentName, filePath, onClose }: DocReadingPane
     setLoading(true);
     setError(null);
     setContent(null);
+    setEditing(false);
+    setSaveError(null);
 
-    getAgentDocFile(agentName, filePath)
+    runLoad(agentName, filePath)
       .then((body) => {
         if (cancelled) return;
-        setContent(body.content);
+        setContent(body);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -209,7 +359,7 @@ export function DocReadingPanel({ agentName, filePath, onClose }: DocReadingPane
       });
 
     return () => { cancelled = true; };
-  }, [agentName, filePath]);
+  }, [agentName, filePath, runLoad]);
 
   // Escape 关闭
   useEffect(() => {
@@ -239,14 +389,49 @@ export function DocReadingPanel({ agentName, filePath, onClose }: DocReadingPane
     if (!agentName || !filePath) return;
     setLoading(true);
     setError(null);
-    getAgentDocFile(agentName, filePath)
-      .then((body) => setContent(body.content))
+    runLoad(agentName, filePath)
+      .then((body) => setContent(body))
       .catch((err) => setError(err.message || '文件读取失败'))
       .finally(() => setLoading(false));
-  }, [agentName, filePath]);
+  }, [agentName, filePath, runLoad]);
+
+  const startEdit = useCallback(() => {
+    setDraft(content ?? '');
+    setSaveError(null);
+    setEditing(true);
+  }, [content]);
+
+  const cancelEdit = useCallback(() => {
+    setEditing(false);
+    setSaveError(null);
+  }, []);
+
+  const handleSave = useCallback(async () => {
+    if (!onSave) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await onSave(draft);
+      setContent(draft);
+      setEditing(false);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  }, [onSave, draft]);
 
   const fileName = filePath.split('/').pop() ?? filePath;
   const isMd = isMarkdown(fileName);
+
+  // TOC hook（编辑态下隐藏目录）
+  const { headings, activeId, scrollToHeading } = useTocHeadings(
+    scrollAreaRef,
+    editing ? null : content,
+    isMd,
+  );
+
+  const showToc = isMd && !loading && !error && content != null && headings.length > 0;
 
   return (
     <>
@@ -320,44 +505,109 @@ export function DocReadingPanel({ agentName, filePath, onClose }: DocReadingPane
             <span className="doc-dock-title">{fileName}</span>
           </div>
 
-          <button type="button" className="doc-dock-close" onClick={onClose} aria-label="关闭">
-            <IconX className="size-4" />
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            {onSave && !loading && !error && content !== null && (
+              editing ? (
+                <>
+                  {saveError && (
+                    <span className="mr-1 max-w-[200px] truncate text-[11px] text-destructive" title={saveError}>
+                      {saveError}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 rounded-md bg-violet-500 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-violet-600 disabled:opacity-50"
+                    onClick={() => void handleSave()}
+                    disabled={saving}
+                  >
+                    {saving ? <IconLoader2 className="size-3.5 animate-spin" /> : <IconDeviceFloppy className="size-3.5" />}
+                    保存
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    onClick={cancelEdit}
+                    disabled={saving}
+                  >
+                    取消
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  onClick={startEdit}
+                  title="编辑"
+                >
+                  <IconPencil className="size-3.5" />
+                  编辑
+                </button>
+              )
+            )}
+            <button type="button" className="doc-dock-close" onClick={onClose} aria-label="关闭">
+              <IconX className="size-4" />
+            </button>
+          </div>
         </div>
 
         {/* 内容区 */}
-        <ScrollArea className="min-h-0 flex-1">
-          {loading ? (
-            <div className="flex flex-col items-center gap-2 px-8 py-16 text-center">
-              <IconLoader2 className="size-5 animate-spin text-muted-foreground/50" />
-              <span className="text-xs text-muted-foreground">加载文档中...</span>
-            </div>
-          ) : error ? (
-            <div className="flex flex-col items-center gap-2 px-8 py-16 text-center">
-              <p className="text-sm text-destructive">{error}</p>
-              <button
-                type="button"
-                className="flex items-center gap-1 text-xs text-violet-500 hover:underline"
-                onClick={handleRetry}
-              >
-                <IconRefresh className="size-3" />
-                重试
-              </button>
-            </div>
-          ) : content === null ? (
-            <div className="px-8 py-16 text-center text-sm text-muted-foreground">
-              文件内容为空
-            </div>
-          ) : isMd ? (
-            <div className="mx-auto max-w-4xl px-8 py-6">
-              <MarkdownContent copyableCode>{content}</MarkdownContent>
+        <div className="doc-dock-body">
+          {editing ? (
+            <div className="flex min-h-0 flex-1 flex-col p-3">
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                spellCheck={false}
+                className="min-h-0 flex-1 w-full resize-none rounded-md border border-border/60 bg-background p-3 font-mono text-[13px] leading-relaxed text-foreground outline-none focus:border-violet-500/60"
+                placeholder="输入文件内容…"
+              />
             </div>
           ) : (
-            <pre className="overflow-x-auto px-8 py-6 text-sm leading-relaxed whitespace-pre-wrap break-all font-mono text-foreground/90">
-              {content}
-            </pre>
+          <>
+          {showToc && (
+            <DocTocSidebar
+              headings={headings}
+              activeId={activeId}
+              onHeadingClick={scrollToHeading}
+              defaultCollapsed={defaultTocCollapsed}
+              storageKey={tocStorageKey}
+            />
           )}
-        </ScrollArea>
+          <ScrollArea ref={scrollAreaRef} className="min-h-0 flex-1">
+            {loading ? (
+              <div className="flex flex-col items-center gap-2 px-8 py-16 text-center">
+                <IconLoader2 className="size-5 animate-spin text-muted-foreground/50" />
+                <span className="text-xs text-muted-foreground">加载文档中...</span>
+              </div>
+            ) : error ? (
+              <div className="flex flex-col items-center gap-2 px-8 py-16 text-center">
+                <p className="text-sm text-destructive">{error}</p>
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-xs text-violet-500 hover:underline"
+                  onClick={handleRetry}
+                >
+                  <IconRefresh className="size-3" />
+                  重试
+                </button>
+              </div>
+            ) : content === null ? (
+              <div className="px-8 py-16 text-center text-sm text-muted-foreground">
+                文件内容为空
+              </div>
+            ) : isMd ? (
+              <div className="mx-auto max-w-6xl px-10 py-6">
+                <MarkdownContent copyableCode>{content}</MarkdownContent>
+              </div>
+            ) : (
+              <pre className="overflow-x-auto px-8 py-6 text-sm leading-relaxed whitespace-pre-wrap break-all font-mono text-foreground/90">
+                {content}
+              </pre>
+            )}
+          </ScrollArea>
+          </>
+          )}
+        </div>
 
         {/* 右下角 resize 手柄 */}
         <div

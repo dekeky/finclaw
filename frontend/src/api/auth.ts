@@ -1,6 +1,8 @@
+import type { GinxResponse } from '../types/rss';
+
 export interface AuthUser {
   id: string;
-  email: string;
+  account: string;
   display_name: string;
 }
 
@@ -9,33 +11,59 @@ export interface AuthResponse {
   user: AuthUser;
 }
 
-export async function register(email: string, password: string, display_name: string): Promise<AuthResponse> {
+async function parseGinx<T>(res: Response): Promise<GinxResponse<T>> {
+  let json: GinxResponse<T> | null = null;
+  try {
+    json = (await res.json()) as GinxResponse<T>;
+  } catch {
+    // non-JSON response
+  }
+  if (!res.ok) {
+    throw new Error(json?.errMsg || `HTTP ${res.status}`);
+  }
+  if (!json) {
+    throw new Error('Empty response');
+  }
+  if (json.errMsg) {
+    throw new Error(json.errMsg);
+  }
+  if (typeof json.code === 'number' && json.code !== 200 && json.code !== 201) {
+    throw new Error(`unexpected code: ${json.code}`);
+  }
+  return json;
+}
+
+export function authHeaders(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+export async function register(account: string, password: string, display_name: string): Promise<AuthResponse> {
   const res = await fetch('/api/v1/auth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, display_name }),
+    body: JSON.stringify({ account, password, display_name }),
   });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || data.errMsg || 'Registration failed');
-  }
-  const data = await res.json();
-  if (data.errMsg) throw new Error(data.errMsg);
-  return data.body;
+  const data = await parseGinx<AuthResponse>(res);
+  return data.body!;
 }
 
-export async function login(email: string, password: string): Promise<AuthResponse> {
+export async function login(account: string, password: string): Promise<AuthResponse> {
   const res = await fetch('/api/v1/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ account, password }),
   });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || data.errMsg || 'Login failed');
+  const data = await parseGinx<AuthResponse>(res);
+  return data.body!;
+}
+
+export async function fetchMe(): Promise<AuthUser> {
+  const res = await fetch('/api/v1/auth/me', { headers: authHeaders() });
+  const data = await parseGinx<AuthUser>(res);
+  if (!data.body) {
+    throw new Error('User not found');
   }
-  const data = await res.json();
-  if (data.errMsg) throw new Error(data.errMsg);
   return data.body;
 }
 
@@ -44,12 +72,13 @@ export async function refresh(): Promise<{ access_token: string }> {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${getToken()}`,
+      ...authHeaders(),
     },
   });
-  if (!res.ok) throw new Error('Token refresh failed');
-  const data = await res.json();
-  if (data.errMsg) throw new Error(data.errMsg);
+  const data = await parseGinx<{ access_token: string }>(res);
+  if (!data.body?.access_token) {
+    throw new Error('Token refresh failed');
+  }
   return data.body;
 }
 
@@ -69,11 +98,25 @@ export function clearToken(): void {
   localStorage.removeItem(USER_KEY);
 }
 
+function normalizeStoredUser(raw: unknown): AuthUser | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const u = raw as Record<string, unknown>;
+  const id = u.id;
+  const display_name = u.display_name;
+  const account = u.account ?? u.email;
+  if (typeof id !== 'string' || typeof account !== 'string') return null;
+  return {
+    id,
+    account,
+    display_name: typeof display_name === 'string' ? display_name : '',
+  };
+}
+
 export function getStoredUser(): AuthUser | null {
   const raw = localStorage.getItem(USER_KEY);
   if (!raw) return null;
   try {
-    return JSON.parse(raw);
+    return normalizeStoredUser(JSON.parse(raw));
   } catch {
     return null;
   }

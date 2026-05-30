@@ -43,3 +43,26 @@ export async function getAgentDocFile(name: string, file: string): Promise<DocFi
   });
   return parseGinx<DocFileBody>(await res.json());
 }
+
+export async function writeAgentDocFile(
+  name: string,
+  file: string,
+  content: string,
+): Promise<DocFileBody> {
+  const encodedPath = file.split('/').map(encodeURIComponent).join('/');
+  const res = await fetch(`/agents/${encodeURIComponent(name)}/docs/${encodedPath}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ content }),
+  });
+  return parseGinx<DocFileBody>(await res.json());
+}
+
+export async function deleteAgentDocPath(name: string, file: string): Promise<void> {
+  const encodedPath = file.split('/').map(encodeURIComponent).join('/');
+  const res = await fetch(`/agents/${encodeURIComponent(name)}/docs/${encodedPath}`, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
+  });
+  parseGinx<unknown>(await res.json());
+}

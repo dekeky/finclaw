@@ -41,7 +41,11 @@ func main() {
 	}
 	defer authStore.Close()
 
-	frouter := router.NewFinClawRouter(finclawConf.RSSServerAddr, agentManager, authStore)
+	agentHubAddr := finclawConf.AgentHubAddr
+	if agentHubAddr == "" {
+		agentHubAddr = finclawconfig.DefaultAgentHubAddr
+	}
+	frouter := router.NewFinClawRouter(finclawConf.RSSServerAddr, agentHubAddr, agentManager, authStore)
 
 	if err := frouter.RoutesInit(); err != nil {
 		log.Fatalf("❌ Failed to init routes: %v", err)

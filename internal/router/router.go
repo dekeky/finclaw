@@ -17,12 +17,13 @@ type FinClawRouter struct {
 	r             *gin.Engine
 	agentManager  *agentruntime.AgentManager
 	rssServerAddr string
+	agentHubAddr  string
 	authStore     *auth.Store
 }
 
 // NewFinClawRouter creates a new router instance
-func NewFinClawRouter(rssServerAddr string, agentManager *agentruntime.AgentManager, authStore *auth.Store) *FinClawRouter {
-	return &FinClawRouter{rssServerAddr: rssServerAddr, agentManager: agentManager, authStore: authStore}
+func NewFinClawRouter(rssServerAddr, agentHubAddr string, agentManager *agentruntime.AgentManager, authStore *auth.Store) *FinClawRouter {
+	return &FinClawRouter{rssServerAddr: rssServerAddr, agentHubAddr: agentHubAddr, agentManager: agentManager, authStore: authStore}
 }
 
 // RoutesInit configures all HTTP and WebSocket routes
@@ -40,6 +41,7 @@ func (fr *FinClawRouter) RoutesInit() error {
 	fr.rssRouter()
 	fr.authRouter()
 	fr.agentManagerRouter()
+	fr.marketRouter()
 
 	fr.r.NoRoute(webui.SPANoRoute(dist))
 
@@ -73,12 +75,18 @@ func (fr *FinClawRouter) agentManagerRouter() {
 	agentManagerRouter.ConfigRouter()
 }
 
+func (fr *FinClawRouter) marketRouter() {
+	marketRouter := agentruntime.NewMarketRouter(fr.agentManager, fr.r, auth.AuthMiddleware(fr.authStore), fr.agentHubAddr)
+	marketRouter.ConfigRouter()
+}
+
 func (fr *FinClawRouter) authRouter() {
 	handler := auth.NewHandler(fr.authStore)
 	authGroup := fr.r.Group("/api/v1/auth")
 	{
 		authGroup.POST("/register", handler.Register)
 		authGroup.POST("/login", handler.Login)
+		authGroup.GET("/me", auth.AuthMiddleware(fr.authStore), handler.Me)
 		authGroup.POST("/refresh", auth.AuthMiddleware(fr.authStore), handler.Refresh)
 	}
 }

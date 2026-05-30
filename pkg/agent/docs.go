@@ -90,6 +90,56 @@ func ReadDocFile(workspace, filename string) (*DocFileContent, error) {
 	}, nil
 }
 
+// WriteDocFile creates or overwrites a file under the agent's docs/ directory.
+func WriteDocFile(workspace, filename, content string) (*DocFileContent, error) {
+	if strings.TrimSpace(workspace) == "" {
+		return nil, fmt.Errorf("workspace path is required")
+	}
+	if err := validateDocPath(filename); err != nil {
+		return nil, err
+	}
+	if len(content) > maxDocFileSize {
+		return nil, fmt.Errorf("content exceeds 5MB size limit")
+	}
+	path := filepath.Join(workspace, "docs", filename)
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return nil, fmt.Errorf("%q is a directory", filename)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("create directory: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return nil, fmt.Errorf("write file: %w", err)
+	}
+	return &DocFileContent{
+		Name:    filename,
+		Content: content,
+		Size:    int64(len(content)),
+	}, nil
+}
+
+// DeleteDocPath removes a file or directory (recursively) under docs/.
+func DeleteDocPath(workspace, name string) error {
+	if strings.TrimSpace(workspace) == "" {
+		return fmt.Errorf("workspace path is required")
+	}
+	if err := validateDocPath(name); err != nil {
+		return err
+	}
+	path := filepath.Join(workspace, "docs", name)
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%q not found", name)
+		}
+		return fmt.Errorf("stat path: %w", err)
+	}
+	if info.IsDir() {
+		return os.RemoveAll(path)
+	}
+	return os.Remove(path)
+}
+
 func validateDocPath(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {

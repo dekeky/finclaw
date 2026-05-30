@@ -1,8 +1,13 @@
-import { IconAlertTriangle, IconHistory, IconTrash } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBuildingStore, IconHistory, IconTrash } from '@tabler/icons-react';
+import { Link } from 'react-router-dom';
 import { AgentAvatar } from '../components/AgentAvatar';
 import { ChatContainer } from '../components/ChatContainer';
 import { DocFileTree } from '../components/DocFileTree';
 import { DocReadingPanel } from '../components/DocReadingPanel';
+import { AgentSkillsPanel, skillFileKey, type SkillFileTarget } from '../components/AgentSkillsPanel';
+import { getAgentSkillFile, writeAgentSkillFile, deleteAgentSkill } from '../api/agents';
+import { writeAgentDocFile, deleteAgentDocPath } from '../api/agentDocs';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { useChatSession } from '@/state/chatSession';
 import { useAiDock } from '@/state/aiDock';
@@ -52,6 +57,91 @@ export default function ChatPage() {
     setSelectedDocPath,
   } = useDocViewer();
 
+  // Agent 资产侧栏：文档 / Skills
+  const [assetTab, setAssetTab] = useState<'docs' | 'skills'>('docs');
+  const [skillFile, setSkillFile] = useState<SkillFileTarget | null>(null);
+  const [skillsRefreshRev, setSkillsRefreshRev] = useState(0);
+  const { confirm, dialog: confirmDialog } = useConfirm();
+
+  // 打开文档时关闭 skill 阅读，反之亦然（同一时间只展示一个阅读面板）
+  const openDoc = useCallback((fullPath: string) => {
+    setSkillFile(null);
+    setSelectedDocPath(fullPath);
+  }, [setSelectedDocPath]);
+
+  const openSkill = useCallback((target: SkillFileTarget) => {
+    setSelectedDocPath(null);
+    setSkillFile(target);
+  }, [setSelectedDocPath]);
+
+  const loadSkillContent = useCallback((): Promise<string> => {
+    if (!currentAgent || !skillFile) return Promise.reject(new Error('未选择 skill 文件'));
+    return getAgentSkillFile(currentAgent, skillFile.source, skillFile.skill, skillFile.file).then(
+      (b) => b.content,
+    );
+  }, [currentAgent, skillFile]);
+
+  // 切换 Agent 时关闭已打开的 skill 文件
+  useEffect(() => {
+    setSkillFile(null);
+  }, [currentAgent]);
+
+  // ── 编辑保存 ──
+  const saveDocContent = useCallback(async (content: string) => {
+    if (!currentAgent || !selectedDocPath) return;
+    await writeAgentDocFile(currentAgent, selectedDocPath, content);
+    bumpDocsRefresh();
+  }, [currentAgent, selectedDocPath, bumpDocsRefresh]);
+
+  const saveSkillContent = useCallback(async (content: string) => {
+    if (!currentAgent || !skillFile) return;
+    await writeAgentSkillFile(currentAgent, skillFile.source, skillFile.skill, skillFile.file, content);
+  }, [currentAgent, skillFile]);
+
+  // ── 删除 ──
+  const handleDeleteDoc = useCallback(async (fullPath: string, isDir: boolean) => {
+    if (!currentAgent) return;
+    const name = fullPath.split('/').pop() ?? fullPath;
+    const ok = await confirm({
+      title: isDir ? `删除文件夹「${name}」` : `删除文件「${name}」`,
+      description: isDir
+        ? `将永久删除该文件夹及其下全部文件，操作不可恢复。`
+        : `将永久删除该文件，操作不可恢复。`,
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteAgentDocPath(currentAgent, fullPath);
+      if (selectedDocPath && (selectedDocPath === fullPath || selectedDocPath.startsWith(`${fullPath}/`))) {
+        setSelectedDocPath(null);
+      }
+      bumpDocsRefresh();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : '删除失败');
+    }
+  }, [currentAgent, selectedDocPath, setSelectedDocPath, bumpDocsRefresh, confirm]);
+
+  const handleDeleteSkill = useCallback(async (source: string, skill: string, name: string) => {
+    if (!currentAgent) return;
+    const ok = await confirm({
+      title: `删除 Skill 包「${name}」`,
+      description: '将永久删除该 Skill 包及其全部文件，操作不可恢复。',
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteAgentSkill(currentAgent, source, skill);
+      if (skillFile && skillFile.source === source && skillFile.skill === skill) {
+        setSkillFile(null);
+      }
+      setSkillsRefreshRev((n) => n + 1);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : '删除失败');
+    }
+  }, [currentAgent, skillFile, confirm]);
+
   const archivedList = useMemo(() => {
     if (!currentAgent) return [];
     return listArchived(currentAgent);
@@ -85,6 +175,7 @@ export default function ChatPage() {
   );
 
   const statusCfg = WS_STATUS_CONFIG[status] || WS_STATUS_CONFIG.idle;
+  const noAgents = agents.length === 0 && agentsLoadStatus === 'ready';
 
   useEffect(() => {
     const lastMsg = messages[messages.length - 1];
@@ -112,9 +203,15 @@ export default function ChatPage() {
 
           {/* Agent Switcher */}
           {agents.length === 0 ? (
-            <Badge variant="outline" className="h-7 text-xs text-muted-foreground">
-              {agentsLoadStatus === 'loading' ? '加载 Agent…' : agentsLoadStatus === 'error' ? 'Agent 列表加载失败' : '暂无 Agent'}
-            </Badge>
+            agentsLoadStatus === 'ready' ? (
+              <Button asChild variant="outline" size="sm" className="h-7 text-xs">
+                <Link to="/agents?market=1">暂无 Agent · 去市场创建</Link>
+              </Button>
+            ) : (
+              <Badge variant="outline" className="h-7 text-xs text-muted-foreground">
+                {agentsLoadStatus === 'loading' ? '加载 Agent…' : 'Agent 列表加载失败'}
+              </Badge>
+            )
           ) : (
             <div className="flex min-w-0 items-center gap-2">
               {currentAgent && <AgentAvatar name={currentAgent} size="sm" />}
@@ -207,10 +304,32 @@ export default function ChatPage() {
 
       {/* No Agent Selected State */}
       {!currentAgent && (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-          <AgentAvatar name="?" size="xl" className="opacity-60" />
-          <div className="text-sm font-medium text-muted-foreground">请先选择 Agent</div>
-          <p className="max-w-xs text-xs text-muted-foreground">从上方 Agent 选择框中选一位开始对话</p>
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
+          {agentsLoadStatus === 'loading' ? (
+            <>
+              <AgentAvatar name="?" size="xl" className="opacity-60" />
+              <div className="text-sm font-medium text-muted-foreground">正在加载 Agent…</div>
+            </>
+          ) : noAgents ? (
+            <>
+              <div className="flex size-16 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-600 dark:text-violet-300">
+                <IconBuildingStore size={32} stroke={1.5} />
+              </div>
+              <div className="text-sm font-medium text-foreground/90">还没有 Agent</div>
+              <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
+                请前往 Agent 市场，从模板快速创建一位 Agent 后即可开始对话。
+              </p>
+              <Button asChild className="bg-violet-600 hover:bg-violet-600/90">
+                <Link to="/agents?market=1">前往 Agent 市场</Link>
+              </Button>
+            </>
+          ) : (
+            <>
+              <AgentAvatar name="?" size="xl" className="opacity-60" />
+              <div className="text-sm font-medium text-muted-foreground">请先选择 Agent</div>
+              <p className="max-w-xs text-xs text-muted-foreground">从上方 Agent 选择框中选一位开始对话</p>
+            </>
+          )}
         </div>
       )}
 
@@ -219,18 +338,59 @@ export default function ChatPage() {
         <div className="flex min-h-0 flex-1 overflow-hidden">
           {/* Agent assets sidebar -- always visible */}
           <aside className="flex w-56 shrink-0 flex-col border-r border-border/50 bg-muted/20 lg:w-60">
-            <DocFileTree
-              agentName={currentAgent}
-              refreshRev={docsRefreshRev}
-              onFileSelect={setSelectedDocPath}
-              selectedDocPath={selectedDocPath}
-            />
+            {/* Header + 分类切换 */}
+            <div className="shrink-0 border-b border-border/40 px-2 pt-2">
+              <div className="px-1 pb-1.5 text-xs font-medium text-muted-foreground/80">Agent 资产</div>
+              <div className="flex gap-1 pb-1.5">
+                {([
+                  { id: 'docs', label: '文档' },
+                  { id: 'skills', label: 'Skills' },
+                ] as const).map(({ id, label }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setAssetTab(id)}
+                    className={cn(
+                      'flex-1 rounded-md px-2 py-1 text-xs transition-colors',
+                      assetTab === id
+                        ? 'bg-violet-500/15 font-medium text-violet-600 dark:text-violet-300'
+                        : 'text-muted-foreground hover:bg-muted/60',
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {assetTab === 'docs' ? (
+              <DocFileTree
+                agentName={currentAgent}
+                refreshRev={docsRefreshRev}
+                onFileSelect={openDoc}
+                selectedDocPath={selectedDocPath}
+                hideHeader
+                onDelete={handleDeleteDoc}
+              />
+            ) : (
+              <AgentSkillsPanel
+                key={currentAgent}
+                agentName={currentAgent}
+                className="min-h-0 flex-1"
+                onOpenFile={openSkill}
+                activeFileKey={
+                  skillFile ? skillFileKey(skillFile.source, skillFile.skill, skillFile.file) : null
+                }
+                onDeleteSkill={handleDeleteSkill}
+                refreshRev={skillsRefreshRev}
+              />
+            )}
           </aside>
 
           {/* Chat area - always visible */}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 md:px-8 [scrollbar-gutter:stable]">
-              <div className="mx-auto flex w-full max-w-[64rem] flex-col gap-8">
+            <div className="min-h-0 flex-1 overflow-y-auto py-6 pl-2 pr-4 md:pl-3 md:pr-6 [scrollbar-gutter:stable]">
+              <div className="flex w-full max-w-[80rem] flex-col gap-8">
                 <ErrorBoundary>
                   <ChatContainer
                     messages={messages}
@@ -242,8 +402,8 @@ export default function ChatPage() {
               </div>
             </div>
 
-            <div className="shrink-0 border-t border-border/40 px-4 pb-4 pt-3 md:px-8">
-              <div className="mx-auto max-w-[64rem]">
+            <div className="shrink-0 border-t border-border/40 pb-4 pl-2 pr-4 pt-3 md:pl-3 md:pr-6">
+              <div className="w-full max-w-[80rem]">
                 <form ref={formRef} onSubmit={(e) => { e.preventDefault(); handleSend(value); }}>
                   <div className="relative rounded-2xl border border-border/60 bg-card p-1.5 pr-1 shadow-sm">
                     <div className="relative flex items-end gap-2">
@@ -289,14 +449,14 @@ export default function ChatPage() {
 
       {/* Input (no agent selected) */}
       {!currentAgent && (
-        <div className="shrink-0 px-4 pb-4 md:px-8">
-          <div className="mx-auto max-w-[64rem]">
+        <div className="shrink-0 pb-4 pl-2 pr-4 md:pl-3 md:pr-6">
+          <div className="w-full max-w-[80rem]">
             <form ref={formRef} onSubmit={(e) => { e.preventDefault(); handleSend(value); }}>
               <div className="relative rounded-2xl border border-border/60 bg-card p-1.5 pr-1 shadow-sm opacity-60">
                 <div className="relative flex items-end gap-2">
                   <textarea
                     className="min-h-[44px] w-full resize-none bg-transparent px-3 py-2.5 text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
-                    placeholder="请先选择 Agent…"
+                    placeholder={noAgents ? '请前往 Agent 市场创建 Agent…' : '请先选择 Agent…'}
                     rows={1}
                     value={value}
                     onChange={(e) => setValue(e.target.value)}
@@ -315,8 +475,23 @@ export default function ChatPage() {
           agentName={currentAgent}
           filePath={selectedDocPath}
           onClose={() => setSelectedDocPath(null)}
+          onSave={saveDocContent}
         />
       )}
+
+      {/* Skill reading floating panel */}
+      {currentAgent && skillFile && (
+        <DocReadingPanel
+          key={skillFileKey(skillFile.source, skillFile.skill, skillFile.file)}
+          agentName={currentAgent}
+          filePath={`${skillFile.skill}/${skillFile.file}`}
+          loadContent={loadSkillContent}
+          onClose={() => setSkillFile(null)}
+          onSave={saveSkillContent}
+        />
+      )}
+
+      {confirmDialog}
 
       <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
         <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-md">

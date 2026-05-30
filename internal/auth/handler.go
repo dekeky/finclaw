@@ -19,24 +19,24 @@ func NewHandler(store *Store) *Handler {
 }
 
 type registerReq struct {
-	Email       string `json:"email" binding:"required,email"`
+	Account     string `json:"account" binding:"required,min=3,max=64"`
 	Password    string `json:"password" binding:"required,min=6"`
 	DisplayName string `json:"display_name" binding:"required"`
 }
 
 type loginReq struct {
-	Email    string `json:"email" binding:"required,email"`
+	Account  string `json:"account" binding:"required,min=3,max=64"`
 	Password string `json:"password" binding:"required"`
 }
 
 type authResp struct {
-	AccessToken string `json:"access_token"`
+	AccessToken string   `json:"access_token"`
 	User        userResp `json:"user"`
 }
 
 type userResp struct {
 	ID          string `json:"id"`
-	Email       string `json:"email"`
+	Account     string `json:"account"`
 	DisplayName string `json:"display_name"`
 }
 
@@ -47,17 +47,18 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
-	existing, err := h.store.GetUserByEmail(req.Email)
+	account := strings.TrimSpace(req.Account)
+	existing, err := h.store.GetUserByAccount(account)
 	if err != nil {
 		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
 		return
 	}
 	if existing != nil {
-		ginx.NewRender(c, http.StatusConflict).Err(errors.New("email already registered"))
+		ginx.NewRender(c, http.StatusConflict).Err(errors.New("account already registered"))
 		return
 	}
 
-	user, err := h.store.CreateUser(req.Email, req.Password, req.DisplayName)
+	user, err := h.store.CreateUser(account, req.Password, req.DisplayName)
 	if err != nil {
 		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
 		return
@@ -71,7 +72,7 @@ func (h *Handler) Register(c *gin.Context) {
 
 	ginx.NewRender(c, http.StatusCreated).Data(authResp{
 		AccessToken: token,
-		User:        userResp{ID: user.ID, Email: user.Email, DisplayName: user.DisplayName},
+		User:        userResp{ID: user.ID, Account: user.Account, DisplayName: user.DisplayName},
 	})
 }
 
@@ -82,13 +83,14 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	user, err := h.store.GetUserByEmail(req.Email)
+	account := strings.TrimSpace(req.Account)
+	user, err := h.store.GetUserByAccount(account)
 	if err != nil {
 		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
 		return
 	}
 	if user == nil || !CheckPassword(user.PasswordHash, req.Password) {
-		ginx.NewRender(c, http.StatusUnauthorized).Err(errors.New("invalid email or password"))
+		ginx.NewRender(c, http.StatusUnauthorized).Err(errors.New("invalid account or password"))
 		return
 	}
 
@@ -100,24 +102,48 @@ func (h *Handler) Login(c *gin.Context) {
 
 	ginx.NewRender(c).Data(authResp{
 		AccessToken: token,
-		User:        userResp{ID: user.ID, Email: user.Email, DisplayName: user.DisplayName},
+		User:        userResp{ID: user.ID, Account: user.Account, DisplayName: user.DisplayName},
 	})
 }
 
 func (h *Handler) Refresh(c *gin.Context) {
-	userID, exists := c.Get("userId")
-	if !exists {
+	userID := GetUserID(c)
+	if userID == "" {
 		ginx.NewRender(c, http.StatusUnauthorized).Err(errors.New("not authenticated"))
 		return
 	}
 
-	token, err := GenerateToken(userID.(string), 24*time.Hour)
+	token, err := GenerateToken(userID, 24*time.Hour)
 	if err != nil {
 		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
 		return
 	}
 
 	ginx.NewRender(c).Data(gin.H{"access_token": token})
+}
+
+func (h *Handler) Me(c *gin.Context) {
+	userID := GetUserID(c)
+	if userID == "" {
+		ginx.NewRender(c, http.StatusUnauthorized).Err(errors.New("not authenticated"))
+		return
+	}
+
+	user, err := h.store.GetUserByID(userID)
+	if err != nil {
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	if user == nil {
+		ginx.NewRender(c, http.StatusUnauthorized).Err(errors.New("user not found"))
+		return
+	}
+
+	ginx.NewRender(c).Data(userResp{
+		ID:          user.ID,
+		Account:     user.Account,
+		DisplayName: user.DisplayName,
+	})
 }
 
 const contextUserIDKey = "userId"

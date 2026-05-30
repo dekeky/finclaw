@@ -6,8 +6,8 @@ interface AuthState {
   user: AuthUser | null;
   token: string | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, displayName: string) => Promise<void>;
+  login: (account: string, password: string) => Promise<void>;
+  register: (account: string, password: string, displayName: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -19,13 +19,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // On mount, validate stored token
-    const stored = authApi.getToken();
-    if (stored) {
-      setToken(stored);
-      setUser(authApi.getStoredUser());
+    let cancelled = false;
+
+    async function bootstrap() {
+      const stored = authApi.getToken();
+      if (!stored) {
+        if (!cancelled) setLoading(false);
+        return;
+      }
+
+      try {
+        const me = await authApi.fetchMe();
+        if (cancelled) return;
+        authApi.setStoredUser(me);
+        setToken(stored);
+        setUser(me);
+      } catch {
+        if (cancelled) return;
+        authApi.clearToken();
+        setToken(null);
+        setUser(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
-    setLoading(false);
+
+    void bootstrap();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleAuth = useCallback((resp: authApi.AuthResponse) => {
@@ -35,13 +57,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(resp.user);
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const resp = await authApi.login(email, password);
+  const login = useCallback(async (account: string, password: string) => {
+    const resp = await authApi.login(account, password);
     handleAuth(resp);
   }, [handleAuth]);
 
-  const register = useCallback(async (email: string, password: string, displayName: string) => {
-    const resp = await authApi.register(email, password, displayName);
+  const register = useCallback(async (account: string, password: string, displayName: string) => {
+    const resp = await authApi.register(account, password, displayName);
     handleAuth(resp);
   }, [handleAuth]);
 
@@ -49,6 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     authApi.clearToken();
     setToken(null);
     setUser(null);
+    window.location.replace('/login');
   }, []);
 
   return (

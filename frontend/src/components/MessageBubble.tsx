@@ -433,7 +433,7 @@ export function MessageBubble({ message, agentName, toolOutputActive, thoughtOut
     );
 
     return (
-      <div className="ml-12 flex max-w-[calc(90%-3rem)] animate-in flex-col gap-1 duration-200 fade-in-0 slide-in-from-bottom-1">
+      <div className="ml-10 flex min-w-0 w-full animate-in flex-col gap-1 duration-200 fade-in-0 slide-in-from-bottom-1">
         {panel}
         <span className="px-1 font-mono text-[10px] text-muted-foreground/60">{time}</span>
       </div>
@@ -442,7 +442,7 @@ export function MessageBubble({ message, agentName, toolOutputActive, thoughtOut
 
   return (
     <div
-      className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} animate-in duration-300 fade-in-0 slide-in-from-bottom-2`}
+      className={`flex w-full gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} animate-in duration-300 fade-in-0 slide-in-from-bottom-2`}
     >
       {isUser ? (
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-violet-600 text-xs font-semibold text-white shadow-sm shadow-violet-500/25">
@@ -452,7 +452,7 @@ export function MessageBubble({ message, agentName, toolOutputActive, thoughtOut
         <AgentAvatar name={agentName} />
       )}
 
-      <div className={`flex max-w-[90%] flex-col gap-1.5 ${isUser ? 'items-end' : 'items-start'}`}>
+      <div className={`flex flex-col gap-1.5 ${isUser ? 'max-w-[85%] items-end' : 'min-w-0 flex-1 items-start'}`}>
         {isUser ? (
           <div className="rounded-2xl rounded-tr-sm bg-violet-500 px-4 py-3 text-[15px] leading-relaxed text-white">
             <span>{message.content}</span>

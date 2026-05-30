@@ -37,6 +37,19 @@ export interface UpdateAgentRequest {
   model_provider: AgentModelProvider;
 }
 
+/** POST /agents/model-probe — 连通性检查（不保存配置）。 */
+export interface ModelProbeBody {
+  ok: boolean;
+  message: string;
+  latency_ms: number;
+}
+
+export interface ProbeModelProviderRequest {
+  model_provider: AgentModelProvider;
+  /** api_key 为空时，从该 Agent 沿用已保存密钥。 */
+  agent_name?: string;
+}
+
 /** 创建/删除接口返回的结构。 */
 export interface AgentStatusBody {
   name: string;
@@ -84,9 +97,18 @@ export interface AgentSkillItem {
   description: string;
   /** workspace | global | builtin */
   source: string;
+  /** 磁盘上 skill 所在的文件夹名（用于读取文件内容）。 */
+  dir?: string;
   /** AGENT.md frontmatter 未限制时全部为 true；有限制时仅 listed skill 为 true。 */
   active: boolean;
   sub_skills?: AgentSubSkillItem[];
+}
+
+/** GET /agents/:name/skills/file —— 单个 skill 文件内容。 */
+export interface SkillFileBody {
+  name: string;
+  content: string;
+  size: number;
 }
 
 export interface AgentSkillsBody {
@@ -178,6 +200,39 @@ export async function createAgent(req: CreateAgentRequest): Promise<AgentStatusB
   return body.body;
 }
 
+/** POST /agents/model-probe —— 测试模型配置连通性。 */
+export async function probeModelProvider(
+  modelProvider: AgentModelProvider,
+  agentName?: string,
+): Promise<ModelProbeBody> {
+  const payload: ProbeModelProviderRequest = { model_provider: modelProvider };
+  if (agentName) payload.agent_name = agentName;
+  const res = await fetch('/agents/model-probe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  let json: GinxResponse<ModelProbeBody | null> | null = null;
+  try {
+    json = (await res.json()) as GinxResponse<ModelProbeBody | null>;
+  } catch {
+    // non-JSON
+  }
+  if (!json?.body) {
+    throw new Error(json?.errMsg || `HTTP ${res.status}`);
+  }
+  if (json.errMsg) {
+    throw new Error(json.errMsg);
+  }
+  if (!res.ok && !json.body.ok) {
+    return json.body;
+  }
+  if (!res.ok) {
+    throw new Error(json.errMsg || `HTTP ${res.status}`);
+  }
+  return json.body;
+}
+
 /** PUT /agents/:name —— 更新模型配置并重启该 Agent。 */
 export async function updateAgent(name: string, req: UpdateAgentRequest): Promise<AgentStatusBody> {
   const res = await fetch(`/agents/${encodeURIComponent(name)}`, {
@@ -220,6 +275,77 @@ export async function getAgentSkills(name: string): Promise<AgentSkillsBody> {
   }
   if (!json.body) throw new Error('empty body');
   return json.body;
+}
+
+/** GET /agents/:name/skills/file —— 读取单个 skill 文件内容。 */
+export async function getAgentSkillFile(
+  name: string,
+  source: string,
+  skill: string,
+  file: string,
+): Promise<SkillFileBody> {
+  const params = new URLSearchParams({ source, skill, file });
+  const res = await fetch(
+    `/agents/${encodeURIComponent(name)}/skills/file?${params.toString()}`,
+    { headers: authHeaders() },
+  );
+  let json: GinxResponse<SkillFileBody | null> | null = null;
+  try {
+    json = (await res.json()) as GinxResponse<SkillFileBody | null>;
+  } catch {
+    // 非 JSON
+  }
+  if (!res.ok) {
+    if (res.status === 404 && !json?.errMsg) {
+      throw new Error(
+        'HTTP 404：后端未识别 GET /agents/:name/skills/file。请重新编译并重启 Agent（cmd/agent）后再试。',
+      );
+    }
+    throw new Error(json?.errMsg || `HTTP ${res.status}`);
+  }
+  if (!json) throw new Error('Empty response');
+  if (json.errMsg) throw new Error(json.errMsg);
+  if (typeof json.code === 'number' && json.code !== 200 && json.code !== 201) {
+    throw new Error(`unexpected code: ${json.code}`);
+  }
+  if (!json.body) throw new Error('empty body');
+  return json.body;
+}
+
+/** PUT /agents/:name/skills/file —— 写入单个 skill 文件内容。 */
+export async function writeAgentSkillFile(
+  name: string,
+  source: string,
+  skill: string,
+  file: string,
+  content: string,
+): Promise<SkillFileBody> {
+  const params = new URLSearchParams({ source, skill, file });
+  const res = await fetch(
+    `/agents/${encodeURIComponent(name)}/skills/file?${params.toString()}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ content }),
+    },
+  );
+  const body = await parseGinx<SkillFileBody | null>(res);
+  if (!body.body) throw new Error('empty body');
+  return body.body;
+}
+
+/** DELETE /agents/:name/skills —— 删除整个 skill 包。 */
+export async function deleteAgentSkill(
+  name: string,
+  source: string,
+  skill: string,
+): Promise<void> {
+  const params = new URLSearchParams({ source, skill });
+  const res = await fetch(
+    `/agents/${encodeURIComponent(name)}/skills?${params.toString()}`,
+    { method: 'DELETE', headers: authHeaders() },
+  );
+  await parseGinx<unknown>(res);
 }
 
 /** GET /agents/:name/workspace-files —— 读取人设 Markdown 文件。 */

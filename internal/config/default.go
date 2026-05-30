@@ -12,6 +12,9 @@ const (
 	FinclawConfigFile = "finclaw.toml"
 	FinclawWorkspace  = "workspace"
 	RssSourceFile     = "rss.config"
+
+	// DefaultAgentHubAddr is the desktop AgentHub market service base URL.
+	DefaultAgentHubAddr = "http://127.0.0.1:9093"
 )
 
 func FinclawHomePath() string {
@@ -48,6 +51,7 @@ func defaultFinclawConfig() *FinclawConfigServer {
 	return &FinclawConfigServer{
 		ServerAddr:    ":8082",
 		RSSServerAddr: "http://159.75.51.78:6606",
+		AgentHubAddr:  DefaultAgentHubAddr,
 		FinClawChannelConf: &finclaw.FinChannelConfig{
 			ReadTimeout:  60,
 			PingInterval: 30,

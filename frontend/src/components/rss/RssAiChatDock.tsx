@@ -293,7 +293,7 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
     (text: string) => {
       setHint(null);
       if (noAgent) {
-        setHint('当前没有可用 Agent，请先在「Agent 管理」中添加并选择一位 Agent。');
+        setHint('当前没有可用 Agent，请前往 Agent 市场创建一位 Agent。');
         return;
       }
       const entries = selectedEntries;
@@ -472,11 +472,11 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
                 </span>
               )}
               <Link
-                to="/agents"
+                to={agents.length === 0 ? '/agents?market=1' : '/agents'}
                 className="rss-ai-dock-mini-btn rss-ai-dock-mini-btn--primary"
-                title="管理 Agent"
+                title={agents.length === 0 ? '前往 Agent 市场' : '管理 Agent'}
               >
-                {agents.length === 0 ? '创建' : '管理'}
+                {agents.length === 0 ? '市场' : '管理'}
               </Link>
             </div>
 
@@ -534,7 +534,9 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
                 compact
                 placeholder={
                   noAgent
-                    ? '请先在「Agent 管理」中添加并选择一位 Agent…'
+                    ? agents.length === 0
+                      ? '请前往 Agent 市场创建 Agent…'
+                      : '请先选择一位 Agent…'
                     : selectedEntries.length > 0
                     ? '输入问题，将附带已选文章的原文链接…'
                     : '随便聊聊，或在列表勾选文章后再提问…'

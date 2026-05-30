@@ -5,7 +5,6 @@ import {
   IconNews,
   IconPuzzle,
   IconRobot,
-  IconStar,
 } from '@tabler/icons-react';
 import { Link, useLocation } from 'react-router-dom';
 import * as React from 'react';
@@ -27,9 +26,9 @@ import {
   SidebarMenuBadge,
   SidebarRail,
   SidebarFooter,
-  SidebarSeparator,
   useSidebar,
 } from '@/components/ui/sidebar';
+import { SidebarLogoutButton } from '@/components/chrome/UserMenu';
 
 interface NavItem {
   title: string;
@@ -56,8 +55,8 @@ const NAV_GROUPS: NavGroup[] = [
     label: '能力与数据',
     defaultOpen: true,
     items: [
-      { title: '金融资讯', url: '/news', icon: IconNews },
       { title: 'Agent', url: '/agents', icon: IconRobot },
+      { title: '金融资讯', url: '/news', icon: IconNews, badge: 'Soon' },
       { title: '量化回测', url: '/backtest', icon: IconChartAreaLine, badge: 'Soon' },
       { title: 'SkillHub', url: '/skill', icon: IconPuzzle, badge: 'Soon' },
     ],
@@ -139,6 +138,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarContent>
 
       <SidebarFooter className="px-2">
+        {/* 金融资讯模块上线后恢复「我的待读」入口
         <SidebarSeparator />
         <SidebarMenu>
           <SidebarMenuItem>
@@ -155,9 +155,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
+        */}
         <div className="px-2 py-1 text-[10px] font-mono tracking-widest text-muted-foreground/50">
           Finclaw v0.1
         </div>
+        <SidebarLogoutButton />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

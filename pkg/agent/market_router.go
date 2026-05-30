@@ -1,0 +1,245 @@
+package agentruntime
+
+import (
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/dekeky/rssmanager/pkg/ginx"
+	"github.com/finclaw/pkg/agent/market"
+	"github.com/finclaw/pkg/agent/picoclaw"
+	"github.com/gin-gonic/gin"
+	"github.com/sipeed/picoclaw/pkg/bus"
+)
+
+// MarketRouter exposes the desktop AgentHub template catalog and lets users
+// create agents from those templates.
+type MarketRouter struct {
+	agentManager   *AgentManager
+	r              *gin.Engine
+	authMiddleware gin.HandlerFunc
+	client         *market.Client
+}
+
+// NewMarketRouter builds a MarketRouter targeting the given AgentHub address.
+func NewMarketRouter(agentManager *AgentManager, r *gin.Engine, authMiddleware gin.HandlerFunc, agentHubAddr string) *MarketRouter {
+	return &MarketRouter{
+		agentManager:   agentManager,
+		r:              r,
+		authMiddleware: authMiddleware,
+		client:         market.New(agentHubAddr),
+	}
+}
+
+// ConfigRouter registers /api/v1/market/* routes.
+func (mr *MarketRouter) ConfigRouter() {
+	group := mr.r.Group("/api/v1/market", mr.authMiddleware)
+	group.GET("/categories", mr.listCategories)
+	group.GET("/templates", mr.listTemplates)
+	group.GET("/templates/:name/file", mr.getTemplateFile)
+	group.GET("/templates/:name", mr.getTemplate)
+	group.POST("/install", mr.installTemplate)
+}
+
+func (mr *MarketRouter) listCategories(c *gin.Context) {
+	categories, err := mr.client.ListCategories()
+	if err != nil {
+		ginx.NewRender(c, http.StatusBadGateway).Err(err)
+		return
+	}
+	ginx.NewRender(c).Data(gin.H{"categories": categories})
+}
+
+type marketTemplateListResp struct {
+	Templates []market.AgentMeta `json:"templates"`
+	Total     int                `json:"total"`
+}
+
+func (mr *MarketRouter) listTemplates(c *gin.Context) {
+	templates, err := mr.client.ListTemplates(c.Query("category"))
+	if err != nil {
+		ginx.NewRender(c, http.StatusBadGateway).Err(err)
+		return
+	}
+	ginx.NewRender(c).Data(marketTemplateListResp{Templates: templates, Total: len(templates)})
+}
+
+func (mr *MarketRouter) getTemplate(c *gin.Context) {
+	name := strings.TrimSpace(c.Param("name"))
+	if name == "" {
+		ginx.NewRender(c, http.StatusBadRequest).Err(fmt.Errorf("template name is required"))
+		return
+	}
+	detail, err := mr.client.GetTemplate(name)
+	if err != nil {
+		ginx.NewRender(c, http.StatusBadGateway).Err(err)
+		return
+	}
+	ginx.NewRender(c).Data(detail)
+}
+
+type marketFileResp struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+func (mr *MarketRouter) getTemplateFile(c *gin.Context) {
+	name := strings.TrimSpace(c.Param("name"))
+	path := strings.TrimSpace(c.Query("path"))
+	if name == "" || path == "" {
+		ginx.NewRender(c, http.StatusBadRequest).Err(fmt.Errorf("template name and path are required"))
+		return
+	}
+	content, err := mr.client.GetTemplateFile(name, c.Query("version"), path)
+	if err != nil {
+		ginx.NewRender(c, http.StatusBadGateway).Err(err)
+		return
+	}
+	ginx.NewRender(c).Data(marketFileResp{Path: path, Content: content})
+}
+
+type installTemplateRequest struct {
+	Template string `json:"template" binding:"required"`
+	Version  string `json:"version,omitempty"`
+	Name     string `json:"name" binding:"required"`
+	// FromAgent, when set, reuses an existing agent's model provider (model,
+	// api_base and stored api_key) so the user does not have to re-enter
+	// credentials. Takes precedence over ModelProvider when both are present.
+	FromAgent string `json:"from_agent,omitempty"`
+	// ModelProvider is required unless FromAgent is set.
+	ModelProvider *ModelProvider `json:"model_provider,omitempty"`
+}
+
+type installTemplateResp struct {
+	Name          string `json:"name"`
+	ModelProvider string `json:"model_provider"`
+	Template      string `json:"template"`
+	Kind          string `json:"kind"`
+	SkillDir      string `json:"skill_dir,omitempty"`
+}
+
+// modelProviderFromAgent builds a ModelProvider (including the stored api key)
+// from an existing agent's runtime config so a new agent can reuse it.
+func (mr *MarketRouter) modelProviderFromAgent(userID, agentName string) (ModelProvider, error) {
+	agentName = strings.TrimSpace(agentName)
+	if agentName == "" {
+		return ModelProvider{}, fmt.Errorf("from_agent is empty")
+	}
+	cfg, err := resolveAgentRuntimeConfig(mr.agentManager, userID, agentName)
+	if err != nil {
+		return ModelProvider{}, err
+	}
+	alias := strings.TrimSpace(cfg.Agents.Defaults.ModelName)
+	mc, err := cfg.GetModelConfig(alias)
+	if err != nil || mc == nil {
+		return ModelProvider{}, fmt.Errorf("agent %q has no usable model config to reuse", agentName)
+	}
+	key := strings.TrimSpace(mc.APIKey())
+	if key == "" {
+		return ModelProvider{}, fmt.Errorf("agent %q has no saved api key to reuse", agentName)
+	}
+	mp := ModelProvider{
+		ModelName: strings.TrimSpace(mc.ModelName),
+		Model:     strings.TrimSpace(mc.Model),
+		ApiBase:   strings.TrimSpace(mc.APIBase),
+		ApiKey:    key,
+	}
+	if err := fillModelName(&mp); err != nil {
+		return ModelProvider{}, fmt.Errorf("agent %q model config is invalid: %w", agentName, err)
+	}
+	return mp, nil
+}
+
+// resolveInstallModelProvider picks the model provider for an install request:
+// reuse an existing agent's config when from_agent is set, otherwise validate
+// the inline model_provider payload.
+func (mr *MarketRouter) resolveInstallModelProvider(userID string, req *installTemplateRequest) (ModelProvider, error) {
+	if from := strings.TrimSpace(req.FromAgent); from != "" {
+		return mr.modelProviderFromAgent(userID, from)
+	}
+	if req.ModelProvider == nil {
+		return ModelProvider{}, fmt.Errorf("either model_provider or from_agent is required")
+	}
+	mp := *req.ModelProvider
+	if err := fillModelName(&mp); err != nil {
+		return ModelProvider{}, err
+	}
+	if strings.TrimSpace(mp.ApiKey) == "" {
+		return ModelProvider{}, fmt.Errorf("api_key is required")
+	}
+	return mp, nil
+}
+
+// POST /api/v1/market/install — download a template from AgentHub, apply it to a
+// new agent workspace, then create and register the agent.
+func (mr *MarketRouter) installTemplate(c *gin.Context) {
+	userID := getUserID(c)
+	var req installTemplateRequest
+	ginx.PanicIfNotNil(c.ShouldBindJSON(&req))
+
+	req.Template = strings.TrimSpace(req.Template)
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Template == "" {
+		ginx.NewRender(c, http.StatusBadRequest).Err(fmt.Errorf("template is required"))
+		return
+	}
+	if err := validateAgentName(req.Name); err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+		return
+	}
+
+	mp, err := mr.resolveInstallModelProvider(userID, &req)
+	if err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+		return
+	}
+
+	internalKey := AgentKey(userID, req.Name)
+	if _, exists := mr.agentManager.Get(internalKey); exists {
+		ginx.NewRender(c, http.StatusBadRequest).Err(fmt.Errorf("agent %q already exists", req.Name))
+		return
+	}
+
+	home := agentHomeDir(userID)
+	if _, err := os.Stat(picoclaw.AgentConfigPath(home, req.Name)); err == nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(fmt.Errorf("agent %q already exists", req.Name))
+		return
+	}
+
+	zipPath, cleanup, err := mr.client.DownloadTemplate(req.Template, req.Version)
+	if err != nil {
+		ginx.NewRender(c, http.StatusBadGateway).Err(err)
+		return
+	}
+	defer cleanup()
+
+	// agentDir is created fresh by this request; remove it if any later step
+	// fails so a half-installed template does not linger on disk.
+	agentDir := filepath.Join(home, req.Name)
+	workspace := picoclaw.AgentWorkspacePath(home, req.Name)
+	result, err := market.InstallTemplateZip(zipPath, workspace, req.Template)
+	if err != nil {
+		_ = os.RemoveAll(agentDir)
+		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+		return
+	}
+
+	msgBus := bus.NewMessageBus()
+	picoclawAgent, err := picoclaw.NewPicoclawAgent(home, msgBus, mp.toPicoModelConfig(mp.ApiKey), req.Name)
+	if err != nil {
+		_ = os.RemoveAll(agentDir)
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	mr.agentManager.AddAgent(internalKey, picoclawAgent, msgBus)
+
+	ginx.NewRender(c, http.StatusCreated).Data(installTemplateResp{
+		Name:          req.Name,
+		ModelProvider: mp.Model,
+		Template:      req.Template,
+		Kind:          result.Kind,
+		SkillDir:      result.SkillDir,
+	})
+}

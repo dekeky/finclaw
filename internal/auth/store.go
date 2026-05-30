@@ -15,7 +15,7 @@ import (
 
 type User struct {
 	ID           string    `json:"id"`
-	Email        string    `json:"email"`
+	Account      string    `json:"account"`
 	DisplayName  string    `json:"display_name"`
 	PasswordHash string    `json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -48,7 +48,7 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func (s *Store) CreateUser(email, password, displayName string) (*User, error) {
+func (s *Store) CreateUser(account, password, displayName string) (*User, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, fmt.Errorf("hash password: %w", err)
@@ -56,8 +56,8 @@ func (s *Store) CreateUser(email, password, displayName string) (*User, error) {
 
 	id := generateUserID()
 	_, err = s.db.Exec(
-		"INSERT INTO users (id, email, password_hash, display_name, created_at) VALUES (?, ?, ?, ?, ?)",
-		id, email, string(hash), displayName, time.Now(),
+		"INSERT INTO users (id, account, password_hash, display_name, created_at) VALUES (?, ?, ?, ?, ?)",
+		id, account, string(hash), displayName, time.Now(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert user: %w", err)
@@ -68,31 +68,28 @@ func (s *Store) CreateUser(email, password, displayName string) (*User, error) {
 		return nil, fmt.Errorf("create user directory: %w", err)
 	}
 
-	return &User{ID: id, Email: email, DisplayName: displayName, CreatedAt: time.Now()}, nil
+	return &User{ID: id, Account: account, DisplayName: displayName, CreatedAt: time.Now()}, nil
 }
 
-func (s *Store) GetUserByEmail(email string) (*User, error) {
+func (s *Store) GetUserByAccount(account string) (*User, error) {
 	row := s.db.QueryRow(
-		"SELECT id, email, password_hash, display_name, created_at FROM users WHERE email = ?",
-		email,
+		"SELECT id, account, password_hash, display_name, created_at FROM users WHERE account = ?",
+		account,
 	)
-	var u User
-	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.CreatedAt); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &u, nil
+	return scanUser(row)
 }
 
 func (s *Store) GetUserByID(id string) (*User, error) {
 	row := s.db.QueryRow(
-		"SELECT id, email, password_hash, display_name, created_at FROM users WHERE id = ?",
+		"SELECT id, account, password_hash, display_name, created_at FROM users WHERE id = ?",
 		id,
 	)
+	return scanUser(row)
+}
+
+func scanUser(row *sql.Row) (*User, error) {
 	var u User
-	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.CreatedAt); err != nil {
+	if err := row.Scan(&u.ID, &u.Account, &u.PasswordHash, &u.DisplayName, &u.CreatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -120,14 +117,58 @@ func dbPath() string {
 func migrate(db *sql.DB) error {
 	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS users (
-			id           TEXT PRIMARY KEY,
-			email        TEXT UNIQUE NOT NULL,
+			id            TEXT PRIMARY KEY,
+			account       TEXT UNIQUE NOT NULL,
 			password_hash TEXT NOT NULL,
-			display_name TEXT NOT NULL DEFAULT '',
-			created_at   DATETIME NOT NULL DEFAULT (datetime('now'))
+			display_name  TEXT NOT NULL DEFAULT '',
+			created_at    DATETIME NOT NULL DEFAULT (datetime('now'))
 		);
 	`)
+	if err != nil {
+		return err
+	}
+	return migrateEmailColumnToAccount(db)
+}
+
+func migrateEmailColumnToAccount(db *sql.DB) error {
+	hasEmail, err := tableHasColumn(db, "users", "email")
+	if err != nil {
+		return err
+	}
+	if !hasEmail {
+		return nil
+	}
+	hasAccount, err := tableHasColumn(db, "users", "account")
+	if err != nil {
+		return err
+	}
+	if hasAccount {
+		return nil
+	}
+	_, err = db.Exec(`ALTER TABLE users RENAME COLUMN email TO account`)
 	return err
+}
+
+func tableHasColumn(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var dfltValue sql.NullString
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func generateUserID() string {
