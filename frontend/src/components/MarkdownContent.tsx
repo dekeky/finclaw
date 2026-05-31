@@ -1,14 +1,13 @@
-import { useCallback, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeSlug from 'rehype-slug';
 import type { PluggableList } from 'unified';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useTheme } from '../context/ThemeContext';
 import { cn } from '../lib/cn';
+
+const CodeBlock = lazy(() => import('./CodeBlock'));
 
 export type MarkdownSize = 'sm' | 'md';
 
@@ -75,7 +74,7 @@ export function MarkdownContent({
 }: MarkdownContentProps) {
   const { scheme } = useTheme();
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const syntaxStyle = scheme === 'dark' ? oneDark : oneLight;
+  const dark = scheme === 'dark';
 
   const handleCopy = useCallback((code: string, id: string) => {
     void navigator.clipboard.writeText(code).then(() => {
@@ -105,20 +104,15 @@ export function MarkdownContent({
                     <CopyCodeButton code={code} id={codeId} copied={copiedId === codeId} onCopy={handleCopy} />
                   )}
                 </div>
-                <SyntaxHighlighter
-                  style={syntaxStyle}
-                  language={lang}
-                  PreTag="div"
-                  customStyle={{
-                    margin: 0,
-                    padding: '12px 14px',
-                    fontSize: '13px',
-                    lineHeight: 1.55,
-                    background: 'transparent',
-                  }}
+                <Suspense
+                  fallback={
+                    <pre className="overflow-x-auto px-3.5 py-3 font-mono text-[13px] leading-relaxed">
+                      <code>{code}</code>
+                    </pre>
+                  }
                 >
-                  {code}
-                </SyntaxHighlighter>
+                  <CodeBlock code={code} lang={lang} dark={dark} />
+                </Suspense>
               </div>
             </div>
           );
@@ -218,7 +212,7 @@ export function MarkdownContent({
         return <hr className={compact ? 'my-2 border-border/40' : 'my-6 border-border/60'} />;
       },
     }),
-    [compact, copiedId, copyableCode, handleCopy, idPrefix, syntaxStyle],
+    [compact, copiedId, copyableCode, dark, handleCopy, idPrefix],
   );
 
   const remarkPlugins = compact ? [remarkGfm] : [remarkGfm, remarkBreaks];

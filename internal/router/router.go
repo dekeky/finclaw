@@ -35,8 +35,6 @@ func (fr *FinClawRouter) RoutesInit() error {
 	if err != nil {
 		return fmt.Errorf("webui: %w", err)
 	}
-	fr.r.Use(webui.AgentsDocumentFallback(dist))
-
 	fr.webSocketRouter()
 	fr.rssRouter()
 	fr.authRouter()

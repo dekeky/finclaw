@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/dekeky/rssmanager/pkg/ginx"
@@ -27,7 +28,7 @@ func NewAgentManagerRouter(agentManager *AgentManager, r *gin.Engine, authMiddle
 }
 
 func (ar *AgentManagerRouter) ConfigRouter() {
-	group := ar.r.Group("/agents", ar.authMiddleware)
+	group := ar.r.Group("/api/v1/agents", ar.authMiddleware)
 	group.GET("/:name/skills", ar.getAgentSkills)
 	group.DELETE("/:name/skills", ar.deleteSkill)
 	group.GET("/:name/skills/file", ar.getSkillFile)
@@ -63,7 +64,7 @@ type agentListResp struct {
 	Total  int      `json:"total"`
 }
 
-// GET /agents — list agents for the authenticated user.
+// GET /api/v1/agents — list agents for the authenticated user.
 func (ar *AgentManagerRouter) listAgents(c *gin.Context) {
 	userID := getUserID(c)
 	names := ar.agentManager.NamesByUser(userID)
@@ -82,7 +83,7 @@ type agentDetailResp struct {
 	ModelProvider agentModelProviderInfo `json:"model_provider"`
 }
 
-// GET /agents/:name — runtime config summary for one agent (no secrets).
+// GET /api/v1/agents/:name — runtime config summary for one agent (no secrets).
 func (ar *AgentManagerRouter) getAgent(c *gin.Context) {
 	userID := getUserID(c)
 	name := c.Param("name")
@@ -191,7 +192,7 @@ type probeModelProviderRequest struct {
 	AgentName string `json:"agent_name,omitempty"`
 }
 
-// POST /agents/model-probe — test model provider connectivity without persisting.
+// POST /api/v1/agents/model-probe — test model provider connectivity without persisting.
 func (ar *AgentManagerRouter) probeModelProvider(c *gin.Context) {
 	userID := getUserID(c)
 	var req probeModelProviderRequest
@@ -250,7 +251,7 @@ type agentStatusResp struct {
 	ModelProvider string `json:"model_provider"`
 }
 
-// POST /agents — create and register a new agent under the user's directory.
+// POST /api/v1/agents — create and register a new agent under the user's directory.
 func (ar *AgentManagerRouter) createAgent(c *gin.Context) {
 	userID := getUserID(c)
 	var req createAgentRequest
@@ -343,7 +344,7 @@ func resolveUpdateAPIKey(loop *picoagent.AgentLoop, modelAlias string, provided 
 	return "", fmt.Errorf("api_key is required: no saved key found for this agent")
 }
 
-// PUT /agents/:name — replace model provider and restart agent.
+// PUT /api/v1/agents/:name — replace model provider and restart agent.
 func (ar *AgentManagerRouter) updateAgent(c *gin.Context) {
 	userID := getUserID(c)
 	name := c.Param("name")
@@ -386,14 +387,24 @@ func (ar *AgentManagerRouter) updateAgent(c *gin.Context) {
 	ginx.NewRender(c).Data(agentStatusResp{Name: name, ModelProvider: mp.Model})
 }
 
-// DELETE /agents/:name — stop and remove an agent.
+// DELETE /api/v1/agents/:name — stop and remove an agent from memory and disk.
 func (ar *AgentManagerRouter) deleteAgent(c *gin.Context) {
 	userID := getUserID(c)
-	name := c.Param("name")
+	name := strings.TrimSpace(c.Param("name"))
+	if err := validateAgentName(name); err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+		return
+	}
 	internalKey := AgentKey(userID, name)
 
 	if err := ar.agentManager.Remove(internalKey); err != nil {
 		ginx.NewRender(c, http.StatusNotFound).Err(err)
+		return
+	}
+
+	agentDir := filepath.Join(agentHomeDir(userID), name)
+	if err := os.RemoveAll(agentDir); err != nil && !os.IsNotExist(err) {
+		ginx.NewRender(c, http.StatusInternalServerError).Err(fmt.Errorf("remove agent data: %w", err))
 		return
 	}
 	ginx.NewRender(c).Data(agentStatusResp{Name: name})
@@ -474,7 +485,7 @@ func (ar *AgentManagerRouter) resolveAgentWorkspace(userID, name string) (string
 	return picoclaw.AgentWorkspacePath(home, name), nil
 }
 
-// GET /agents/:name/skills — list skills visible to the agent.
+// GET /api/v1/agents/:name/skills — list skills visible to the agent.
 func (ar *AgentManagerRouter) getAgentSkills(c *gin.Context) {
 	userID := getUserID(c)
 	name := c.Param("name")
@@ -491,7 +502,7 @@ func (ar *AgentManagerRouter) getAgentSkills(c *gin.Context) {
 	ginx.NewRender(c).Data(summary)
 }
 
-// GET /agents/:name/skills/file?source=&skill=&file= — read one skill markdown file.
+// GET /api/v1/agents/:name/skills/file?source=&skill=&file= — read one skill markdown file.
 func (ar *AgentManagerRouter) getSkillFile(c *gin.Context) {
 	userID := getUserID(c)
 	name := c.Param("name")
@@ -515,7 +526,7 @@ type putSkillFileReq struct {
 	Content string `json:"content"`
 }
 
-// PUT /agents/:name/skills/file?source=&skill=&file= — write one skill markdown file.
+// PUT /api/v1/agents/:name/skills/file?source=&skill=&file= — write one skill markdown file.
 func (ar *AgentManagerRouter) putSkillFile(c *gin.Context) {
 	userID := getUserID(c)
 	name := c.Param("name")
@@ -537,7 +548,7 @@ func (ar *AgentManagerRouter) putSkillFile(c *gin.Context) {
 	ginx.NewRender(c).Data(content)
 }
 
-// DELETE /agents/:name/skills?source=&skill= — delete an entire skill package.
+// DELETE /api/v1/agents/:name/skills?source=&skill= — delete an entire skill package.
 func (ar *AgentManagerRouter) deleteSkill(c *gin.Context) {
 	userID := getUserID(c)
 	name := c.Param("name")
@@ -567,7 +578,7 @@ func renderSkillErr(c *gin.Context, err error) {
 	}
 }
 
-// GET /agents/:name/workspace-files — read AGENT.md, SOUL.md, USER.md.
+// GET /api/v1/agents/:name/workspace-files — read AGENT.md, SOUL.md, USER.md.
 func (ar *AgentManagerRouter) getWorkspaceFiles(c *gin.Context) {
 	userID := getUserID(c)
 	name := c.Param("name")
@@ -584,7 +595,7 @@ func (ar *AgentManagerRouter) getWorkspaceFiles(c *gin.Context) {
 	ginx.NewRender(c).Data(workspaceFilesResp{Workspace: workspace, Files: files})
 }
 
-// PUT /agents/:name/workspace-files/:file — write one persona markdown file.
+// PUT /api/v1/agents/:name/workspace-files/:file — write one persona markdown file.
 func (ar *AgentManagerRouter) putWorkspaceFile(c *gin.Context) {
 	userID := getUserID(c)
 	name := c.Param("name")
@@ -607,7 +618,7 @@ func (ar *AgentManagerRouter) putWorkspaceFile(c *gin.Context) {
 	ginx.NewRender(c).Data(picoclaw.PersonaFile{Name: filename, Content: req.Content, Exists: true})
 }
 
-// POST /agents/:name/workspace-files/init — create missing persona files from templates.
+// POST /api/v1/agents/:name/workspace-files/init — create missing persona files from templates.
 func (ar *AgentManagerRouter) initWorkspaceFiles(c *gin.Context) {
 	userID := getUserID(c)
 	name := c.Param("name")
@@ -628,7 +639,7 @@ func (ar *AgentManagerRouter) initWorkspaceFiles(c *gin.Context) {
 	ginx.NewRender(c).Data(workspaceFilesResp{Workspace: workspace, Files: files})
 }
 
-// POST /agents/:name/workspace-files/:file/generate — AI draft persona markdown from user prompt.
+// POST /api/v1/agents/:name/workspace-files/:file/generate — AI draft persona markdown from user prompt.
 func (ar *AgentManagerRouter) generateWorkspaceFile(c *gin.Context) {
 	userID := getUserID(c)
 	name := c.Param("name")
@@ -664,7 +675,7 @@ type docListResp struct {
 	Files []DocFileEntry `json:"files"`
 }
 
-// GET /agents/:name/docs — list files in agent's docs/ directory.
+// GET /api/v1/agents/:name/docs — list files in agent's docs/ directory.
 func (ar *AgentManagerRouter) listDocFiles(c *gin.Context) {
 	userID := getUserID(c)
 	name := c.Param("name")
@@ -686,7 +697,7 @@ func (ar *AgentManagerRouter) listDocFiles(c *gin.Context) {
 	ginx.NewRender(c).Data(docListResp{Files: files})
 }
 
-// GET /agents/:name/docs/*filepath — read a file from agent's docs/ directory.
+// GET /api/v1/agents/:name/docs/*filepath — read a file from agent's docs/ directory.
 func (ar *AgentManagerRouter) getDocFile(c *gin.Context) {
 	userID := getUserID(c)
 	name := c.Param("name")
@@ -708,7 +719,7 @@ type putDocFileReq struct {
 	Content string `json:"content"`
 }
 
-// PUT /agents/:name/docs/*filepath — create or overwrite a file under docs/.
+// PUT /api/v1/agents/:name/docs/*filepath — create or overwrite a file under docs/.
 func (ar *AgentManagerRouter) putDocFile(c *gin.Context) {
 	userID := getUserID(c)
 	name := c.Param("name")
@@ -728,7 +739,7 @@ func (ar *AgentManagerRouter) putDocFile(c *gin.Context) {
 	ginx.NewRender(c).Data(content)
 }
 
-// DELETE /agents/:name/docs/*filepath — remove a file or directory under docs/.
+// DELETE /api/v1/agents/:name/docs/*filepath — remove a file or directory under docs/.
 func (ar *AgentManagerRouter) deleteDocFile(c *gin.Context) {
 	userID := getUserID(c)
 	name := c.Param("name")

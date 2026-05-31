@@ -1,1 +1,3 @@
-cd C:\Users\25633\Desktop\finclaw; $env:CGO_ENABLED=0; $env:GOOS="linux"; $env:GOARCH="amd64"; go build -trimpath -ldflags "-s -w" -o dist\finclaw-linux-amd64 .\cmd\agent
+# Windows 请用:  powershell -ExecutionPolicy Bypass -File .\build.ps1
+# Linux/macOS: bash scripts/build.sh
+powershell -ExecutionPolicy Bypass -File "$PWD/build.ps1" "$@"

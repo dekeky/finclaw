@@ -14,7 +14,7 @@ import (
 
 const modelProbeHTTPTimeout = 30 * time.Second
 
-// ModelProbeResult is returned by POST /agents/model-probe.
+// ModelProbeResult is returned by POST /api/v1/agents/model-probe.
 type ModelProbeResult struct {
 	Ok        bool   `json:"ok"`
 	Message   string `json:"message"`

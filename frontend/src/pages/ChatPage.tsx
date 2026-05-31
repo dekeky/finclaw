@@ -2,6 +2,8 @@ import { IconAlertTriangle, IconBuildingStore, IconHistory, IconTrash } from '@t
 import { Link } from 'react-router-dom';
 import { AgentAvatar } from '../components/AgentAvatar';
 import { ChatContainer } from '../components/ChatContainer';
+import { AgentAssetsSidebar, AGENT_ASSETS_EXPANDED_INSET } from '../components/AgentAssetsSidebar';
+import { CHAT_INPUT_GUTTER, CHAT_MAIN_COLUMN, CHAT_SCROLL_GUTTER } from '@/lib/chatLayout';
 import { DocFileTree } from '../components/DocFileTree';
 import { DocReadingPanel } from '../components/DocReadingPanel';
 import { AgentSkillsPanel, skillFileKey, type SkillFileTarget } from '../components/AgentSkillsPanel';
@@ -59,6 +61,7 @@ export default function ChatPage() {
 
   // Agent 资产侧栏：文档 / Skills
   const [assetTab, setAssetTab] = useState<'docs' | 'skills'>('docs');
+  const [assetsCollapsed, setAssetsCollapsed] = useState(true);
   const [skillFile, setSkillFile] = useState<SkillFileTarget | null>(null);
   const [skillsRefreshRev, setSkillsRefreshRev] = useState(0);
   const { confirm, dialog: confirmDialog } = useConfirm();
@@ -335,34 +338,12 @@ export default function ChatPage() {
 
       {/* Main body: file tree sidebar + chat */}
       {currentAgent && (
-        <div className="flex min-h-0 flex-1 overflow-hidden">
-          {/* Agent assets sidebar -- always visible */}
-          <aside className="flex w-56 shrink-0 flex-col border-r border-border/50 bg-muted/20 lg:w-60">
-            {/* Header + 分类切换 */}
-            <div className="shrink-0 border-b border-border/40 px-2 pt-2">
-              <div className="px-1 pb-1.5 text-xs font-medium text-muted-foreground/80">Agent 资产</div>
-              <div className="flex gap-1 pb-1.5">
-                {([
-                  { id: 'docs', label: '文档' },
-                  { id: 'skills', label: 'Skills' },
-                ] as const).map(({ id, label }) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setAssetTab(id)}
-                    className={cn(
-                      'flex-1 rounded-md px-2 py-1 text-xs transition-colors',
-                      assetTab === id
-                        ? 'bg-violet-500/15 font-medium text-violet-600 dark:text-violet-300'
-                        : 'text-muted-foreground hover:bg-muted/60',
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
+        <div className="relative flex min-h-0 flex-1 overflow-hidden">
+          <AgentAssetsSidebar
+            assetTab={assetTab}
+            onAssetTabChange={setAssetTab}
+            onCollapsedChange={setAssetsCollapsed}
+          >
             {assetTab === 'docs' ? (
               <DocFileTree
                 agentName={currentAgent}
@@ -385,12 +366,18 @@ export default function ChatPage() {
                 refreshRev={skillsRefreshRev}
               />
             )}
-          </aside>
+          </AgentAssetsSidebar>
 
-          {/* Chat area - always visible */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 overflow-y-auto py-6 pl-2 pr-4 md:pl-3 md:pr-6 [scrollbar-gutter:stable]">
-              <div className="flex w-full max-w-[80rem] flex-col gap-8">
+          {/* 折叠时全宽居中；桌面展开资产侧栏时为浮层留白 */}
+          <div
+            className={cn(
+              'flex min-h-0 min-w-0 flex-1 flex-col',
+              'max-md:pl-10',
+              !assetsCollapsed && AGENT_ASSETS_EXPANDED_INSET,
+            )}
+          >
+            <div className={cn('min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]', CHAT_SCROLL_GUTTER)}>
+              <div className={cn('flex flex-col gap-8', CHAT_MAIN_COLUMN)}>
                 <ErrorBoundary>
                   <ChatContainer
                     messages={messages}
@@ -402,8 +389,8 @@ export default function ChatPage() {
               </div>
             </div>
 
-            <div className="shrink-0 border-t border-border/40 pb-4 pl-2 pr-4 pt-3 md:pl-3 md:pr-6">
-              <div className="w-full max-w-[80rem]">
+            <div className={cn('shrink-0 border-t border-border/40', CHAT_INPUT_GUTTER)}>
+              <div className={CHAT_MAIN_COLUMN}>
                 <form ref={formRef} onSubmit={(e) => { e.preventDefault(); handleSend(value); }}>
                   <div className="relative rounded-2xl border border-border/60 bg-card p-1.5 pr-1 shadow-sm">
                     <div className="relative flex items-end gap-2">
@@ -449,8 +436,8 @@ export default function ChatPage() {
 
       {/* Input (no agent selected) */}
       {!currentAgent && (
-        <div className="shrink-0 pb-4 pl-2 pr-4 md:pl-3 md:pr-6">
-          <div className="w-full max-w-[80rem]">
+        <div className={cn('shrink-0', CHAT_INPUT_GUTTER)}>
+          <div className={CHAT_MAIN_COLUMN}>
             <form ref={formRef} onSubmit={(e) => { e.preventDefault(); handleSend(value); }}>
               <div className="relative rounded-2xl border border-border/60 bg-card p-1.5 pr-1 shadow-sm opacity-60">
                 <div className="relative flex items-end gap-2">

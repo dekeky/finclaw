@@ -1,19 +1,27 @@
+import { lazy, Suspense, type ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { IconLoader2 } from '@tabler/icons-react';
 import { AuthProvider, useAuth } from './state/auth';
 import { AppLayout } from './layouts/AppLayout';
-import AgentsPage from './pages/AgentsPage';
-import BacktestPage from './pages/BacktestPage';
-import ChatPage from './pages/ChatPage';
-import LoginPage from './pages/LoginPage';
-// import RssReaderPage from './pages/RssReaderPage';
-import NewsPage from './pages/NewsPage';
-import SkillPage from './pages/SkillPage';
-import type { ReactNode } from 'react';
+
+const AgentsPage = lazy(() => import('./pages/AgentsPage'));
+const BacktestPage = lazy(() => import('./pages/BacktestPage'));
+const ChatPage = lazy(() => import('./pages/ChatPage'));
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const NewsPage = lazy(() => import('./pages/NewsPage'));
+const SkillPage = lazy(() => import('./pages/SkillPage'));
 
 function AuthLoading() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
+      <IconLoader2 className="size-6 animate-spin text-muted-foreground" />
+    </div>
+  );
+}
+
+function PageFallback() {
+  return (
+    <div className="flex min-h-[50vh] items-center justify-center">
       <IconLoader2 className="size-6 animate-spin text-muted-foreground" />
     </div>
   );
@@ -39,20 +47,21 @@ function GuestOnly({ children }: { children: ReactNode }) {
 export default function App() {
   return (
     <AuthProvider>
-      <Routes>
-        <Route path="/login" element={<GuestOnly><LoginPage /></GuestOnly>} />
-        <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
-          <Route path="/" element={<Navigate to="/chat" replace />} />
-          <Route path="/chat" element={<ChatPage />} />
-          <Route path="/news" element={<NewsPage />} />
-          {/* <Route path="/news" element={<RssReaderPage />} /> */}
-          <Route path="/rss" element={<Navigate to="/news" replace />} />
-          <Route path="/agents" element={<AgentsPage />} />
-          <Route path="/backtest" element={<BacktestPage />} />
-          <Route path="/skill" element={<SkillPage />} />
-        </Route>
-        <Route path="*" element={<Navigate to="/chat" replace />} />
-      </Routes>
+      <Suspense fallback={<PageFallback />}>
+        <Routes>
+          <Route path="/login" element={<GuestOnly><LoginPage /></GuestOnly>} />
+          <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
+            <Route path="/" element={<Navigate to="/chat" replace />} />
+            <Route path="/chat" element={<ChatPage />} />
+            <Route path="/news" element={<NewsPage />} />
+            <Route path="/rss" element={<Navigate to="/news" replace />} />
+            <Route path="/agents" element={<AgentsPage />} />
+            <Route path="/backtest" element={<BacktestPage />} />
+            <Route path="/skill" element={<SkillPage />} />
+          </Route>
+          <Route path="*" element={<Navigate to="/chat" replace />} />
+        </Routes>
+      </Suspense>
     </AuthProvider>
   );
 }

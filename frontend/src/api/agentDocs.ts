@@ -1,6 +1,8 @@
 import type { GinxResponse } from '../types/rss';
 import { getToken } from './auth';
 
+const AGENTS_API = '/api/v1/agents';
+
 function authHeaders(): Record<string, string> {
   const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -30,7 +32,7 @@ export interface DocFileBody {
 
 export async function listAgentDocs(name: string, subpath?: string): Promise<DocListBody> {
   const params = subpath ? `?subpath=${encodeURIComponent(subpath)}` : '';
-  const res = await fetch(`/agents/${encodeURIComponent(name)}/docs${params}`, {
+  const res = await fetch(`${AGENTS_API}/${encodeURIComponent(name)}/docs${params}`, {
     headers: { ...authHeaders() },
   });
   return parseGinx<DocListBody>(await res.json());
@@ -38,7 +40,7 @@ export async function listAgentDocs(name: string, subpath?: string): Promise<Doc
 
 export async function getAgentDocFile(name: string, file: string): Promise<DocFileBody> {
   const encodedPath = file.split('/').map(encodeURIComponent).join('/');
-  const res = await fetch(`/agents/${encodeURIComponent(name)}/docs/${encodedPath}`, {
+  const res = await fetch(`${AGENTS_API}/${encodeURIComponent(name)}/docs/${encodedPath}`, {
     headers: { ...authHeaders() },
   });
   return parseGinx<DocFileBody>(await res.json());
@@ -50,7 +52,7 @@ export async function writeAgentDocFile(
   content: string,
 ): Promise<DocFileBody> {
   const encodedPath = file.split('/').map(encodeURIComponent).join('/');
-  const res = await fetch(`/agents/${encodeURIComponent(name)}/docs/${encodedPath}`, {
+  const res = await fetch(`${AGENTS_API}/${encodeURIComponent(name)}/docs/${encodedPath}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ content }),
@@ -60,7 +62,7 @@ export async function writeAgentDocFile(
 
 export async function deleteAgentDocPath(name: string, file: string): Promise<void> {
   const encodedPath = file.split('/').map(encodeURIComponent).join('/');
-  const res = await fetch(`/agents/${encodeURIComponent(name)}/docs/${encodedPath}`, {
+  const res = await fetch(`${AGENTS_API}/${encodeURIComponent(name)}/docs/${encodedPath}`, {
     method: 'DELETE',
     headers: { ...authHeaders() },
   });

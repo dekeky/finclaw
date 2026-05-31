@@ -308,7 +308,14 @@ export default function AgentsPage() {
 
   const onDelete = async (name: string) => {
     if (pendingDelete) return;
-    if (!window.confirm(`确定移除 Agent「${name}」？后端将终止该 Agent 相关会话。`)) return;
+    const ok = await confirm({
+      title: `删除 Agent「${name}」`,
+      description:
+        '将停止该 Agent 并永久删除其工作区、配置与 Skills；进行中的会话会被终止，操作不可恢复。',
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
     setPendingDelete(name);
     try {
       await deleteAgent(name);
@@ -546,8 +553,8 @@ export default function AgentsPage() {
                     );
                   })}
                 </nav>
-                {detailTab === 'config' && (
-                  <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2">
+                  {detailTab === 'config' && (
                     <Button
                       variant="default"
                       size="sm"
@@ -559,18 +566,18 @@ export default function AgentsPage() {
                     >
                       {editConfigOpen ? '收起编辑' : '更新配置'}
                     </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                      onClick={() => void onDelete(detailName)}
-                      disabled={pendingDelete === detailName}
-                    >
-                      <IconTrash className="mr-1.5 h-3.5 w-3.5" stroke={1.75} />
-                      {pendingDelete === detailName ? '移除中…' : '移除'}
-                    </Button>
-                  </div>
-                )}
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => void onDelete(detailName)}
+                    disabled={pendingDelete === detailName}
+                  >
+                    <IconTrash className="mr-1.5 h-3.5 w-3.5" stroke={1.75} />
+                    {pendingDelete === detailName ? '删除中…' : '删除 Agent'}
+                  </Button>
+                </div>
               </div>
 
               {detailTab === 'persona' ? (
