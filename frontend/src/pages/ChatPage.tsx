@@ -1,6 +1,9 @@
-import { IconAlertTriangle, IconBuildingStore, IconHistory, IconTrash } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBuildingStore, IconHistory, IconMessagePlus, IconTrash } from '@tabler/icons-react';
 import { Link } from 'react-router-dom';
 import { AgentAvatar } from '../components/AgentAvatar';
+import { ChatMainToolbar } from '@/components/chrome/ChatMainToolbar';
+import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
+import { ThemeToggle } from '@/components/chrome/ThemeToggle';
 import { ChatContainer } from '../components/ChatContainer';
 import { AgentAssetsSidebar, AGENT_ASSETS_EXPANDED_INSET } from '../components/AgentAssetsSidebar';
 import { CHAT_INPUT_GUTTER, CHAT_MAIN_COLUMN, CHAT_SCROLL_GUTTER } from '@/lib/chatLayout';
@@ -19,6 +22,7 @@ import { buildAnalysisUserMessage } from '@/utils/analysisPrompt';
 import { rssScopedItemKey } from '@/utils/rssScopedKey';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
@@ -31,15 +35,8 @@ import {
 import { useState, useRef, useMemo, useEffect, useCallback, type MouseEvent } from 'react';
 import { cn } from '@/lib/cn';
 
-const WS_STATUS_CONFIG = {
-  idle: { label: '待连接', color: 'text-muted-foreground' },
-  connecting: { label: '连接中...', color: 'text-amber-500' },
-  connected: { label: '已连接', color: 'text-emerald-500' },
-  error: { label: '连接错误', color: 'text-red-500' },
-};
-
 export default function ChatPage() {
-  const { agents, currentAgent, selectAgent, refresh, status: agentsLoadStatus, error: agentsLoadError } = useAgents();
+  const { agents, currentAgent, refresh, status: agentsLoadStatus, error: agentsLoadError } = useAgents();
   const [value, setValue] = useState('');
   const formRef = useRef<HTMLFormElement>(null);
   const dock = useAiDock();
@@ -177,7 +174,11 @@ export default function ChatPage() {
     [currentAgent, bumpHistory],
   );
 
-  const statusCfg = WS_STATUS_CONFIG[status] || WS_STATUS_CONFIG.idle;
+  const handleNewChat = useCallback(() => {
+    if (messages.length > 0) handleArchiveAndClear();
+    else clearMessages();
+  }, [messages.length, handleArchiveAndClear, clearMessages]);
+
   const noAgents = agents.length === 0 && agentsLoadStatus === 'ready';
 
   useEffect(() => {
@@ -198,97 +199,54 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background/95">
-      {/* Header */}
-      <div className="flex h-14 shrink-0 items-center justify-between border-b border-border/50 px-4 py-3">
-        <div className="flex items-center gap-3">
-          <h1 className="text-base font-medium tracking-tight text-foreground/90">对话</h1>
-
-          {/* Agent Switcher */}
-          {agents.length === 0 ? (
-            agentsLoadStatus === 'ready' ? (
-              <Button asChild variant="outline" size="sm" className="h-7 text-xs">
-                <Link to="/agents?market=1">暂无 Agent · 去市场创建</Link>
-              </Button>
-            ) : (
-              <Badge variant="outline" className="h-7 text-xs text-muted-foreground">
-                {agentsLoadStatus === 'loading' ? '加载 Agent…' : 'Agent 列表加载失败'}
-              </Badge>
-            )
-          ) : (
-            <div className="flex min-w-0 items-center gap-2">
-              {currentAgent && <AgentAvatar name={currentAgent} size="sm" />}
-              <label className="relative flex min-w-0 flex-1 items-center">
-              <span className="sr-only">选择对话使用的 Agent</span>
-              <select
-                aria-label="选择对话使用的 Agent"
-                value={currentAgent ?? ''}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  selectAgent(v ? v : null);
-                }}
-                className={cn(
-                  'h-7 max-w-[min(100%,18rem)] min-w-[10rem] cursor-pointer appearance-none rounded-md border border-input bg-background py-1 pl-3 pr-8 text-xs shadow-xs outline-none transition-colors',
-                  'hover:bg-accent/50 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50',
-                )}
-              >
-                {!currentAgent && <option value="">选择 Agent…</option>}
-                {agents.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-              <svg
-                className="pointer-events-none absolute right-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                aria-hidden
-              >
-                <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </label>
-            </div>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#f7f7f8] dark:bg-background">
+      {/* 元宝式：主区左上角 Agent 下拉 */}
+      <div className="flex h-12 shrink-0 items-center gap-3 px-5">
+        <SidebarExpandTrigger />
+        <div className="flex min-w-0 items-center gap-0.5">
+          <ChatMainToolbar />
+          {agentsLoadStatus === 'ready' && agents.length > 0 && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-8 shrink-0 text-muted-foreground"
+                  aria-label="新对话"
+                  onClick={handleNewChat}
+                >
+                  <IconMessagePlus className="size-[18px]" stroke={1.75} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">新对话</TooltipContent>
+            </Tooltip>
           )}
-
+        </div>
+        <div className="ml-auto flex items-center gap-1">
           {agentsLoadStatus === 'error' && agentsLoadError && (
-            <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-destructive" onClick={() => void refresh()}>
-              重试加载
+            <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs text-destructive" onClick={() => void refresh()}>
+              重试
             </Button>
           )}
-
-          <Badge
-            variant={status === 'connected' ? 'default' : status === 'error' ? 'destructive' : 'outline'}
-            className={`text-[10px] ${statusCfg.color}`}
-          >
-            {statusCfg.label}
-          </Badge>
           {dock.selectedKeys.size > 0 && (
             <Badge variant="secondary" className="text-[10px]">
               {dock.selectedKeys.size} 篇已选
             </Badge>
           )}
-        </div>
-        <div className="flex items-center gap-1">
           {currentAgent && (
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              className="text-xs"
+              className="h-8 gap-1 px-2 text-xs"
               onClick={() => setHistoryOpen(true)}
             >
-              <IconHistory size={14} className="mr-1 opacity-80" />
+              <IconHistory size={14} className="opacity-80" />
               历史记录
             </Button>
           )}
-          {messages.length > 0 && (
-            <Button variant="ghost" size="sm" onClick={handleArchiveAndClear} className="text-xs">
-              新对话
-            </Button>
-          )}
+          <ThemeToggle />
         </div>
       </div>
 
@@ -330,7 +288,7 @@ export default function ChatPage() {
             <>
               <AgentAvatar name="?" size="xl" className="opacity-60" />
               <div className="text-sm font-medium text-muted-foreground">请先选择 Agent</div>
-              <p className="max-w-xs text-xs text-muted-foreground">从上方 Agent 选择框中选一位开始对话</p>
+              <p className="max-w-xs text-xs text-muted-foreground">点击左上角 Agent 名称，从下拉列表中选择一位开始对话</p>
             </>
           )}
         </div>
@@ -492,12 +450,12 @@ export default function ChatPage() {
           <div className="min-h-0 flex-1">
             <ScrollArea className="h-[calc(100vh-8rem)] px-2 py-2">
               {!currentAgent ? (
-                  <p className="px-3 py-8 text-center text-xs text-muted-foreground">请先选择 Agent</p>
-                ) : archivedList.length === 0 ? (
-                  <p className="px-3 py-8 text-center text-xs text-muted-foreground">
-                    暂无归档。发起对话后点击「新对话」即可保存本轮记录。
-                  </p>
-                ) : (
+                <p className="px-3 py-8 text-center text-xs text-muted-foreground">请先选择 Agent</p>
+              ) : archivedList.length === 0 ? (
+                <p className="px-3 py-8 text-center text-xs text-muted-foreground">
+                  暂无归档。发起对话后点击 Agent 旁的新对话按钮即可保存本轮记录。
+                </p>
+              ) : (
                 <ul className="flex flex-col gap-1">
                   {archivedList.map((item) => (
                     <li key={item.id} className="group relative">

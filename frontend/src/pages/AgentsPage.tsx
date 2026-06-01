@@ -21,6 +21,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
+import { ThemeToggle } from '@/components/chrome/ThemeToggle';
 import { cn } from '@/lib/cn';
 
 type FormState = { name: string; model: string; apiBase: string; apiKey: string };
@@ -363,27 +365,31 @@ export default function AgentsPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {/* Header */}
-      <div className="flex h-14 shrink-0 items-center justify-between border-b border-border/50 px-4">
-        <div className="flex items-center gap-3">
+      <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border/50 px-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <SidebarExpandTrigger />
           <h1 className="text-base font-medium tracking-tight text-foreground/90">Agent 管理</h1>
           <Badge variant="outline" className="text-[10px]">{agents.length}</Badge>
         </div>
-        <div className="flex gap-1 md:hidden">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-xs"
-            onClick={() => {
-              void refresh();
-              setMarketOpen(false);
-              setAddOpen(true);
-            }}
-          >
-            添加 Agent
-          </Button>
-          <Button variant="ghost" size="sm" className="text-xs" onClick={openMarket}>
-            市场
-          </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          <div className="flex gap-1 md:hidden">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => {
+                void refresh();
+                setMarketOpen(false);
+                setAddOpen(true);
+              }}
+            >
+              添加 Agent
+            </Button>
+            <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={openMarket}>
+              市场
+            </Button>
+          </div>
+          <ThemeToggle />
         </div>
       </div>
 

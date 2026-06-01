@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FinclawMark } from '../FinclawMark';
+import { AgentSwitcher } from '../AgentSwitcher';
 import { ChatContainer } from '../ChatContainer';
 import { InputArea } from '../InputArea';
 import { ErrorBoundary } from '../ErrorBoundary';
@@ -453,19 +454,14 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
             <div className="rss-ai-dock-agentbar">
               <label className="rss-ai-dock-agentbar-label">Agent</label>
               {agents.length > 0 ? (
-                <select
-                  className="rss-ai-dock-select"
-                  value={currentAgent ?? ''}
-                  onChange={(e) => selectAgent(e.target.value || null)}
-                  aria-label="选择 Agent"
-                >
-                  {!currentAgent && <option value="">请选择…</option>}
-                  {agents.map((name) => (
-                    <option key={name} value={name}>
-                      {name}
-                    </option>
-                  ))}
-                </select>
+                <AgentSwitcher
+                  agents={agents}
+                  value={currentAgent}
+                  onChange={selectAgent}
+                  placeholder="请选择…"
+                  showAvatar={false}
+                  triggerClassName="rss-ai-dock-select-trigger"
+                />
               ) : (
                 <span className="rss-ai-dock-agentbar-empty">
                   {agentsStatus === 'loading' ? '加载中…' : '尚未创建 Agent'}
@@ -836,7 +832,7 @@ const DOCK_CSS = `
   font-size: 12px;
   color: var(--fc-text-muted);
 }
-.rss-ai-dock-select {
+.rss-ai-dock-select-trigger {
   flex: 1;
   min-width: 0;
   font-size: 12px;
@@ -846,10 +842,8 @@ const DOCK_CSS = `
   border: 1px solid var(--fc-border-strong);
   background: var(--fc-bg-app);
   color: var(--fc-text);
-  outline: none;
-  appearance: none;
 }
-.rss-ai-dock-select:focus { border-color: rgba(36,104,242,0.45); }
+.rss-ai-dock-select-trigger:focus-visible { border-color: rgba(36,104,242,0.45); }
 .rss-ai-dock-close {
   width: 32px;
   height: 32px;
