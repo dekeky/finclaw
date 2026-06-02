@@ -61,6 +61,8 @@ export interface UseWebSocketReturn {
   isTyping: boolean;
   sendError: string | null;
   send: (content: string) => void;
+  /** 终止当前进行中的 Agent 回复 */
+  stop: () => void;
   clearMessages: () => void;
   /** 将归档/历史消息载入当前会话并写入本地草稿 */
   restoreMessages: (messages: ChatMessage[]) => void;
@@ -533,6 +535,25 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     []
   );
 
+  const stop = useCallback(() => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    if (typingFallbackRef.current) {
+      clearTimeout(typingFallbackRef.current);
+      typingFallbackRef.current = null;
+    }
+    setIsTyping(false);
+
+    const msg = {
+      type: 'message.cancel',
+      id: genId(),
+      session_id: sessionIdRef.current || undefined,
+    };
+    console.log('[Finclaw WS] Sending cancel:', JSON.stringify(msg));
+    ws.send(JSON.stringify(msg));
+  }, []);
+
   // url 变更或挂载/卸载时：重置连接；若有 persistAgentKey 则从本地恢复该 Agent 草稿
   useEffect(() => {
     mountedRef.current = true;
@@ -616,5 +637,5 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     };
   }, [reconnect]);
 
-  return { messages, status, isTyping, sendError, send, clearMessages, restoreMessages, reconnect };
+  return { messages, status, isTyping, sendError, send, stop, clearMessages, restoreMessages, reconnect };
 }

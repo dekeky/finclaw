@@ -6,9 +6,12 @@ interface InputAreaProps {
   placeholder?: string;
   /** 侧栏等场景：去掉快捷键说明、收紧留白 */
   compact?: boolean;
+  /** Agent 正在生成回复时显示停止按钮 */
+  isGenerating?: boolean;
+  onStop?: () => void;
 }
 
-export function InputArea({ onSend, disabled, placeholder, compact }: InputAreaProps) {
+export function InputArea({ onSend, disabled, placeholder, compact, isGenerating, onStop }: InputAreaProps) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -57,11 +60,28 @@ export function InputArea({ onSend, disabled, placeholder, compact }: InputAreaP
           rows={1}
           disabled={disabled}
         />
-        <button type="submit" style={btnStyle} disabled={disabled || !value.trim()}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="22" y1="2" x2="11" y2="13" />
-            <polygon points="22 2 15 22 11 13 2 9 22 2" />
-          </svg>
+        <button
+          type={isGenerating ? 'button' : 'submit'}
+          style={{
+            ...btnStyle,
+            ...(isGenerating
+              ? { background: 'var(--fc-text-muted)', color: 'var(--fc-bg-panel)' }
+              : {}),
+          }}
+          disabled={disabled || (!isGenerating && !value.trim())}
+          onClick={isGenerating ? onStop : undefined}
+          aria-label={isGenerating ? '停止生成' : '发送'}
+        >
+          {isGenerating ? (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="1.5" />
+            </svg>
+          ) : (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13" />
+              <polygon points="22 2 15 22 11 13 2 9 22 2" />
+            </svg>
+          )}
         </button>
       </div>
       {!compact && (

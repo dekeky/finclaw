@@ -1,4 +1,4 @@
-import{c as a}from"./index-TkwGB0vI.js";/**
+import{c as a}from"./index-CIJQmkGt.js";/**
  * @license @tabler/icons-react v3.44.0 - MIT
  *
  * This source code is licensed under the MIT license.

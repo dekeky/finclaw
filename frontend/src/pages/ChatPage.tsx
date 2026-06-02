@@ -45,7 +45,7 @@ export default function ChatPage() {
     void refresh();
   }, [refresh]);
 
-  const { messages, status, isTyping, sendError, send, clearMessages, restoreMessages, reconnect } = useChatSession();
+  const { messages, status, isTyping, sendError, send, stop, clearMessages, restoreMessages, reconnect } = useChatSession();
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyRev, setHistoryRev] = useState(0);
@@ -367,14 +367,27 @@ export default function ChatPage() {
                         }}
                       />
                       <button
-                        type="submit"
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-500 text-white transition-all hover:bg-violet-600 active:scale-95 disabled:opacity-50"
-                        disabled={status !== 'connected' || !value.trim()}
+                        type={isTyping ? 'button' : 'submit'}
+                        className={cn(
+                          'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white transition-all active:scale-95 disabled:opacity-50',
+                          isTyping
+                            ? 'bg-muted-foreground/80 hover:bg-muted-foreground'
+                            : 'bg-violet-500 hover:bg-violet-600',
+                        )}
+                        disabled={status !== 'connected' || (!isTyping && !value.trim())}
+                        onClick={isTyping ? stop : undefined}
+                        aria-label={isTyping ? '停止生成' : '发送'}
                       >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                          <line x1="22" y1="2" x2="11" y2="13" />
-                          <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                        </svg>
+                        {isTyping ? (
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                            <rect x="6" y="6" width="12" height="12" rx="1.5" />
+                          </svg>
+                        ) : (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="22" y1="2" x2="11" y2="13" />
+                            <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                          </svg>
+                        )}
                       </button>
                     </div>
                   </div>
