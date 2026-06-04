@@ -63,7 +63,6 @@ type FinClawChannel struct {
 	bufMu        sync.Mutex
 	config       *FinChannelConfig
 	closed       atomic.Bool
-	abortHandler func(sessionID string) error
 }
 
 func NewFinChannel(ctx context.Context, messageBus *bus.MessageBus, config *FinChannelConfig) *FinClawChannel {
@@ -92,11 +91,6 @@ func (fchannel *FinClawChannel) Close() {
 
 func (fchannel *FinClawChannel) isClosed() bool {
 	return fchannel.closed.Load()
-}
-
-// SetAbortHandler registers a callback invoked when the client sends message.cancel.
-func (fchannel *FinClawChannel) SetAbortHandler(fn func(sessionID string) error) {
-	fchannel.abortHandler = fn
 }
 
 func (fchannel *FinClawChannel) getSessionBuffer(sessionID string) *SessionBuffer {
@@ -349,13 +343,6 @@ func (fchannel *FinClawChannel) handleMessage(fconn *finConn, msg FinMessage) {
 		})
 		fchannel.handleMessageSend(fconn, msg)
 
-	case TypeMessageCancel:
-		logger.DebugCF("fin", "Processing message.cancel", map[string]any{
-			"conn_id":    fconn.id,
-			"session_id": msg.SessionID,
-		})
-		fchannel.handleMessageCancel(fconn, msg)
-
 	default:
 		logger.WarnCF("fin", "Unknown message type", map[string]any{
 			"conn_id": fconn.id,
@@ -411,53 +398,6 @@ func (fchannel *FinClawChannel) handleMessageSend(fconn *finConn, msg FinMessage
 		"session_id": sessionID,
 		"msg_id":     msg.ID,
 	})
-}
-
-func (fchannel *FinClawChannel) handleMessageCancel(fconn *finConn, msg FinMessage) {
-	sessionID := strings.TrimSpace(msg.SessionID)
-	if sessionID == "" {
-		sessionID = fconn.sessionID
-	}
-
-	if fchannel.abortHandler != nil {
-		if err := fchannel.abortHandler(sessionID); err != nil {
-			logger.InfoCF("fin", "Abort request ignored or failed", map[string]any{
-				"session_id": sessionID,
-				"conn_id":    fconn.id,
-				"error":      err.Error(),
-			})
-		} else {
-			logger.InfoCF("fin", "Agent turn aborted", map[string]any{
-				"session_id": sessionID,
-				"conn_id":    fconn.id,
-			})
-		}
-	}
-
-	fchannel.broadcastTypingStop(sessionID)
-}
-
-func (fchannel *FinClawChannel) broadcastTypingStop(sessionID string) {
-	response := map[string]any{
-		"type": TypeTypingStop,
-		"id":   uuid.New().String(),
-	}
-
-	fchannel.connsMu.RLock()
-	conns := fchannel.sessionConns[sessionID]
-	fchannel.connsMu.RUnlock()
-
-	for _, conn := range conns {
-		go func(c *finConn) {
-			if err := c.writeJson(response); err != nil {
-				logger.WarnCF("fin", "Failed to deliver typing_stop", map[string]any{
-					"conn_id":    c.id,
-					"session_id": sessionID,
-					"error":      err.Error(),
-				})
-			}
-		}(conn)
-	}
 }
 
 // truncate truncates a String to maxLen runes.

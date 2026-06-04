@@ -54,9 +54,6 @@ func (m *AgentManager) AddAgent(name string, agent Agent, msgBus *bus.MessageBus
 	m.finclawChannel[name] = finclawChannel
 
 	if loop, ok := agent.(*picoagent.AgentLoop); ok {
-		finclawChannel.SetAbortHandler(func(sessionID string) error {
-			return AbortFinSession(loop, sessionID)
-		})
 		if err := loop.MountHook(newFinReasoningHook(msgBus)); err != nil {
 			logger.WarnCF("agent", "Failed to mount fin reasoning hook", map[string]any{
 				"name":  name,

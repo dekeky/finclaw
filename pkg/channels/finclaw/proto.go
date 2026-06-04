@@ -10,9 +10,7 @@ const (
 	TypePong          FinMessageType = "pong"
 	TypeConnected     FinMessageType = "connected"
 	TypeError         FinMessageType = "error"
-	TypeMessageSend   FinMessageType = "message.send"
-	TypeMessageCancel FinMessageType = "message.cancel"
-	TypeTypingStop    FinMessageType = "typing.stop"
+	TypeMessageSend FinMessageType = "message.send"
 )
 
 type FinMessage struct {
