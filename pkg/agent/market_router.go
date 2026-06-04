@@ -41,6 +41,7 @@ func (mr *MarketRouter) ConfigRouter() {
 	group.GET("/templates/:name/file", mr.getTemplateFile)
 	group.GET("/templates/:name", mr.getTemplate)
 	group.POST("/install", mr.installTemplate)
+	group.POST("/upload", mr.uploadAgent)
 }
 
 func (mr *MarketRouter) listCategories(c *gin.Context) {
@@ -241,5 +242,76 @@ func (mr *MarketRouter) installTemplate(c *gin.Context) {
 		Template:      req.Template,
 		Kind:          result.Kind,
 		SkillDir:      result.SkillDir,
+	})
+}
+
+type uploadAgentRequest struct {
+	AgentName   string `json:"agentName" binding:"required"`
+	Category    string `json:"category,omitempty"`
+	Version     string `json:"version,omitempty"`
+	DisplayName string `json:"displayName,omitempty"`
+	Summary     string `json:"summary,omitempty"`
+	UploadToken string `json:"uploadToken,omitempty"`
+}
+
+type uploadAgentResp struct {
+	AgentName     string `json:"agentName"`
+	Category      string `json:"category"`
+	DisplayName   string `json:"displayName"`
+	Summary       string `json:"summary"`
+	LatestVersion string `json:"latestVersion"`
+}
+
+// POST /api/v1/market/upload — zip the agent workspace and upload to AgentHub.
+func (mr *MarketRouter) uploadAgent(c *gin.Context) {
+	userID := getUserID(c)
+	var req uploadAgentRequest
+	ginx.PanicIfNotNil(c.ShouldBindJSON(&req))
+
+	req.AgentName = strings.TrimSpace(req.AgentName)
+	if req.AgentName == "" {
+		ginx.NewRender(c, http.StatusBadRequest).Err(fmt.Errorf("agentName is required"))
+		return
+	}
+
+	// Upload token must be provided in the request body — not read from config file.
+	token := strings.TrimSpace(req.UploadToken)
+	if token == "" {
+		ginx.NewRender(c, http.StatusForbidden).Err(fmt.Errorf("upload token is required — please enter your AgentHub upload token in the dialog"))
+		return
+	}
+	uploadClient := mr.client.WithUploadToken(token)
+
+	internalKey := AgentKey(userID, req.AgentName)
+	if _, exists := mr.agentManager.Get(internalKey); !exists {
+		ginx.NewRender(c, http.StatusNotFound).Err(fmt.Errorf("agent %q not found", req.AgentName))
+		return
+	}
+
+	home := agentHomeDir(userID)
+	workspace := picoclaw.AgentWorkspacePath(home, req.AgentName)
+	if _, err := os.Stat(workspace); err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(fmt.Errorf("agent workspace not found"))
+		return
+	}
+
+	meta, err := uploadClient.UploadAgent(workspace, market.UploadAgentRequest{
+		AgentName:   req.AgentName,
+		Category:    req.Category,
+		Version:     req.Version,
+		DisplayName: req.DisplayName,
+		Summary:     req.Summary,
+	})
+	if err != nil {
+		ginx.NewRender(c, http.StatusBadGateway).Err(err)
+		return
+	}
+
+	ginx.NewRender(c, http.StatusCreated).Data(uploadAgentResp{
+		AgentName:     meta.AgentName,
+		Category:      meta.Category,
+		DisplayName:   meta.DisplayName,
+		Summary:       meta.Summary,
+		LatestVersion: meta.LatestVersion,
 	})
 }

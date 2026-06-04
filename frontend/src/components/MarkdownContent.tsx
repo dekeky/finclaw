@@ -97,8 +97,8 @@ export function MarkdownContent({
           const lang = match[1];
           return (
             <div className="not-prose my-3">
-              <div className="group/code relative overflow-hidden rounded-lg border border-border/60 bg-muted/30">
-                <div className="flex items-center justify-between border-b border-border/50 bg-muted/50 px-3 py-1.5">
+              <div className="group/code relative overflow-hidden rounded-lg border border-border/60 bg-muted/30 dark:bg-muted/50">
+                <div className="flex items-center justify-between border-b border-border/50 bg-muted/50 dark:bg-muted/70 px-3 py-1.5">
                   <span className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground">{lang}</span>
                   {copyableCode && (
                     <CopyCodeButton code={code} id={codeId} copied={copiedId === codeId} onCopy={handleCopy} />
@@ -120,7 +120,7 @@ export function MarkdownContent({
 
         return (
           <code
-            className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.9em] font-normal text-foreground before:content-none after:content-none"
+            className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.9em] font-normal text-foreground before:content-none after:content-none dark:bg-muted/80"
             {...props}
           >
             {children}
@@ -133,7 +133,7 @@ export function MarkdownContent({
             href={href}
             target="_blank"
             rel="noopener noreferrer"
-            className="font-medium text-violet-500 underline decoration-violet-500/30 underline-offset-2 transition-colors hover:text-violet-600"
+            className="font-medium text-violet-500 underline decoration-violet-500/30 underline-offset-2 transition-colors hover:text-violet-600 dark:text-violet-400 dark:hover:text-violet-300 dark:decoration-violet-400/30"
           >
             {children}
           </a>
@@ -230,6 +230,7 @@ export function MarkdownContent({
         'prose-pre:bg-transparent prose-pre:p-0',
         'prose-code:before:content-none prose-code:after:content-none',
         'prose-strong:font-semibold prose-strong:text-foreground',
+	        'prose-a:text-violet-500 dark:prose-a:text-violet-400',
         SIZE_CLASS[size],
         className,
       )}

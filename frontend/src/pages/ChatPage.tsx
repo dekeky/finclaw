@@ -5,6 +5,10 @@ import { ChatMainToolbar } from '@/components/chrome/ChatMainToolbar';
 import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
 import { ChatContainer } from '../components/ChatContainer';
+import {
+  ChatSlashHints,
+  handleSlashInputKeyDown,
+} from '@/components/ChatSlashHints';
 import { AgentAssetsSidebar, AGENT_ASSETS_EXPANDED_INSET } from '../components/AgentAssetsSidebar';
 import { CHAT_INPUT_GUTTER, CHAT_MAIN_COLUMN, CHAT_SCROLL_GUTTER } from '@/lib/chatLayout';
 import { DocFileTree } from '../components/DocFileTree';
@@ -45,7 +49,7 @@ export default function ChatPage() {
     void refresh();
   }, [refresh]);
 
-  const { messages, status, isTyping, sendError, send, stop, clearMessages, restoreMessages, reconnect } = useChatSession();
+  const { messages, status, isTyping, sendError, send, clearMessages, restoreMessages, reconnect } = useChatSession();
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyRev, setHistoryRev] = useState(0);
@@ -350,8 +354,8 @@ export default function ChatPage() {
             <div className={cn('shrink-0 border-t border-border/40', CHAT_INPUT_GUTTER)}>
               <div className={CHAT_MAIN_COLUMN}>
                 <form ref={formRef} onSubmit={(e) => { e.preventDefault(); handleSend(value); }}>
-                  <div className="relative rounded-2xl border border-border/60 bg-card p-1.5 pr-1 shadow-sm">
-                    <div className="relative flex items-end gap-2">
+                  <div className="relative overflow-visible rounded-2xl border border-border/60 bg-card p-1.5 pr-1 shadow-sm">
+                    <div className="flex items-end gap-2">
                       <textarea
                         className="min-h-[44px] w-full resize-none bg-transparent px-3 py-2.5 text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
                         placeholder={dock.selectedKeys.size > 0 ? '已选文章将自动附带到对话中...' : '输入你的问题...'}
@@ -360,41 +364,34 @@ export default function ChatPage() {
                         onChange={(e) => setValue(e.target.value)}
                         disabled={status !== 'connected'}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            handleSend(value);
-                          }
+                          handleSlashInputKeyDown(e, value, {
+                            onAutocomplete: (command) => setValue(command),
+                            onSend: () => handleSend(value),
+                          });
                         }}
                       />
                       <button
-                        type={isTyping ? 'button' : 'submit'}
-                        className={cn(
-                          'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white transition-all active:scale-95 disabled:opacity-50',
-                          isTyping
-                            ? 'bg-muted-foreground/80 hover:bg-muted-foreground'
-                            : 'bg-violet-500 hover:bg-violet-600',
-                        )}
-                        disabled={status !== 'connected' || (!isTyping && !value.trim())}
-                        onClick={isTyping ? stop : undefined}
-                        aria-label={isTyping ? '停止生成' : '发送'}
+                        type="submit"
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-500 text-white transition-all hover:bg-violet-600 active:scale-95 disabled:opacity-50"
+                        disabled={status !== 'connected' || !value.trim()}
+                        aria-label="发送"
                       >
-                        {isTyping ? (
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                            <rect x="6" y="6" width="12" height="12" rx="1.5" />
-                          </svg>
-                        ) : (
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="22" y1="2" x2="11" y2="13" />
-                            <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                          </svg>
-                        )}
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="22" y1="2" x2="11" y2="13" />
+                          <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                        </svg>
                       </button>
                     </div>
+                    <ChatSlashHints
+                      value={value}
+                      onPick={(command) => setValue(command)}
+                    />
                   </div>
                 </form>
                 <p className="mt-2 text-center text-[11px] text-muted-foreground">
                   <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">Enter</kbd> 发送 ·
-                  <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">Shift</kbd>+<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">Enter</kbd> 换行
+                  <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">Shift</kbd>+<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">Enter</kbd> 换行 ·
+                  输入 <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">/</kbd> 查看命令（如 <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">/stop</kbd> 中止生成）
                 </p>
                 <p className="mt-1 text-center text-[10px] text-muted-foreground/80">
                   对话内容会缓存在本浏览器（localStorage），刷新后仍可从当前 Agent 恢复。

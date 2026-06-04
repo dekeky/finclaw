@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Dialog } from 'radix-ui';
 import { useSearchParams } from 'react-router-dom';
-import { IconBuildingStore, IconCpu, IconFileDescription, IconPuzzle, IconTrash } from '@tabler/icons-react';
+import { IconBuildingStore, IconCpu, IconEye, IconEyeOff, IconFileDescription, IconPuzzle, IconTrash, IconUpload } from '@tabler/icons-react';
 import { useAgents } from '../state/agents';
 import {
   getAgent,
@@ -15,6 +16,7 @@ import { AgentPersonaEditor } from '../components/AgentPersonaEditor';
 import { AgentSkillsPanel, skillFileKey, type SkillFileTarget } from '../components/AgentSkillsPanel';
 import { DocReadingPanel } from '../components/DocReadingPanel';
 import { ModelConnectivityCheck } from '../components/ModelConnectivityCheck';
+import { uploadAgentToMarket } from '../api/agentMarket';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -36,6 +38,28 @@ const PRESETS = [
   { label: 'OpenAI GPT-4o', model: 'openai/gpt-4o', apiBase: 'https://api.openai.com/v1' },
   { label: 'Qwen Plus', model: 'qwen/qwen-plus', apiBase: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
 ];
+
+const MARKET_UPLOAD_TOKEN_KEY = 'finclaw.marketUploadToken';
+
+function loadCachedUploadToken(): string {
+  try {
+    return localStorage.getItem(MARKET_UPLOAD_TOKEN_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function saveCachedUploadToken(token: string) {
+  try {
+    if (token) {
+      localStorage.setItem(MARKET_UPLOAD_TOKEN_KEY, token);
+    } else {
+      localStorage.removeItem(MARKET_UPLOAD_TOKEN_KEY);
+    }
+  } catch {
+    /* private mode */
+  }
+}
 
 function ModelFieldHint() {
   return (
@@ -127,6 +151,13 @@ export default function AgentsPage() {
   const [skillFile, setSkillFile] = useState<SkillFileTarget | null>(null);
   const [skillsRefreshRev, setSkillsRefreshRev] = useState(0);
   const { confirm, dialog: confirmDialog } = useConfirm();
+
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [showUploadToken, setShowUploadToken] = useState(false);
+  const [uploadForm, setUploadForm] = useState({ displayName: '', summary: '', category: 'picoclaw', uploadToken: '' });
 
   const setDetailTab = useCallback((tab: DetailTab) => {
     saveDetailTab(tab);
@@ -333,6 +364,37 @@ export default function AgentsPage() {
     setForm((prev) => ({ ...prev, model: preset.model, apiBase: preset.apiBase }));
   const applyEditPreset = (preset: (typeof PRESETS)[number]) =>
     setEditForm((prev) => ({ ...prev, model: preset.model, apiBase: preset.apiBase }));
+
+  const openUploadDialog = useCallback(() => {
+    if (!detailName) return;
+    setUploadForm({ displayName: detailName, summary: '', category: 'picoclaw', uploadToken: loadCachedUploadToken() });
+    setUploadError(null);
+    setUploadSuccess(false);
+    setShowUploadToken(false);
+    setUploadOpen(true);
+  }, [detailName]);
+
+  const onUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!detailName || uploading) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      await uploadAgentToMarket({
+        agentName: detailName,
+        displayName: uploadForm.displayName.trim() || undefined,
+        summary: uploadForm.summary.trim() || undefined,
+        category: uploadForm.category || undefined,
+        uploadToken: uploadForm.uploadToken.trim() || undefined,
+      });
+      setUploadSuccess(true);
+      saveCachedUploadToken(uploadForm.uploadToken.trim());
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const onEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -576,6 +638,15 @@ export default function AgentsPage() {
                   <Button
                     variant="outline"
                     size="sm"
+                    onClick={openUploadDialog}
+                    disabled={uploading}
+                  >
+                    <IconUpload className="mr-1.5 h-3.5 w-3.5" stroke={1.75} />
+                    发布到市场
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
                     className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                     onClick={() => void onDelete(detailName)}
                     disabled={pendingDelete === detailName}
@@ -719,6 +790,134 @@ export default function AgentsPage() {
       )}
 
       {confirmDialog}
+
+      {/* Upload to Marketplace Dialog */}
+      <Dialog.Root
+        open={uploadOpen}
+        onOpenChange={(open) => {
+          if (!open && !uploading) {
+            setUploadOpen(false);
+            setUploadError(null);
+          }
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[1200] bg-black/45 supports-backdrop-filter:backdrop-blur-[2px] data-[state=open]:animate-in data-[state=open]:fade-in-0" />
+          <Dialog.Content
+            className={cn(
+              'fixed left-1/2 top-1/2 z-[1201] w-[min(92vw,32rem)] -translate-x-1/2 -translate-y-1/2',
+              'max-h-[min(90vh,640px)] overflow-y-auto rounded-xl border border-border bg-background p-5 shadow-2xl',
+              'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+            )}
+          >
+            <Dialog.Title className="text-base font-semibold text-foreground">发布到市场</Dialog.Title>
+            <Dialog.Description className="mt-1 text-xs text-muted-foreground">
+              将 Agent「{detailName}」的工作区打包上传至 AgentHub 市场。
+            </Dialog.Description>
+
+            {uploadSuccess ? (
+              <div className="mt-4 rounded-lg border border-green-500/30 bg-green-500/10 p-4 text-center">
+                <p className="text-sm font-medium text-green-700 dark:text-green-300">✅ 上传成功！</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  该 Agent 已发布到 AgentHub 市场，其他用户可以搜索并安装。
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => setUploadOpen(false)}
+                >
+                  完成
+                </Button>
+              </div>
+            ) : (
+              <form onSubmit={onUpload} className="mt-4 flex flex-col gap-4">
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Agent 名称</label>
+                  <Input value={detailName ?? ''} disabled className="bg-muted/50" />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">上传 Token</label>
+                  <div className="relative">
+                    <Input
+                      type={showUploadToken ? 'text' : 'password'}
+                      value={uploadForm.uploadToken}
+                      onChange={(e) => setUploadForm((s) => ({ ...s, uploadToken: e.target.value }))}
+                      placeholder="AgentHub 上传令牌（首次输入后自动缓存）"
+                      disabled={uploading}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onClick={() => setShowUploadToken((v) => !v)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground"
+                    >
+                      {showUploadToken ? <IconEyeOff className="h-4 w-4" /> : <IconEye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">显示名称</label>
+                  <Input
+                    value={uploadForm.displayName}
+                    onChange={(e) => setUploadForm((s) => ({ ...s, displayName: e.target.value }))}
+                    placeholder="在市场中显示的名称（默认为 Agent 名称）"
+                    disabled={uploading}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">简介</label>
+                  <textarea
+                    value={uploadForm.summary}
+                    onChange={(e) => setUploadForm((s) => ({ ...s, summary: e.target.value }))}
+                    placeholder="简短描述该 Agent 的功能与特点..."
+                    disabled={uploading}
+                    rows={3}
+                    className="flex w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">分类</label>
+                  <select
+                    value={uploadForm.category}
+                    onChange={(e) => setUploadForm((s) => ({ ...s, category: e.target.value }))}
+                    disabled={uploading}
+                    className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground"
+                  >
+                    <option value="picoclaw">picoclaw</option>
+                    <option value="openclaw">openclaw</option>
+                  </select>
+                </div>
+
+                {uploadError && (
+                  <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-destructive">
+                    ⚠️ {uploadError}
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 border-t border-border/50 pt-4">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={uploading}
+                    onClick={() => {
+                      setUploadOpen(false);
+                      setUploadError(null);
+                    }}
+                  >
+                    取消
+                  </Button>
+                  <Button type="submit" size="sm" disabled={uploading}>
+                    {uploading ? '上传中…' : '确认上传'}
+                  </Button>
+                </div>
+              </form>
+            )}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   );
 }

@@ -17,8 +17,8 @@ type FinclawConfig struct {
 }
 
 type FinclawConfigServer struct {
-	ServerAddr         string                    `toml:"serverAddr"`
-	RSSServerAddr      string                    `toml:"rssServerAddr"`
+	ServerAddr          string                    `toml:"serverAddr"`
+	RSSServerAddr       string                    `toml:"rssServerAddr"`
 	AgentHubAddr       string                    `toml:"agentHubAddr"`
 	FinClawChannelConf *finclaw.FinChannelConfig `toml:"finClawChannel"`
 }

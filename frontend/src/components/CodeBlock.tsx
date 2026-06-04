@@ -21,6 +21,12 @@ export default function CodeBlock({ code, lang, dark }: CodeBlockProps) {
         lineHeight: 1.55,
         background: 'transparent',
       }}
+      codeTagProps={{
+        style: {
+          // Ensure code text inherits proper color from the syntax theme
+          // rather than being overridden by prose styles
+        },
+      }}
     >
       {code}
     </SyntaxHighlighter>

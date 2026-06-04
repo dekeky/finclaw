@@ -138,3 +138,34 @@ export async function installMarketTemplate(
   if (!body) throw new Error('empty body');
   return body;
 }
+
+/** POST /api/v1/market/upload —— 将 Agent 工作区上传到 AgentHub 市场。 */
+export interface UploadAgentRequest {
+  agentName: string;
+  category?: string;
+  version?: string;
+  displayName?: string;
+  summary?: string;
+  uploadToken?: string;
+}
+
+export interface UploadAgentResult {
+  agentName: string;
+  category: string;
+  displayName: string;
+  summary: string;
+  latestVersion: string;
+}
+
+export async function uploadAgentToMarket(
+  req: UploadAgentRequest,
+): Promise<UploadAgentResult> {
+  const res = await fetch('/api/v1/market/upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(req),
+  });
+  const body = await parseGinx<UploadAgentResult | null>(res);
+  if (!body) throw new Error('empty body');
+  return body;
+}

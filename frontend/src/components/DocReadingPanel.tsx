@@ -110,8 +110,9 @@ const DOC_DOCK_CSS = `
   position: fixed; z-index: 1100;
   display: flex; flex-direction: column;
   border-radius: 12px;
-  border: 1px solid var(--fc-border-strong, rgba(120,120,140,0.25));
-  background: var(--fc-bg-raised, #fff);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--card-foreground);
   box-shadow: 0 8px 32px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
   overflow: hidden;
   animation: docDockIn 0.2s ease-out;
@@ -119,8 +120,8 @@ const DOC_DOCK_CSS = `
 .doc-dock-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 12px; height: 42px; min-height: 42px;
-  border-bottom: 1px solid var(--fc-border-strong, rgba(120,120,140,0.15));
-  background: var(--fc-bg-raised, #fafafa);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklch, var(--muted) 60%, var(--card));
   user-select: none;
 }
 .doc-dock-drag {
@@ -130,20 +131,20 @@ const DOC_DOCK_CSS = `
 .doc-dock-drag:active { cursor: grabbing; }
 .doc-dock-title {
   font-size: 13px; font-weight: 600;
-  color: var(--fc-text, #1a1a2e);
+  color: var(--foreground);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .doc-dock-close {
   display: flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; border-radius: 6px;
   background: transparent; border: none; cursor: pointer;
-  color: var(--fc-text, #666); font-size: 16px;
+  color: var(--muted-foreground); font-size: 16px;
   transition: background 0.12s, color 0.12s;
   flex-shrink: 0;
 }
 .doc-dock-close:hover {
-  background: var(--fc-border-strong, rgba(120,120,140,0.15));
-  color: var(--fc-text, #222);
+  background: var(--muted);
+  color: var(--foreground);
 }
 .doc-dock-resize {
   position: absolute; right: 0; bottom: 0;
@@ -155,8 +156,8 @@ const DOC_DOCK_CSS = `
   content: '';
   position: absolute; right: 4px; bottom: 4px;
   width: 8px; height: 8px;
-  border-right: 2px solid rgba(120,120,140,0.35);
-  border-bottom: 2px solid rgba(120,120,140,0.35);
+  border-right: 2px solid var(--border);
+  border-bottom: 2px solid var(--border);
 }
 
 @keyframes docDockIn {
@@ -180,8 +181,8 @@ const DOC_DOCK_CSS = `
 .doc-dock-toc-sidebar {
   flex-shrink: 0;
   width: 220px;
-  border-right: 1px solid var(--fc-border-strong, rgba(120,120,140,0.15));
-  background: var(--fc-bg-raised, #fafafa);
+  border-right: 1px solid var(--border);
+  background: color-mix(in oklch, var(--muted) 40%, var(--card));
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -202,15 +203,15 @@ const DOC_DOCK_CSS = `
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--fc-text-muted, #888);
+  color: var(--muted-foreground);
   padding: 10px 8px 8px 14px;
-  border-bottom: 1px solid var(--fc-border-strong, rgba(120,120,140,0.1));
+  border-bottom: 1px solid var(--border);
 }
 .doc-dock-toc-collapse {
   display: flex; align-items: center; justify-content: center;
   width: 22px; height: 22px; border-radius: 5px;
   background: transparent; border: none; cursor: pointer;
-  color: var(--fc-text-muted, #888);
+  color: var(--muted-foreground);
   flex-shrink: 0;
   transition: background 0.12s, color 0.12s;
 }
@@ -223,8 +224,8 @@ const DOC_DOCK_CSS = `
 .doc-dock-toc-rail {
   flex-shrink: 0;
   width: 34px;
-  border-right: 1px solid var(--fc-border-strong, rgba(120,120,140,0.15));
-  background: var(--fc-bg-raised, #fafafa);
+  border-right: 1px solid var(--border);
+  background: color-mix(in oklch, var(--muted) 40%, var(--card));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -235,7 +236,7 @@ const DOC_DOCK_CSS = `
   display: flex; align-items: center; justify-content: center;
   width: 28px; height: 30px; border-radius: 6px;
   background: transparent; border: none; cursor: pointer;
-  color: var(--fc-text-muted, #888);
+  color: var(--muted-foreground);
   transition: background 0.12s, color 0.12s;
 }
 .doc-dock-toc-expand:hover {
@@ -247,7 +248,7 @@ const DOC_DOCK_CSS = `
   text-orientation: upright;
   font-size: 10px;
   letter-spacing: 0.15em;
-  color: var(--fc-text-muted, #999);
+  color: var(--muted-foreground);
   user-select: none;
 }
 .doc-dock-toc-item {
@@ -260,7 +261,7 @@ const DOC_DOCK_CSS = `
   padding: 5px 12px 5px 12px;
   font-size: 12.5px;
   line-height: 1.5;
-  color: var(--fc-text-muted, #666);
+  color: var(--muted-foreground);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -269,7 +270,7 @@ const DOC_DOCK_CSS = `
 }
 .doc-dock-toc-item:hover {
   background: rgba(139,92,246,0.07);
-  color: var(--fc-text, #1a1a2e);
+  color: var(--foreground);
 }
 .doc-dock-toc-item--active {
   border-left-color: #8b5cf6;
