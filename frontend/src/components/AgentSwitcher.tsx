@@ -48,7 +48,7 @@ export function AgentSwitcher({
           aria-label={ariaLabel}
           className={cn(
             isInline &&
-              'h-auto max-w-none gap-0.5 border-0 bg-transparent px-2 py-1.5 text-[15px] font-medium shadow-none hover:bg-muted/50 data-[state=open]:bg-muted/50 focus-visible:ring-0 [&_svg]:size-4 [&_svg]:opacity-70',
+              'h-auto max-w-none gap-0.5 rounded-[min(var(--radius-md),10px)] border-0 bg-transparent px-2 py-1.5 text-[15px] font-medium shadow-none transition-all duration-150 hover:bg-violet-500/14 hover:text-violet-700 hover:shadow-[0_0_0_1px_rgba(139,92,246,0.22)] data-[state=open]:bg-violet-500/14 data-[state=open]:text-violet-700 data-[state=open]:shadow-[0_0_0_1px_rgba(139,92,246,0.22)] focus-visible:bg-violet-500/14 focus-visible:text-violet-700 focus-visible:ring-2 focus-visible:ring-violet-500/35 dark:hover:bg-violet-500/22 dark:hover:text-violet-300 dark:data-[state=open]:bg-violet-500/22 dark:data-[state=open]:text-violet-300 [&_svg]:size-4 [&_svg]:opacity-70',
             isSidebar &&
               'h-10 w-full rounded-xl border-0 bg-muted/55 px-2.5 shadow-none transition-colors hover:bg-muted/80 data-[state=open]:bg-muted focus-visible:ring-2 focus-visible:ring-ring/30 [&_svg]:opacity-60',
             !isInline &&

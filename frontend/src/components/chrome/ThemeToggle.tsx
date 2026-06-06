@@ -2,6 +2,7 @@ import { IconMoon, IconSun } from '@tabler/icons-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useTheme } from '@/context/ThemeContext';
+import { TOOLBAR_ICON_BUTTON_CLASS } from '@/lib/toolbarButton';
 
 export function ThemeToggle() {
   const { scheme, toggle } = useTheme();
@@ -14,7 +15,7 @@ export function ThemeToggle() {
           type="button"
           variant="ghost"
           size="icon-sm"
-          className="size-8 text-muted-foreground"
+          className={TOOLBAR_ICON_BUTTON_CLASS}
           aria-label={label}
           onClick={() => toggle()}
         >

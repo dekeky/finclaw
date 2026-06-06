@@ -5,13 +5,11 @@ import { MarkdownContent } from './MarkdownContent';
 import { AGGREGATED_TOOL_FEEDBACK_JOIN, isPicoclawToolFeedbackContent } from '../utils/foldPicoclawToolFeedback';
 import { splitAssistantContent } from '../utils/splitAssistantContent';
 import * as Collapsible from '@radix-ui/react-collapsible';
-import { AgentAvatar } from './AgentAvatar';
 
 const TOOL_EMOJI = '\u{1F527}';
 
 interface MessageBubbleProps {
   message: ChatMessage;
-  agentName: string;
   variant?: 'default' | 'dock';
   toolOutputActive?: boolean;
   thoughtOutputActive?: boolean;
@@ -400,7 +398,7 @@ function ThinkingPanel({
   );
 }
 
-export function MessageBubble({ message, agentName, toolOutputActive, thoughtOutputActive }: MessageBubbleProps) {
+export function MessageBubble({ message, toolOutputActive, thoughtOutputActive }: MessageBubbleProps) {
   const time = message.timestamp.toLocaleTimeString('zh-CN', {
     hour: '2-digit',
     minute: '2-digit',
@@ -433,7 +431,7 @@ export function MessageBubble({ message, agentName, toolOutputActive, thoughtOut
     );
 
     return (
-      <div className="ml-10 flex min-w-0 w-full animate-in flex-col gap-1 duration-200 fade-in-0 slide-in-from-bottom-1">
+      <div className="flex min-w-0 w-full animate-in flex-col gap-1 duration-200 fade-in-0 slide-in-from-bottom-1">
         {panel}
         <span className="px-1 font-mono text-[10px] text-muted-foreground/60">{time}</span>
       </div>
@@ -442,17 +440,9 @@ export function MessageBubble({ message, agentName, toolOutputActive, thoughtOut
 
   return (
     <div
-      className={`flex w-full gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} animate-in duration-300 fade-in-0 slide-in-from-bottom-2`}
+      className={`flex w-full animate-in duration-300 fade-in-0 slide-in-from-bottom-2 ${isUser ? 'justify-end' : 'justify-start'}`}
     >
-      {isUser ? (
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-violet-600 text-xs font-semibold text-white shadow-sm shadow-violet-500/25">
-          我
-        </div>
-      ) : (
-        <AgentAvatar name={agentName} />
-      )}
-
-      <div className={`flex flex-col gap-1.5 ${isUser ? 'max-w-[85%] items-end' : 'min-w-0 flex-1 items-start'}`}>
+      <div className={`flex flex-col gap-1.5 ${isUser ? 'max-w-[85%] items-end' : 'min-w-0 w-full items-start'}`}>
         {isUser ? (
           <div className="rounded-2xl rounded-tr-sm bg-violet-500 px-4 py-3 text-[15px] leading-relaxed text-white">
             <span>{message.content}</span>

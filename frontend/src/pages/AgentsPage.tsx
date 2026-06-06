@@ -11,6 +11,8 @@ import {
   type AgentDetailBody,
 } from '../api/agents';
 import { AgentAvatar } from '../components/AgentAvatar';
+import { AgentCreateDialog } from '../components/AgentCreateDialog';
+import { isAgentModelSetupValid, type ReuseAgentSourceMeta } from '../components/AgentModelSetupSection';
 import { AgentMarketPanel } from '../components/AgentMarketPanel';
 import { AgentPersonaEditor } from '../components/AgentPersonaEditor';
 import { AgentSkillsPanel, skillFileKey, type SkillFileTarget } from '../components/AgentSkillsPanel';
@@ -25,19 +27,14 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
+import { AGENT_MODEL_PRESETS } from '@/lib/agentModelPresets';
 import { cn } from '@/lib/cn';
 
 type FormState = { name: string; model: string; apiBase: string; apiKey: string };
 type EditFormState = { model: string; apiBase: string; apiKey: string };
+type CredMode = 'reuse' | 'manual';
 const EMPTY_FORM: FormState = { name: '', model: '', apiBase: '', apiKey: '' };
 const EMPTY_EDIT_FORM: EditFormState = { model: '', apiBase: '', apiKey: '' };
-
-const PRESETS = [
-  { label: 'DeepSeek Chat', model: 'deepseek/deepseek-chat', apiBase: 'https://api.deepseek.com/v1' },
-  { label: 'DeepSeek Reasoner', model: 'deepseek/deepseek-reasoner', apiBase: 'https://api.deepseek.com/v1' },
-  { label: 'OpenAI GPT-4o', model: 'openai/gpt-4o', apiBase: 'https://api.openai.com/v1' },
-  { label: 'Qwen Plus', model: 'qwen/qwen-plus', apiBase: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-];
 
 const MARKET_UPLOAD_TOKEN_KEY = 'finclaw.marketUploadToken';
 
@@ -133,6 +130,13 @@ export default function AgentsPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [marketOpen, setMarketOpen] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [credMode, setCredMode] = useState<CredMode>('manual');
+  const [reuseAgent, setReuseAgent] = useState('');
+  const [reuseMeta, setReuseMeta] = useState<ReuseAgentSourceMeta>({
+    source: null,
+    loading: false,
+    error: null,
+  });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
@@ -192,11 +196,26 @@ export default function AgentsPage() {
     });
   }, [agents, currentAgent]);
 
-  const detailName = addOpen || marketOpen ? null : selectedName;
+  const detailName = marketOpen ? null : selectedName;
 
   const openMarket = useCallback(() => {
     setAddOpen(false);
     setMarketOpen(true);
+  }, []);
+
+  const openAddForm = useCallback(() => {
+    void refresh();
+    setMarketOpen(false);
+    setForm(EMPTY_FORM);
+    setCredMode(agents.length > 0 ? 'reuse' : 'manual');
+    setReuseAgent(agents[0] ?? '');
+    setReuseMeta({ source: null, loading: false, error: null });
+    setSubmitError(null);
+    setAddOpen(true);
+  }, [agents, refresh]);
+
+  const handleReuseMetaChange = useCallback((meta: ReuseAgentSourceMeta) => {
+    setReuseMeta(meta);
   }, []);
 
   const handleTemplateInstalled = useCallback(
@@ -299,10 +318,20 @@ export default function AgentsPage() {
     return () => { cancelled = true; };
   }, [detailName]);
 
-  const formValid = useMemo(
-    () => form.name.trim() && form.model.trim() && form.apiBase.trim() && form.apiKey.trim(),
-    [form],
+  const addNameConflict = useMemo(
+    () => form.name.trim().length > 0 && agents.includes(form.name.trim()),
+    [form.name, agents],
   );
+
+  const formValid = useMemo(() => {
+    if (!form.name.trim() || addNameConflict) return false;
+    return isAgentModelSetupValid(
+      credMode,
+      { model: form.model, apiBase: form.apiBase, apiKey: form.apiKey },
+      reuseMeta,
+      reuseAgent,
+    );
+  }, [form, credMode, reuseAgent, reuseMeta, addNameConflict]);
 
   const editFormValid = useMemo(() => {
     const hasStoredKey = editBaseline?.model_provider.has_api_key === true;
@@ -322,16 +351,22 @@ export default function AgentsPage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      await createAgent({
-        name: form.name.trim(),
-        model_provider: {
-          model: form.model.trim(),
-          api_base: form.apiBase.trim(),
-          api_key: form.apiKey.trim(),
-        },
-      });
+      const req =
+        credMode === 'reuse'
+          ? { name: form.name.trim(), from_agent: reuseAgent }
+          : {
+              name: form.name.trim(),
+              model_provider: {
+                model: form.model.trim(),
+                api_base: form.apiBase.trim(),
+                api_key: form.apiKey.trim(),
+              },
+            };
+      const createdName = form.name.trim();
+      await createAgent(req);
       setForm(EMPTY_FORM);
       setAddOpen(false);
+      setSelectedName(createdName);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -360,9 +395,7 @@ export default function AgentsPage() {
     }
   };
 
-  const applyPreset = (preset: (typeof PRESETS)[number]) =>
-    setForm((prev) => ({ ...prev, model: preset.model, apiBase: preset.apiBase }));
-  const applyEditPreset = (preset: (typeof PRESETS)[number]) =>
+  const applyEditPreset = (preset: (typeof AGENT_MODEL_PRESETS)[number]) =>
     setEditForm((prev) => ({ ...prev, model: preset.model, apiBase: preset.apiBase }));
 
   const openUploadDialog = useCallback(() => {
@@ -439,11 +472,7 @@ export default function AgentsPage() {
               variant="ghost"
               size="sm"
               className="h-8 text-xs"
-              onClick={() => {
-                void refresh();
-                setMarketOpen(false);
-                setAddOpen(true);
-              }}
+              onClick={openAddForm}
             >
               添加 Agent
             </Button>
@@ -479,13 +508,12 @@ export default function AgentsPage() {
                     <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">{sec.key}</div>
                     {sec.names.map((name) => {
                       const chatting = name === currentAgent;
-                      const selected = !addOpen && !marketOpen && name === selectedName;
+                      const selected = !marketOpen && name === selectedName;
                       return (
                         <button
                           key={name}
                           type="button"
                           onClick={() => {
-                            setAddOpen(false);
                             setMarketOpen(false);
                             setSelectedName(name);
                           }}
@@ -511,11 +539,7 @@ export default function AgentsPage() {
               variant="outline"
               size="sm"
               className="w-full text-xs"
-              onClick={() => {
-                void refresh();
-                setMarketOpen(false);
-                setAddOpen(true);
-              }}
+              onClick={openAddForm}
             >
               添加 Agent
             </Button>
@@ -539,64 +563,6 @@ export default function AgentsPage() {
               onClose={() => setMarketOpen(false)}
               onInstalled={(name) => void handleTemplateInstalled(name)}
             />
-          ) : addOpen ? (
-            <ScrollArea className="flex-1">
-              <div className="p-6">
-                <div className="mb-6">
-                  <h2 className="text-lg font-semibold text-foreground">添加 Agent</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">创建 Agent 并绑定模型后即可使用。</p>
-                </div>
-
-                <div className="mb-4 flex flex-wrap gap-2">
-                  {PRESETS.map((p) => (
-                    <button key={p.label} type="button" onClick={() => applyPreset(p)} className="rounded-full border border-violet-500/20 bg-violet-500/5 px-3 py-1 text-xs text-violet-600 transition-colors hover:bg-violet-500/10">
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-
-                <form onSubmit={onSubmit} className="flex flex-col gap-4">
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <label className="mb-1.5 block text-xs font-medium text-muted-foreground">显示名称 *</label>
-                      <Input value={form.name} onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))} placeholder="例如：deepseek-default" />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="mb-1.5 block text-xs font-medium text-muted-foreground">模型 *</label>
-                      <Input
-                        value={form.model}
-                        onChange={(e) => setForm((s) => ({ ...s, model: e.target.value }))}
-                        placeholder="deepseek/deepseek-chat"
-                        className="font-mono text-sm"
-                      />
-                      <ModelFieldHint />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-xs font-medium text-muted-foreground">api_base *</label>
-                      <Input value={form.apiBase} onChange={(e) => setForm((s) => ({ ...s, apiBase: e.target.value }))} placeholder="https://api.deepseek.com/v1" />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">api_key *</label>
-                    <Input type="password" value={form.apiKey} onChange={(e) => setForm((s) => ({ ...s, apiKey: e.target.value }))} placeholder="sk-..." />
-                    <p className="mt-1 text-[11px] text-muted-foreground">密钥仅用于保存到服务端，不会留在浏览器中。</p>
-                  </div>
-                  <ModelConnectivityCheck
-                    fields={{
-                      model: form.model,
-                      apiBase: form.apiBase,
-                      apiKey: form.apiKey,
-                    }}
-                    disabled={submitting}
-                  />
-                  {submitError && <p className="text-xs text-destructive">{submitError}</p>}
-                  <div className="flex justify-end gap-2">
-                    <Button type="button" variant="ghost" size="sm" onClick={() => setForm(EMPTY_FORM)} disabled={submitting}>清空</Button>
-                    <Button type="submit" size="sm" disabled={!formValid || submitting}>{submitting ? '添加中…' : '保存'}</Button>
-                  </div>
-                </form>
-              </div>
-            </ScrollArea>
           ) : detailName ? (
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/50 px-4 py-2.5">
@@ -717,7 +683,7 @@ export default function AgentsPage() {
                         ) : editBaseline ? (
                           <>
                             <div className="mb-3 flex flex-wrap gap-2">
-                              {PRESETS.map((p) => (
+                              {AGENT_MODEL_PRESETS.map((p) => (
                                 <button key={p.label} type="button" onClick={() => applyEditPreset(p)} className="rounded-full border border-violet-500/20 bg-violet-500/5 px-2 py-1 text-[10px] text-violet-600 hover:bg-violet-500/10">
                                   {p.label}
                                 </button>
@@ -790,6 +756,28 @@ export default function AgentsPage() {
       )}
 
       {confirmDialog}
+
+      <AgentCreateDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        title="添加 Agent"
+        existingAgents={agents}
+        name={form.name}
+        onNameChange={(name) => setForm((s) => ({ ...s, name }))}
+        nameConflict={addNameConflict}
+        credMode={credMode}
+        onCredModeChange={setCredMode}
+        reuseAgent={reuseAgent}
+        onReuseAgentChange={setReuseAgent}
+        manual={{ model: form.model, apiBase: form.apiBase, apiKey: form.apiKey }}
+        onManualChange={(patch) => setForm((s) => ({ ...s, ...patch }))}
+        onReuseMetaChange={handleReuseMetaChange}
+        busy={submitting}
+        submitDisabled={!formValid}
+        error={submitError}
+        onSubmit={onSubmit}
+        onCancel={() => setSubmitError(null)}
+      />
 
       {/* Upload to Marketplace Dialog */}
       <Dialog.Root

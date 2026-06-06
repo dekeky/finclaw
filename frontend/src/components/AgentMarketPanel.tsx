@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Dialog } from 'radix-ui';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { IconArrowLeft, IconRefresh, IconDownload, IconPackage, IconFileDescription } from '@tabler/icons-react';
 import {
   listMarketCategories,
@@ -11,9 +10,14 @@ import {
   type MarketTemplate,
   type MarketTemplateDetail,
 } from '../api/agentMarket';
+import { AgentCreateDialog } from './AgentCreateDialog';
+import {
+  isAgentModelSetupValid,
+  type AgentModelCredMode,
+  type ReuseAgentSourceMeta,
+} from './AgentModelSetupSection';
 import { MarketFileTree } from './MarketFileTree';
 import { DocReadingPanel } from './DocReadingPanel';
-import { ModelConnectivityCheck } from './ModelConnectivityCheck';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -21,16 +25,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/cn';
 
-const PRESETS = [
-  { label: 'DeepSeek Chat', model: 'deepseek/deepseek-chat', apiBase: 'https://api.deepseek.com/v1' },
-  { label: 'DeepSeek Reasoner', model: 'deepseek/deepseek-reasoner', apiBase: 'https://api.deepseek.com/v1' },
-  { label: 'OpenAI GPT-4o', model: 'openai/gpt-4o', apiBase: 'https://api.openai.com/v1' },
-  { label: 'Qwen Plus', model: 'qwen/qwen-plus', apiBase: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-];
-
 const LAST_MODEL_KEY = 'finclaw.market.lastModel';
-
-type CredMode = 'manual' | 'reuse';
 
 type InstallForm = { name: string; model: string; apiBase: string; apiKey: string };
 const EMPTY_INSTALL: InstallForm = { name: '', model: '', apiBase: '', apiKey: '' };
@@ -83,8 +78,9 @@ interface BlockedReasonArgs {
   form: InstallForm;
   existingAgents: string[];
   installable: boolean;
-  credMode: CredMode;
+  credMode: AgentModelCredMode;
   reuseAgent: string;
+  reuseMeta: ReuseAgentSourceMeta;
 }
 
 function installBlockedReason({
@@ -93,20 +89,32 @@ function installBlockedReason({
   installable,
   credMode,
   reuseAgent,
+  reuseMeta,
 }: BlockedReasonArgs): string | null {
   if (!installable) {
     return '该模板包不可安装：需包含 AGENT.md、SKILL.md 或 workspace/ 目录。';
   }
   const name = form.name.trim();
-  if (!name) return '请填写 Agent 名称。';
+  if (!name) return '请为 Agent 命名。';
   if (existingAgents.includes(name)) return '已存在同名 Agent，请换一个名称。';
-  if (credMode === 'reuse') {
-    if (!reuseAgent) return '请选择要复用模型配置的 Agent。';
-    return null;
+  if (
+    !isAgentModelSetupValid(
+      credMode,
+      { model: form.model, apiBase: form.apiBase, apiKey: form.apiKey },
+      reuseMeta,
+      reuseAgent,
+    )
+  ) {
+    if (credMode === 'reuse') {
+      if (reuseMeta.loading) return '正在加载来源 Agent 模型配置…';
+      if (reuseMeta.error) return reuseMeta.error;
+      if (!reuseMeta.source?.model_provider.has_api_key) return '来源 Agent 未配置 API Key。';
+      return '请选择有效的来源 Agent。';
+    }
+    if (!form.model.trim()) return '请填写模型。';
+    if (!form.apiBase.trim()) return '请填写 api_base。';
+    if (!form.apiKey.trim()) return '请填写 api_key。';
   }
-  if (!form.model.trim()) return '请填写模型（可点上方预设快速填入）。';
-  if (!form.apiBase.trim()) return '请填写 api_base。';
-  if (!form.apiKey.trim()) return '请填写 api_key。';
   return null;
 }
 
@@ -131,8 +139,13 @@ export function AgentMarketPanel({ existingAgents, onClose, onInstalled }: Agent
   const [openFilePath, setOpenFilePath] = useState<string | null>(null);
 
   const [version, setVersion] = useState('');
-  const [credMode, setCredMode] = useState<CredMode>('manual');
+  const [credMode, setCredMode] = useState<AgentModelCredMode>('manual');
   const [reuseAgent, setReuseAgent] = useState('');
+  const [reuseMeta, setReuseMeta] = useState<ReuseAgentSourceMeta>({
+    source: null,
+    loading: false,
+    error: null,
+  });
   const [form, setForm] = useState<InstallForm>(EMPTY_INSTALL);
   const [installDialogOpen, setInstallDialogOpen] = useState(false);
   const [installing, setInstalling] = useState(false);
@@ -209,6 +222,10 @@ export function AgentMarketPanel({ existingAgents, onClose, onInstalled }: Agent
     [detail],
   );
 
+  const handleReuseMetaChange = useCallback((meta: ReuseAgentSourceMeta) => {
+    setReuseMeta(meta);
+  }, []);
+
   const blockedReason = useMemo(
     () =>
       installBlockedReason({
@@ -217,8 +234,9 @@ export function AgentMarketPanel({ existingAgents, onClose, onInstalled }: Agent
         installable: templateInstallable,
         credMode,
         reuseAgent,
+        reuseMeta,
       }),
-    [form, existingAgents, templateInstallable, credMode, reuseAgent],
+    [form, existingAgents, templateInstallable, credMode, reuseAgent, reuseMeta],
   );
 
   const formValid = blockedReason === null;
@@ -241,7 +259,7 @@ export function AgentMarketPanel({ existingAgents, onClose, onInstalled }: Agent
     [selected, version],
   );
 
-  const onInstall = async (e: React.FormEvent) => {
+  const onInstall = async (e: FormEvent) => {
     e.preventDefault();
     if (!selected || !formValid || installing) return;
     setInstalling(true);
@@ -277,6 +295,7 @@ export function AgentMarketPanel({ existingAgents, onClose, onInstalled }: Agent
   const openInstallDialog = () => {
     if (!templateInstallable) return;
     setInstallError(null);
+    setReuseMeta({ source: null, loading: false, error: null });
     setInstallDialogOpen(true);
   };
 
@@ -488,165 +507,29 @@ export function AgentMarketPanel({ existingAgents, onClose, onInstalled }: Agent
       />
     )}
 
-    <Dialog.Root
+    <AgentCreateDialog
       open={installDialogOpen}
-      onOpenChange={(open) => {
-        if (!open && !installing) {
-          setInstallDialogOpen(false);
-          setInstallError(null);
-        }
-      }}
-    >
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[1200] bg-black/45 supports-backdrop-filter:backdrop-blur-[2px] data-[state=open]:animate-in data-[state=open]:fade-in-0" />
-        <Dialog.Content
-          className={cn(
-            'fixed left-1/2 top-1/2 z-[1201] w-[min(92vw,32rem)] -translate-x-1/2 -translate-y-1/2',
-            'max-h-[min(90vh,640px)] overflow-y-auto rounded-xl border border-border bg-background p-5 shadow-2xl',
-            'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
-          )}
-        >
-          <Dialog.Title className="text-base font-semibold text-foreground">设置 Agent 模型</Dialog.Title>
-          <Dialog.Description className="mt-1 text-xs text-muted-foreground">
-            基于模板「{selected?.displayName || selected?.agentName}」创建，请填写 Agent 名称与模型配置。
-          </Dialog.Description>
-
-          <form onSubmit={onInstall} className="mt-4 flex flex-col gap-4">
-            {existingAgents.length > 0 && (
-              <div className="inline-flex w-fit rounded-lg border border-border bg-muted/40 p-0.5 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setCredMode('reuse')}
-                  className={cn(
-                    'rounded-md px-3 py-1 transition-colors',
-                    credMode === 'reuse' ? 'bg-violet-500 text-white' : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  复用已有 Agent 模型
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCredMode('manual')}
-                  className={cn(
-                    'rounded-md px-3 py-1 transition-colors',
-                    credMode === 'manual' ? 'bg-violet-500 text-white' : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  设置新模型
-                </button>
-              </div>
-            )}
-
-            {credMode === 'manual' && (
-              <div className="flex flex-wrap gap-2">
-                {PRESETS.map((p) => (
-                  <button
-                    key={p.label}
-                    type="button"
-                    onClick={() => setForm((s) => ({ ...s, model: p.model, apiBase: p.apiBase }))}
-                    className="rounded-full border border-violet-500/20 bg-violet-500/5 px-3 py-1 text-xs text-violet-600 transition-colors hover:bg-violet-500/10"
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <div className="grid gap-4">
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Agent 名称 *</label>
-                <Input
-                  value={form.name}
-                  onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))}
-                  placeholder="例如：my-weather-agent"
-                  disabled={installing}
-                />
-                {nameConflict && <p className="mt-1 text-[11px] text-destructive">已存在同名 Agent，请换一个名称。</p>}
-              </div>
-              {credMode === 'reuse' ? (
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">复用模型配置（来自 Agent）*</label>
-                  <select
-                    value={reuseAgent}
-                    onChange={(e) => setReuseAgent(e.target.value)}
-                    disabled={installing}
-                    className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground"
-                  >
-                    {existingAgents.map((a) => (
-                      <option key={a} value={a}>{a}</option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-[11px] text-muted-foreground">将沿用该 Agent 的模型、api_base 与已保存的密钥。</p>
-                </div>
-              ) : (
-                <>
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">模型 *</label>
-                    <Input
-                      value={form.model}
-                      onChange={(e) => setForm((s) => ({ ...s, model: e.target.value }))}
-                      placeholder="deepseek/deepseek-chat"
-                      className="font-mono text-sm"
-                      disabled={installing}
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">api_base *</label>
-                    <Input
-                      value={form.apiBase}
-                      onChange={(e) => setForm((s) => ({ ...s, apiBase: e.target.value }))}
-                      placeholder="https://api.deepseek.com/v1"
-                      disabled={installing}
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">api_key *</label>
-                    <Input
-                      type="password"
-                      value={form.apiKey}
-                      onChange={(e) => setForm((s) => ({ ...s, apiKey: e.target.value }))}
-                      placeholder="sk-..."
-                      disabled={installing}
-                    />
-                  </div>
-                  <ModelConnectivityCheck
-                    fields={{
-                      model: form.model,
-                      apiBase: form.apiBase,
-                      apiKey: form.apiKey,
-                    }}
-                    disabled={installing}
-                  />
-                </>
-              )}
-            </div>
-
-            {installError && <p className="text-xs text-destructive">{installError}</p>}
-            {blockedReason && !installError && !installing && (
-              <p className="text-xs text-muted-foreground">{blockedReason}</p>
-            )}
-
-            <div className="flex justify-end gap-2 border-t border-border/50 pt-4">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={installing}
-                onClick={() => {
-                  setInstallDialogOpen(false);
-                  setInstallError(null);
-                }}
-              >
-                取消
-              </Button>
-              <Button type="submit" size="sm" disabled={!formValid || installing}>
-                {installing ? '创建中…' : '确认创建'}
-              </Button>
-            </div>
-          </form>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+      onOpenChange={setInstallDialogOpen}
+      title="从模板创建 Agent"
+      description={`模板：${selected?.displayName || selected?.agentName || ''}`}
+      existingAgents={existingAgents}
+      name={form.name}
+      onNameChange={(name) => setForm((s) => ({ ...s, name }))}
+      nameConflict={nameConflict}
+      credMode={credMode}
+      onCredModeChange={setCredMode}
+      reuseAgent={reuseAgent}
+      onReuseAgentChange={setReuseAgent}
+      manual={{ model: form.model, apiBase: form.apiBase, apiKey: form.apiKey }}
+      onManualChange={(patch) => setForm((s) => ({ ...s, ...patch }))}
+      onReuseMetaChange={handleReuseMetaChange}
+      busy={installing}
+      submitDisabled={!formValid}
+      error={installError}
+      hint={blockedReason}
+      onSubmit={onInstall}
+      onCancel={() => setInstallError(null)}
+    />
   </>
   );
 }

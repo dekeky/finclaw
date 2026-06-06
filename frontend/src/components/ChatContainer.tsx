@@ -5,7 +5,6 @@ import { formatElapsedSeconds, useElapsedSeconds } from '../hooks/useElapsedSeco
 import { isToolMessage } from '../utils/foldPicoclawToolFeedback';
 import { isThoughtMessage } from '../utils/foldThoughtMessages';
 import { splitAssistantContent } from '../utils/splitAssistantContent';
-import { AgentAvatar } from './AgentAvatar';
 import { ChatMascot } from './ChatMascot';
 
 const DOCK_QUICK_PROMPTS = [
@@ -19,7 +18,7 @@ interface ChatContainerProps {
   messages: ChatMessage[];
   isTyping: boolean;
   onClear: () => void;
-  /** 当前对话 Agent，用于助手头像字母与配色 */
+  /** 当前对话 Agent，用于空状态文案 */
   agentName?: string | null;
   variant?: 'default' | 'dock';
   onQuickPrompt?: (text: string) => void;
@@ -70,15 +69,11 @@ export function ChatContainer({
     if (variant === 'dock') {
       return (
         <div className="flex flex-1 flex-col items-center justify-center px-6 py-8 text-center">
-          {agentName ? (
-            <AgentAvatar name={agentName} size="lg" className="mb-3 shadow-md shadow-violet-500/15" />
-          ) : (
-            <ChatMascot
-              size={72}
-              decorative
-              className="mb-3 rounded-2xl shadow-md ring-2 ring-violet-500/15"
-            />
-          )}
+          <ChatMascot
+            size={72}
+            decorative
+            className="mb-3 rounded-2xl shadow-md ring-2 ring-violet-500/15"
+          />
           <h3 className="mb-2 text-base font-medium text-foreground">想问点什么？</h3>
           <p className="mb-4 max-w-xs text-xs text-muted-foreground leading-relaxed">
             可直接输入问题；在资讯列表勾选文章后提问，会自动带上原文链接。
@@ -101,16 +96,7 @@ export function ChatContainer({
       );
     }
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-16">
-        {agentName ? (
-          <AgentAvatar name={agentName} size="xl" className="shadow-lg shadow-violet-500/20" />
-        ) : (
-          <ChatMascot
-            size={112}
-            decorative
-            className="rounded-3xl shadow-lg shadow-violet-500/15 ring-2 ring-violet-500/20"
-          />
-        )}
+      <div className="flex flex-1 flex-col items-center justify-center px-6 py-16">
         <div className="text-center">
           <h2 className="mb-2 text-xl font-medium text-foreground/90">
             {agentName ? `与 ${agentName} 开始对话` : '欢迎使用 Finclaw'}
@@ -145,7 +131,6 @@ export function ChatContainer({
         <MessageBubble
           key={msg.id}
           message={msg}
-          agentName={agentName ?? 'Agent'}
           variant={variant === 'dock' ? 'dock' : 'default'}
           toolOutputActive={index === messages.length - 1 && isToolMessage(msg)}
           thoughtOutputActive={isThoughtOutputActive(msg, index)}
@@ -153,9 +138,8 @@ export function ChatContainer({
       ))}
 
       {showTypingBubble && (
-        <div className="flex w-full items-start gap-3">
-          <AgentAvatar name={agentName ?? 'Agent'} />
-          <div className="min-w-0 flex-1 rounded-2xl rounded-tl-sm border border-border/60 bg-card px-4 py-3">
+        <div className="flex w-full items-start">
+          <div className="min-w-0 w-full rounded-2xl rounded-tl-sm border border-border/60 bg-card px-4 py-3">
             <div className="flex items-center gap-2">
               <span className="text-xs font-medium tabular-nums text-muted-foreground">
                 努力工作中 · {formatElapsedSeconds(typingTiming.seconds)}

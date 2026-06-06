@@ -1,5 +1,6 @@
 import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
 import { cn } from '@/lib/cn';
+import { TOOLBAR_ICON_BUTTON_CLASS } from '@/lib/toolbarButton';
 
 type SidebarExpandTriggerProps = {
   className?: string;
@@ -15,7 +16,7 @@ export function SidebarExpandTrigger({ className }: SidebarExpandTriggerProps) {
 
   return (
     <SidebarTrigger
-      className={cn('size-8 shrink-0 text-muted-foreground', className)}
+      className={cn(TOOLBAR_ICON_BUTTON_CLASS, className)}
       title="打开侧栏"
     />
   );

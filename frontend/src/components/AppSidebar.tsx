@@ -19,7 +19,7 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { SidebarTrigger } from '@/components/ui/sidebar';
-import { SidebarLogoutButton, UserMenu } from '@/components/chrome/UserMenu';
+import { SidebarUserBlock } from '@/components/chrome/UserMenu';
 import { cn } from '@/lib/cn';
 
 const MORE_NAV = [
@@ -98,11 +98,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           </SidebarMenu>
         </SidebarContent>
 
-        <SidebarFooter className="shrink-0 gap-1 border-t border-sidebar-border/60 px-3 py-3">
-          <div className="flex items-center justify-end">
-            <UserMenu />
-          </div>
-          <SidebarLogoutButton />
+        <SidebarFooter className="shrink-0 border-t border-sidebar-border/60 p-1">
+          <SidebarUserBlock />
         </SidebarFooter>
       </div>
       <SidebarRail />

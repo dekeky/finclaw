@@ -1,6 +1,5 @@
-import { IconAlertTriangle, IconBuildingStore, IconHistory, IconMessagePlus, IconTrash } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBuildingStore, IconFolder, IconHistory, IconMessagePlus, IconTrash } from '@tabler/icons-react';
 import { Link } from 'react-router-dom';
-import { AgentAvatar } from '../components/AgentAvatar';
 import { ChatMainToolbar } from '@/components/chrome/ChatMainToolbar';
 import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
@@ -9,7 +8,7 @@ import {
   ChatSlashHints,
   handleSlashInputKeyDown,
 } from '@/components/ChatSlashHints';
-import { AgentAssetsSidebar, AGENT_ASSETS_EXPANDED_INSET } from '../components/AgentAssetsSidebar';
+import { AgentAssetsSidebar } from '../components/AgentAssetsSidebar';
 import { CHAT_INPUT_GUTTER, CHAT_MAIN_COLUMN, CHAT_SCROLL_GUTTER } from '@/lib/chatLayout';
 import { DocFileTree } from '../components/DocFileTree';
 import { DocReadingPanel } from '../components/DocReadingPanel';
@@ -38,6 +37,7 @@ import {
 } from '@/lib/chatPersistence';
 import { useState, useRef, useMemo, useEffect, useCallback, type MouseEvent } from 'react';
 import { cn } from '@/lib/cn';
+import { TOOLBAR_ICON_BUTTON_CLASS } from '@/lib/toolbarButton';
 
 export default function ChatPage() {
   const { agents, currentAgent, refresh, status: agentsLoadStatus, error: agentsLoadError } = useAgents();
@@ -62,7 +62,7 @@ export default function ChatPage() {
 
   // Agent 资产侧栏：文档 / Skills
   const [assetTab, setAssetTab] = useState<'docs' | 'skills'>('docs');
-  const [assetsCollapsed, setAssetsCollapsed] = useState(true);
+  const [assetsOpen, setAssetsOpen] = useState(false);
   const [skillFile, setSkillFile] = useState<SkillFileTarget | null>(null);
   const [skillsRefreshRev, setSkillsRefreshRev] = useState(0);
   const { confirm, dialog: confirmDialog } = useConfirm();
@@ -85,9 +85,10 @@ export default function ChatPage() {
     );
   }, [currentAgent, skillFile]);
 
-  // 切换 Agent 时关闭已打开的 skill 文件
+  // 切换 Agent 时关闭 skill 文件与资产面板
   useEffect(() => {
     setSkillFile(null);
+    setAssetsOpen(false);
   }, [currentAgent]);
 
   // ── 编辑保存 ──
@@ -204,10 +205,10 @@ export default function ChatPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#f7f7f8] dark:bg-background">
-      {/* 元宝式：主区左上角 Agent 下拉 */}
-      <div className="flex h-12 shrink-0 items-center gap-3 px-5">
+      {/* 元宝式：主区顶栏单行 — Agent 下拉 · 新对话 · 资产 · 历史 · 主题 */}
+      <div className="flex shrink-0 items-center gap-2 px-5 py-2">
         <SidebarExpandTrigger />
-        <div className="flex min-w-0 items-center gap-0.5">
+        <div className="flex min-w-0 flex-1 items-center gap-0.5">
           <ChatMainToolbar />
           {agentsLoadStatus === 'ready' && agents.length > 0 && (
             <Tooltip>
@@ -216,7 +217,7 @@ export default function ChatPage() {
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  className="size-8 shrink-0 text-muted-foreground"
+                  className={TOOLBAR_ICON_BUTTON_CLASS}
                   aria-label="新对话"
                   onClick={handleNewChat}
                 >
@@ -226,8 +227,29 @@ export default function ChatPage() {
               <TooltipContent side="bottom">新对话</TooltipContent>
             </Tooltip>
           )}
+          {currentAgent && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className={cn(
+                    TOOLBAR_ICON_BUTTON_CLASS,
+                    assetsOpen && 'bg-violet-500/12 text-violet-600 shadow-[0_0_0_1px_rgba(139,92,246,0.22)] dark:text-violet-300 dark:shadow-[0_0_0_1px_rgba(167,139,250,0.32)]',
+                  )}
+                  aria-label={assetsOpen ? '收起 Agent 资产' : '打开 Agent 资产'}
+                  aria-pressed={assetsOpen}
+                  onClick={() => setAssetsOpen((open) => !open)}
+                >
+                  <IconFolder className="size-[18px]" stroke={1.75} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Agent 资产</TooltipContent>
+            </Tooltip>
+          )}
         </div>
-        <div className="ml-auto flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           {agentsLoadStatus === 'error' && agentsLoadError && (
             <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs text-destructive" onClick={() => void refresh()}>
               重试
@@ -239,16 +261,21 @@ export default function ChatPage() {
             </Badge>
           )}
           {currentAgent && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-8 gap-1 px-2 text-xs"
-              onClick={() => setHistoryOpen(true)}
-            >
-              <IconHistory size={14} className="opacity-80" />
-              历史记录
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className={TOOLBAR_ICON_BUTTON_CLASS}
+                  aria-label="历史记录"
+                  onClick={() => setHistoryOpen(true)}
+                >
+                  <IconHistory className="size-[18px]" stroke={1.75} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">历史记录</TooltipContent>
+            </Tooltip>
           )}
           <ThemeToggle />
         </div>
@@ -271,10 +298,7 @@ export default function ChatPage() {
       {!currentAgent && (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
           {agentsLoadStatus === 'loading' ? (
-            <>
-              <AgentAvatar name="?" size="xl" className="opacity-60" />
-              <div className="text-sm font-medium text-muted-foreground">正在加载 Agent…</div>
-            </>
+            <div className="text-sm font-medium text-muted-foreground">正在加载 Agent…</div>
           ) : noAgents ? (
             <>
               <div className="flex size-16 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-600 dark:text-violet-300">
@@ -290,7 +314,6 @@ export default function ChatPage() {
             </>
           ) : (
             <>
-              <AgentAvatar name="?" size="xl" className="opacity-60" />
               <div className="text-sm font-medium text-muted-foreground">请先选择 Agent</div>
               <p className="max-w-xs text-xs text-muted-foreground">点击左上角 Agent 名称，从下拉列表中选择一位开始对话</p>
             </>
@@ -298,46 +321,41 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* Main body: file tree sidebar + chat */}
+      {/* Main body: 左侧资产 + 聊天 */}
       {currentAgent && (
-        <div className="relative flex min-h-0 flex-1 overflow-hidden">
-          <AgentAssetsSidebar
-            assetTab={assetTab}
-            onAssetTabChange={setAssetTab}
-            onCollapsedChange={setAssetsCollapsed}
-          >
-            {assetTab === 'docs' ? (
-              <DocFileTree
-                agentName={currentAgent}
-                refreshRev={docsRefreshRev}
-                onFileSelect={openDoc}
-                selectedDocPath={selectedDocPath}
-                hideHeader
-                onDelete={handleDeleteDoc}
-              />
-            ) : (
-              <AgentSkillsPanel
-                key={currentAgent}
-                agentName={currentAgent}
-                className="min-h-0 flex-1"
-                onOpenFile={openSkill}
-                activeFileKey={
-                  skillFile ? skillFileKey(skillFile.source, skillFile.skill, skillFile.file) : null
-                }
-                onDeleteSkill={handleDeleteSkill}
-                refreshRev={skillsRefreshRev}
-              />
-            )}
-          </AgentAssetsSidebar>
+        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+          {assetsOpen && (
+            <AgentAssetsSidebar
+              assetTab={assetTab}
+              onAssetTabChange={setAssetTab}
+              onClose={() => setAssetsOpen(false)}
+            >
+              {assetTab === 'docs' ? (
+                <DocFileTree
+                  agentName={currentAgent}
+                  refreshRev={docsRefreshRev}
+                  onFileSelect={openDoc}
+                  selectedDocPath={selectedDocPath}
+                  hideHeader
+                  onDelete={handleDeleteDoc}
+                />
+              ) : (
+                <AgentSkillsPanel
+                  key={currentAgent}
+                  agentName={currentAgent}
+                  className="min-h-0 flex-1"
+                  onOpenFile={openSkill}
+                  activeFileKey={
+                    skillFile ? skillFileKey(skillFile.source, skillFile.skill, skillFile.file) : null
+                  }
+                  onDeleteSkill={handleDeleteSkill}
+                  refreshRev={skillsRefreshRev}
+                />
+              )}
+            </AgentAssetsSidebar>
+          )}
 
-          {/* 折叠时全宽居中；桌面展开资产侧栏时为浮层留白 */}
-          <div
-            className={cn(
-              'flex min-h-0 min-w-0 flex-1 flex-col',
-              'max-md:pl-10',
-              !assetsCollapsed && AGENT_ASSETS_EXPANDED_INSET,
-            )}
-          >
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <div className={cn('min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]', CHAT_SCROLL_GUTTER)}>
               <div className={cn('flex flex-col gap-8', CHAT_MAIN_COLUMN)}>
                 <ErrorBoundary>

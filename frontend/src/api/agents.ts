@@ -28,7 +28,10 @@ export interface AgentModelProvider {
 
 export interface CreateAgentRequest {
   name: string;
-  model_provider: AgentModelProvider;
+  /** 复用已有 Agent 的模型配置（含密钥），设置后无需再填 model_provider。 */
+  from_agent?: string;
+  /** 手动填写模型配置；与 from_agent 二选一。 */
+  model_provider?: AgentModelProvider;
 }
 
 /**
