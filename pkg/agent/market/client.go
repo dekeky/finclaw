@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/finclaw/internal/config"
 )
 
 // AgentMeta mirrors AgentHub's hub.AgentMeta (a template package summary).
@@ -54,7 +56,7 @@ type Client struct {
 func New(baseURL string) *Client {
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if base == "" {
-		base = "http://127.0.0.1:9093"
+		base = config.DefaultAgentHubAddr
 	}
 	return &Client{
 		baseURL: base,

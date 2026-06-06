@@ -468,7 +468,7 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
                 </span>
               )}
               <Link
-                to={agents.length === 0 ? '/agents?market=1' : '/agents'}
+                to={agents.length === 0 ? '/agents/market' : '/agents'}
                 className="rss-ai-dock-mini-btn rss-ai-dock-mini-btn--primary"
                 title={agents.length === 0 ? '前往 Agent 市场' : '管理 Agent'}
               >

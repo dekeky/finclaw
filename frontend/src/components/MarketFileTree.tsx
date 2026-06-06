@@ -21,13 +21,6 @@ function isMarkdown(name: string): boolean {
   return lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.mdx');
 }
 
-function formatSize(bytes: number): string {
-  if (bytes <= 0) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 /** 把扁平的文件列表组织成目录树。 */
 function buildTree(files: MarketFileEntry[]): TreeNode[] {
   const root: TreeNode = { name: '', path: '', isDir: true, size: 0, children: [] };
@@ -88,7 +81,6 @@ function FileRow({
   onSelect: (path: string) => void;
 }) {
   const md = isMarkdown(node.name);
-  const size = formatSize(node.size);
   return (
     <button
       type="button"
@@ -104,10 +96,7 @@ function FileRow({
         className={cn('size-3.5 shrink-0', md ? 'text-violet-500/70' : 'text-muted-foreground')}
         stroke={1.75}
       />
-      <span className="flex min-w-0 items-center gap-1.5">
-        <span className="truncate text-xs text-foreground/90">{node.name}</span>
-        {size && <span className="shrink-0 text-[10px] text-muted-foreground">{size}</span>}
-      </span>
+      <span className="truncate text-xs text-foreground/90">{node.name}</span>
     </button>
   );
 }

@@ -1,7 +1,7 @@
 import {
+  IconBuildingStore,
   IconChartAreaLine,
   IconNews,
-  IconPuzzle,
   IconRobot,
 } from '@tabler/icons-react';
 import { Link, useLocation } from 'react-router-dom';
@@ -22,12 +22,22 @@ import { SidebarTrigger } from '@/components/ui/sidebar';
 import { SidebarUserBlock } from '@/components/chrome/UserMenu';
 import { cn } from '@/lib/cn';
 
-const MORE_NAV = [
+const AGENT_NAV = [
   { title: 'Agent', url: '/agents', icon: IconRobot },
+  { title: 'Agent 市场', url: '/agents/market', icon: IconBuildingStore },
+] as const;
+
+const MORE_NAV = [
   { title: '金融资讯', url: '/news', icon: IconNews },
   { title: '量化回测', url: '/backtest', icon: IconChartAreaLine },
-  { title: 'SkillHub', url: '/skill', icon: IconPuzzle },
 ] as const;
+
+function isNavActive(currentPath: string, url: string): boolean {
+  if (url === '/agents') {
+    return currentPath === '/agents';
+  }
+  return currentPath === url || currentPath.startsWith(`${url}/`);
+}
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const location = useLocation();
@@ -71,14 +81,38 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </SidebarMenuItem>
           </SidebarMenu>
 
+          {/* Agent */}
+          <div className="mt-3 px-2 pb-1">
+            <p className="text-[11px] font-medium text-muted-foreground/50">Agent</p>
+          </div>
+          <SidebarMenu className="gap-0.5">
+            {AGENT_NAV.map((item) => {
+              const active = isNavActive(currentPath, item.url);
+              return (
+                <SidebarMenuItem key={item.url}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={active}
+                    onClick={closeMobile}
+                    className={cnYuanbaoNav(active, true)}
+                  >
+                    <Link to={item.url}>
+                      <item.icon className="size-4 opacity-60" />
+                      <span className="text-[13px]">{item.title}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              );
+            })}
+          </SidebarMenu>
+
           {/* 更多能力 */}
           <div className="mt-3 px-2 pb-1">
             <p className="text-[11px] font-medium text-muted-foreground/50">更多</p>
           </div>
           <SidebarMenu className="gap-0.5">
             {MORE_NAV.map((item) => {
-              const active =
-                currentPath === item.url || currentPath.startsWith(`${item.url}/`);
+              const active = isNavActive(currentPath, item.url);
               return (
                 <SidebarMenuItem key={item.url}>
                   <SidebarMenuButton

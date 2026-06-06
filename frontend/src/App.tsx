@@ -4,13 +4,12 @@ import { IconLoader2 } from '@tabler/icons-react';
 import { AuthProvider, useAuth } from './state/auth';
 import { AppLayout } from './layouts/AppLayout';
 
+const AgentMarketPage = lazy(() => import('./pages/AgentMarketPage'));
 const AgentsPage = lazy(() => import('./pages/AgentsPage'));
 const BacktestPage = lazy(() => import('./pages/BacktestPage'));
 const ChatPage = lazy(() => import('./pages/ChatPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const NewsPage = lazy(() => import('./pages/NewsPage'));
-const SkillPage = lazy(() => import('./pages/SkillPage'));
-
 function AuthLoading() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
@@ -56,8 +55,8 @@ export default function App() {
             <Route path="/news" element={<NewsPage />} />
             <Route path="/rss" element={<Navigate to="/news" replace />} />
             <Route path="/agents" element={<AgentsPage />} />
+            <Route path="/agents/market" element={<AgentMarketPage />} />
             <Route path="/backtest" element={<BacktestPage />} />
-            <Route path="/skill" element={<SkillPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Routes>

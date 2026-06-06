@@ -128,7 +128,7 @@ export type PersonaFileName = 'AGENT.md' | 'SOUL.md' | 'USER.md';
 /** 人设文件在 UI 中的展示名称（文件名 AGENT.md 等仅用于 API）。 */
 export const PERSONA_FILE_LABELS: Record<PersonaFileName, { title: string }> = {
   'AGENT.md': { title: '行为指南' },
-  'SOUL.md': { title: '灵魂 / 性格' },
+  'SOUL.md': { title: '灵魂' },
   'USER.md': { title: '用户偏好' },
 };
 

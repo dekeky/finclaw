@@ -18,7 +18,6 @@ import {
 } from './AgentModelSetupSection';
 import { MarketFileTree } from './MarketFileTree';
 import { DocReadingPanel } from './DocReadingPanel';
-import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -123,15 +122,30 @@ interface AgentMarketPanelProps {
   existingAgents: string[];
   onClose: () => void;
   onInstalled: (name: string) => void;
+  /** 外层页面已有标题时隐藏面板内标题。 */
+  hideTitle?: boolean;
+  /** 搜索词（由页面顶栏传入时，面板内不再重复渲染搜索框）。 */
+  search?: string;
+  onSearchChange?: (value: string) => void;
 }
 
-export function AgentMarketPanel({ existingAgents, onClose, onInstalled }: AgentMarketPanelProps) {
+export function AgentMarketPanel({
+  existingAgents,
+  onClose,
+  onInstalled,
+  hideTitle = false,
+  search: searchProp,
+  onSearchChange,
+}: AgentMarketPanelProps) {
   const [categories, setCategories] = useState<string[]>([]);
   const [activeCategory, setActiveCategory] = useState<string>('picoclaw');
   const [templates, setTemplates] = useState<MarketTemplate[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
+  const [internalSearch, setInternalSearch] = useState('');
+  const search = searchProp ?? internalSearch;
+  const setSearch = onSearchChange ?? setInternalSearch;
+  const searchInHeader = searchProp !== undefined;
 
   const [selected, setSelected] = useState<MarketTemplate | null>(null);
   const [detail, setDetail] = useState<MarketTemplateDetail | null>(null);
@@ -302,200 +316,251 @@ export function AgentMarketPanel({ existingAgents, onClose, onInstalled }: Agent
   const marketHeader = (
     <div className="mb-5 flex items-start justify-between gap-3">
       <div className="flex items-start gap-3">
-        {selected && (
-          <Button variant="ghost" size="icon" className="mt-0.5 h-7 w-7" onClick={() => setSelected(null)}>
-            <IconArrowLeft className="h-4 w-4" />
-          </Button>
+        {!hideTitle ? (
+          <div>
+            <h2 className="flex items-center gap-2 text-lg font-semibold text-foreground">
+              <IconPackage className="h-5 w-5 text-violet-500" />
+              Agent 市场
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">从 AgentHub 选择模板，一键创建 Agent。</p>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">从 AgentHub 选择模板，一键创建 Agent。</p>
         )}
-        <div>
-          <h2 className="flex items-center gap-2 text-lg font-semibold text-foreground">
-            <IconPackage className="h-5 w-5 text-violet-500" />
-            Agent 市场
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {selected ? '浏览模板内容，点击名称旁按钮即可创建 Agent。' : '从 AgentHub 选择模板，一键创建 Agent。'}
-          </p>
-        </div>
       </div>
       <div className="flex gap-2">
-        {!selected && (
-          <Button variant="ghost" size="sm" className="text-xs" onClick={() => void loadTemplates(activeCategory)}>
-            <IconRefresh className="mr-1 h-3.5 w-3.5" /> 刷新
+        {!hideTitle && (
+          <Button variant="ghost" size="sm" className="text-xs" onClick={onClose}>
+            关闭
           </Button>
         )}
-        <Button variant="ghost" size="sm" className="text-xs" onClick={onClose}>
-          关闭
-        </Button>
       </div>
     </div>
+  );
+
+  const searchQuery = search.trim();
+  const categoryPills = (
+    <>
+      <button
+        type="button"
+        onClick={() => setActiveCategory('')}
+        className={cn(
+          'shrink-0 rounded-full border px-3 py-1 text-xs transition-colors',
+          activeCategory === ''
+            ? 'border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-300'
+            : 'border-border bg-muted/40 text-muted-foreground hover:bg-muted',
+        )}
+      >
+        全部
+      </button>
+      {categories.map((cat) => (
+        <button
+          key={cat}
+          type="button"
+          onClick={() => setActiveCategory(cat)}
+          className={cn(
+            'shrink-0 rounded-full border px-3 py-1 text-xs transition-colors',
+            activeCategory === cat
+              ? 'border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-300'
+              : 'border-border bg-muted/40 text-muted-foreground hover:bg-muted',
+          )}
+        >
+          {cat}
+        </button>
+      ))}
+    </>
   );
 
   return (
     <>
     {!selected ? (
-    <ScrollArea className="flex-1">
-      <div className="p-6">
-        {marketHeader}
-            <div className="mb-4 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setActiveCategory('')}
-                className={cn(
-                  'rounded-full border px-3 py-1 text-xs transition-colors',
-                  activeCategory === ''
-                    ? 'border-violet-500/40 bg-violet-500/10 text-violet-600'
-                    : 'border-border bg-muted/40 text-muted-foreground hover:bg-muted',
-                )}
-              >
-                全部
-              </button>
-              {categories.map((cat) => (
-                <button
-                  key={cat}
-                  type="button"
-                  onClick={() => setActiveCategory(cat)}
-                  className={cn(
-                    'rounded-full border px-3 py-1 text-xs transition-colors',
-                    activeCategory === cat
-                      ? 'border-violet-500/40 bg-violet-500/10 text-violet-600'
-                      : 'border-border bg-muted/40 text-muted-foreground hover:bg-muted',
-                  )}
-                >
-                  {cat}
-                </button>
-              ))}
-              <Input
-                placeholder="搜索模板..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="ml-auto h-8 w-44 text-sm"
-              />
-            </div>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      {!hideTitle && <div className="shrink-0 px-6 pt-6">{marketHeader}</div>}
 
-            {error && (
-              <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-destructive">
-                ⚠️ 无法连接 AgentHub 服务：{error}
-              </div>
+      <div className="shrink-0 border-b border-border/40 bg-card/90 px-4 py-3 backdrop-blur-sm sm:px-6">
+        {!searchInHeader && (
+          <div className="relative mb-3">
+            <Input
+              placeholder="搜索模板名称、描述或分类…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-9 w-full text-sm"
+            />
+          </div>
+        )}
+        <div className="flex items-center gap-3">
+          <div className="min-w-0 flex-1 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div className="flex w-max items-center gap-2">{categoryPills}</div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {!loading && !error && (
+              <span className="hidden text-[11px] tabular-nums text-muted-foreground sm:inline">
+                {searchQuery ? `找到 ${filtered.length} 个` : `共 ${filtered.length} 个`}
+              </span>
             )}
-
-            {loading ? (
-              <p className="text-sm text-muted-foreground">加载模板中…</p>
-            ) : filtered.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
-                {error ? '暂时无法获取模板。' : '市场中暂无模板。'}
-              </div>
-            ) : (
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {filtered.map((tpl) => (
-                  <button
-                    key={tpl.agentName}
-                    type="button"
-                    onClick={() => void openTemplate(tpl)}
-                    className="flex flex-col rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-violet-500/40 hover:bg-violet-500/5"
-                  >
-                    <div className="mb-1.5 flex items-center justify-between gap-2">
-                      <span className="truncate font-medium text-foreground">
-                        {tpl.displayName || tpl.agentName}
-                      </span>
-                      <Badge variant="outline" className="shrink-0 text-[10px]">
-                        {tpl.category}
-                      </Badge>
-                    </div>
-                    <p className="line-clamp-2 min-h-[2.5rem] text-xs text-muted-foreground">
-                      {tpl.summary || '暂无描述'}
-                    </p>
-                    <div className="mt-3 flex items-center gap-2 text-[10px] text-muted-foreground/70">
-                      <span className="font-mono">{tpl.agentName}</span>
-                      {tpl.latestVersion && <span>· v{tpl.latestVersion}</span>}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-      </div>
-    </ScrollArea>
-    ) : (
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="shrink-0 px-6 pt-6">{marketHeader}</div>
-        <div className="shrink-0 px-6 pb-3">
-          <Card size="sm">
-            <CardContent className="p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <span className="text-base font-semibold text-foreground">
-                      {selected.displayName || selected.agentName}
-                    </span>
-                    <Badge variant="outline" className="text-[10px]">{selected.category}</Badge>
-                    {selected.latestVersion && (
-                      <Badge variant="secondary" className="text-[10px]">v{selected.latestVersion}</Badge>
-                    )}
-                  </div>
-                  <p className="text-sm text-muted-foreground">{selected.summary || '暂无描述'}</p>
-                  {!templateInstallable && (
-                    <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
-                      该模板包格式不完整，无法安装。请换一个包含 AGENT.md、SKILL.md 或 workspace/ 的模板（例如 demo-weather）。
-                    </div>
-                  )}
-                  {versions.length > 1 && (
-                    <div className="mt-3 flex items-center gap-2">
-                      <label className="text-xs font-medium text-muted-foreground">安装版本</label>
-                      <select
-                        value={version}
-                        onChange={(e) => setVersion(e.target.value)}
-                        className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
-                      >
-                        {versions.map((v) => (
-                          <option key={v} value={v}>
-                            v{v}
-                            {v === (detail?.latestVersion || selected.latestVersion) ? '（最新）' : ''}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="shrink-0"
-                  disabled={!templateInstallable || detailLoading}
-                  onClick={openInstallDialog}
-                >
-                  <IconDownload className="mr-1.5 h-3.5 w-3.5" />
-                  使用此模板创建
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              onClick={() => void loadTemplates(activeCategory)}
+              aria-label="刷新模板列表"
+            >
+              <IconRefresh className="size-4" stroke={1.75} />
+            </Button>
+          </div>
         </div>
+      </div>
 
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border/50">
-              <div className="flex shrink-0 items-center gap-1.5 border-b border-border/40 bg-muted/20 px-3 py-2.5">
-                <IconFileDescription className="size-3.5 text-muted-foreground/70" />
-                <span className="text-xs font-medium text-muted-foreground/80">模板内容</span>
-                {detail && detail.files.length > 0 && (
-                  <Badge variant="secondary" className="h-4 px-1.5 text-[9px]">
-                    {detail.files.length}
-                  </Badge>
-                )}
-              </div>
-              {detailLoading ? (
-                <p className="px-3 py-6 text-center text-[11px] text-muted-foreground">加载中…</p>
-              ) : detail && detail.files.length > 0 ? (
-                <ScrollArea className="min-h-0 flex-1">
-                  <MarketFileTree
-                    key={selected.agentName}
-                    files={detail.files}
-                    selectedPath={openFilePath}
-                    onSelect={setOpenFilePath}
-                  />
-                </ScrollArea>
+      <ScrollArea className="flex-1">
+        <div className="p-4 sm:p-6">
+          {error && (
+            <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-destructive">
+              ⚠️ 无法连接 AgentHub 服务：{error}
+            </div>
+          )}
+
+          {loading ? (
+            <p className="text-sm text-muted-foreground">加载模板中…</p>
+          ) : filtered.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border px-6 py-14 text-center">
+              {searchQuery ? (
+                <>
+                  <p className="text-sm text-foreground">
+                    没有找到与「<span className="font-medium text-violet-600 dark:text-violet-300">{searchQuery}</span>」相关的模板
+                  </p>
+                  <p className="mt-2 text-xs text-muted-foreground">试试更短的关键词，或切换上方分类浏览</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-4"
+                    onClick={() => setSearch('')}
+                  >
+                    清除搜索
+                  </Button>
+                </>
               ) : (
-                <p className="px-3 py-6 text-center text-[11px] text-muted-foreground">该模板暂无文件</p>
+                <p className="text-sm text-muted-foreground">
+                  {error ? '暂时无法获取模板。' : '市场中暂无模板。'}
+                </p>
               )}
             </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {filtered.map((tpl) => (
+                <button
+                  key={tpl.agentName}
+                  type="button"
+                  onClick={() => void openTemplate(tpl)}
+                  className="flex flex-col rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-violet-500/40 hover:bg-violet-500/5 hover:shadow-sm"
+                >
+                  <div className="mb-2 flex items-start justify-between gap-2">
+                    <span className="line-clamp-2 text-sm font-medium leading-snug text-foreground">
+                      {tpl.displayName || tpl.agentName}
+                    </span>
+                    <Badge variant="outline" className="shrink-0 text-[10px]">
+                      {tpl.category}
+                    </Badge>
+                  </div>
+                  <p className="line-clamp-3 text-xs leading-relaxed text-muted-foreground">
+                    {tpl.summary || '暂无描述'}
+                  </p>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+    </div>
+    ) : (
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="shrink-0 border-b border-border/50 px-4 py-2.5 sm:px-5">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              onClick={() => setSelected(null)}
+              aria-label="返回模板列表"
+            >
+              <IconArrowLeft className="size-4" />
+            </Button>
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="truncate text-sm font-semibold text-foreground">
+                  {selected.displayName || selected.agentName}
+                </span>
+                <Badge variant="outline" className="h-5 shrink-0 text-[10px]">
+                  {selected.category}
+                </Badge>
+                {versions.length > 1 ? (
+                  <select
+                    value={version}
+                    onChange={(e) => setVersion(e.target.value)}
+                    aria-label="选择版本"
+                    className="h-5 shrink-0 rounded-md border border-border bg-background px-1.5 text-[10px] text-foreground"
+                  >
+                    {versions.map((v) => (
+                      <option key={v} value={v}>
+                        v{v}
+                        {v === (detail?.latestVersion || selected.latestVersion) ? '（最新）' : ''}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  (version || selected.latestVersion) && (
+                    <span className="shrink-0 text-[10px] text-muted-foreground">
+                      v{version || selected.latestVersion}
+                    </span>
+                  )
+                )}
+              </div>
+              {selected.summary && (
+                <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                  {selected.summary}
+                </p>
+              )}
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 shrink-0 text-xs"
+              disabled={!templateInstallable || detailLoading}
+              onClick={openInstallDialog}
+            >
+              <IconDownload className="mr-1 size-3.5" />
+              <span className="hidden sm:inline">使用此模板创建</span>
+              <span className="sm:hidden">创建</span>
+            </Button>
           </div>
+          {!templateInstallable && (
+            <p className="mt-2 pl-10 text-[11px] text-amber-700 dark:text-amber-300">
+              模板格式不完整，无法安装
+            </p>
+          )}
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="flex shrink-0 items-center gap-1.5 border-b border-border/40 px-4 py-2 sm:px-5">
+            <IconFileDescription className="size-3.5 text-muted-foreground/70" />
+            <span className="text-xs font-medium text-muted-foreground">模板内容</span>
+          </div>
+          {detailLoading ? (
+            <p className="px-4 py-4 text-center text-xs text-muted-foreground sm:px-5">加载中…</p>
+          ) : detail && detail.files.length > 0 ? (
+            <ScrollArea className="min-h-0 flex-1">
+              <MarketFileTree
+                key={selected.agentName}
+                files={detail.files}
+                selectedPath={openFilePath}
+                onSelect={setOpenFilePath}
+              />
+            </ScrollArea>
+          ) : (
+            <p className="px-4 py-4 text-center text-xs text-muted-foreground sm:px-5">该模板暂无文件</p>
+          )}
+        </div>
+      </div>
     )}
     {selected && openFilePath && (
       <DocReadingPanel

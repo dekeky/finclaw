@@ -59,10 +59,10 @@ export function PersonaGenerateDialog({
           onEscapeKeyDown={(e) => e.preventDefault()}
         >
           <Dialog.Title className="text-sm font-semibold text-foreground">
-            AI 生成 {label}
+            AI 润色 {label}
           </Dialog.Title>
           <Dialog.Description className="mt-1 text-xs text-muted-foreground">
-            正在根据你的描述生成内容…
+            正在根据你的描述润色内容…
           </Dialog.Description>
 
           <div className="mt-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
@@ -92,7 +92,7 @@ export function PersonaGenerateDialog({
           </ol>
 
           {phase === 'success' && (
-            <p className="mt-4 text-xs text-emerald-600">生成完成，正在关闭…</p>
+            <p className="mt-4 text-xs text-emerald-600">润色完成，正在关闭…</p>
           )}
           {phase === 'error' && error && (
             <p className="mt-4 text-xs text-destructive">{error}</p>
@@ -105,7 +105,7 @@ export function PersonaGenerateDialog({
 
 export const PERSONA_GENERATE_STEP_DEFS = [
   { id: 'validate', label: '校验输入' },
-  { id: 'call', label: '正在生成' },
+  { id: 'call', label: '正在润色' },
   { id: 'finalize', label: '写入编辑器' },
 ] as const;
 

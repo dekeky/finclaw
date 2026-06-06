@@ -121,44 +121,12 @@ type installTemplateResp struct {
 	SkillDir      string `json:"skill_dir,omitempty"`
 }
 
-// modelProviderFromAgent builds a ModelProvider (including the stored api key)
-// from an existing agent's runtime config so a new agent can reuse it.
-func (mr *MarketRouter) modelProviderFromAgent(userID, agentName string) (ModelProvider, error) {
-	agentName = strings.TrimSpace(agentName)
-	if agentName == "" {
-		return ModelProvider{}, fmt.Errorf("from_agent is empty")
-	}
-	cfg, err := resolveAgentRuntimeConfig(mr.agentManager, userID, agentName)
-	if err != nil {
-		return ModelProvider{}, err
-	}
-	alias := strings.TrimSpace(cfg.Agents.Defaults.ModelName)
-	mc, err := cfg.GetModelConfig(alias)
-	if err != nil || mc == nil {
-		return ModelProvider{}, fmt.Errorf("agent %q has no usable model config to reuse", agentName)
-	}
-	key := strings.TrimSpace(mc.APIKey())
-	if key == "" {
-		return ModelProvider{}, fmt.Errorf("agent %q has no saved api key to reuse", agentName)
-	}
-	mp := ModelProvider{
-		ModelName: strings.TrimSpace(mc.ModelName),
-		Model:     strings.TrimSpace(mc.Model),
-		ApiBase:   strings.TrimSpace(mc.APIBase),
-		ApiKey:    key,
-	}
-	if err := fillModelName(&mp); err != nil {
-		return ModelProvider{}, fmt.Errorf("agent %q model config is invalid: %w", agentName, err)
-	}
-	return mp, nil
-}
-
 // resolveInstallModelProvider picks the model provider for an install request:
 // reuse an existing agent's config when from_agent is set, otherwise validate
 // the inline model_provider payload.
 func (mr *MarketRouter) resolveInstallModelProvider(userID string, req *installTemplateRequest) (ModelProvider, error) {
 	if from := strings.TrimSpace(req.FromAgent); from != "" {
-		return mr.modelProviderFromAgent(userID, from)
+		return modelProviderFromAgent(mr.agentManager, userID, from)
 	}
 	if req.ModelProvider == nil {
 		return ModelProvider{}, fmt.Errorf("either model_provider or from_agent is required")

@@ -14,7 +14,7 @@ const (
 	RssSourceFile     = "rss.config"
 
 	// DefaultAgentHubAddr is the desktop AgentHub market service base URL.
-	DefaultAgentHubAddr = "http://127.0.0.1:9093"
+	DefaultAgentHubAddr = "http://159.75.51.78:9093"
 )
 
 func FinclawHomePath() string {

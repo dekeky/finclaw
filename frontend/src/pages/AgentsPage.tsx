@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Dialog } from 'radix-ui';
-import { useSearchParams } from 'react-router-dom';
-import { IconBuildingStore, IconCpu, IconEye, IconEyeOff, IconFileDescription, IconPuzzle, IconTrash, IconUpload } from '@tabler/icons-react';
+import { Navigate, useSearchParams } from 'react-router-dom';
+import { IconCpu, IconEye, IconEyeOff, IconFileDescription, IconPuzzle, IconTrash, IconUpload } from '@tabler/icons-react';
 import { useAgents } from '../state/agents';
 import {
   getAgent,
@@ -13,7 +13,6 @@ import {
 import { AgentAvatar } from '../components/AgentAvatar';
 import { AgentCreateDialog } from '../components/AgentCreateDialog';
 import { isAgentModelSetupValid, type ReuseAgentSourceMeta } from '../components/AgentModelSetupSection';
-import { AgentMarketPanel } from '../components/AgentMarketPanel';
 import { AgentPersonaEditor } from '../components/AgentPersonaEditor';
 import { AgentSkillsPanel, skillFileKey, type SkillFileTarget } from '../components/AgentSkillsPanel';
 import { DocReadingPanel } from '../components/DocReadingPanel';
@@ -68,11 +67,6 @@ function ModelFieldHint() {
   );
 }
 
-function sectionKey(name: string): string {
-  const ch = name.trim().charAt(0);
-  return /[a-zA-Z]/.test(ch) ? ch.toUpperCase() : '#';
-}
-
 type DetailTab = 'persona' | 'skills' | 'config';
 
 const DETAIL_TAB_STORAGE_KEY = 'finclaw.agents.detailTab';
@@ -82,7 +76,7 @@ const DETAIL_TABS: Array<{
   label: string;
   icon: typeof IconFileDescription;
 }> = [
-  { id: 'persona', label: '人设文件', icon: IconFileDescription },
+  { id: 'persona', label: '人设', icon: IconFileDescription },
   { id: 'skills', label: 'Skills', icon: IconPuzzle },
   { id: 'config', label: '模型配置', icon: IconCpu },
 ];
@@ -105,30 +99,13 @@ function saveDetailTab(tab: DetailTab) {
   }
 }
 
-function groupAgents(names: string[]): Array<{ key: string; names: string[] }> {
-  const sorted = [...names].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
-  const map = new Map<string, string[]>();
-  for (const n of sorted) {
-    const k = sectionKey(n);
-    const arr = map.get(k) ?? [];
-    arr.push(n);
-    map.set(k, arr);
-  }
-  return [...map.entries()].sort(([a], [b]) => {
-    if (a === '#') return 1;
-    if (b === '#') return -1;
-    return a.localeCompare(b, 'en');
-  }).map(([key, list]) => ({ key, names: list }));
-}
-
 export default function AgentsPage() {
-  const { agents, currentAgent, refresh, createAgent, updateAgent, deleteAgent, selectAgent } = useAgents();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const { agents, currentAgent, refresh, createAgent, updateAgent, deleteAgent } = useAgents();
+  const [searchParams] = useSearchParams();
 
   const [search, setSearch] = useState('');
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
-  const [marketOpen, setMarketOpen] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [credMode, setCredMode] = useState<CredMode>('manual');
   const [reuseAgent, setReuseAgent] = useState('');
@@ -170,22 +147,16 @@ export default function AgentsPage() {
 
   useEffect(() => { void refresh(); }, []);
 
-  useEffect(() => {
-    if (searchParams.get('market') !== '1') return;
-    setAddOpen(false);
-    setMarketOpen(true);
-    const next = new URLSearchParams(searchParams);
-    next.delete('market');
-    setSearchParams(next, { replace: true });
-  }, [searchParams, setSearchParams]);
-
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return agents;
     return agents.filter((n) => n.toLowerCase().includes(q));
   }, [agents, search]);
 
-  const sections = useMemo(() => groupAgents(filtered), [filtered]);
+  const sortedFiltered = useMemo(
+    () => [...filtered].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN')),
+    [filtered],
+  );
 
   // 仅在校正无效选中项时同步，避免切换列表项时因 currentAgent 变化触发多余更新
   useEffect(() => {
@@ -196,16 +167,10 @@ export default function AgentsPage() {
     });
   }, [agents, currentAgent]);
 
-  const detailName = marketOpen ? null : selectedName;
-
-  const openMarket = useCallback(() => {
-    setAddOpen(false);
-    setMarketOpen(true);
-  }, []);
+  const detailName = selectedName;
 
   const openAddForm = useCallback(() => {
     void refresh();
-    setMarketOpen(false);
     setForm(EMPTY_FORM);
     setCredMode(agents.length > 0 ? 'reuse' : 'manual');
     setReuseAgent(agents[0] ?? '');
@@ -217,16 +182,6 @@ export default function AgentsPage() {
   const handleReuseMetaChange = useCallback((meta: ReuseAgentSourceMeta) => {
     setReuseMeta(meta);
   }, []);
-
-  const handleTemplateInstalled = useCallback(
-    async (name: string) => {
-      setMarketOpen(false);
-      await refresh();
-      selectAgent(name);
-      setSelectedName(name);
-    },
-    [refresh, selectAgent],
-  );
 
   // 切换 Agent 或离开 Skills 标签时关闭已打开的 skill 文件
   useEffect(() => {
@@ -457,6 +412,10 @@ export default function AgentsPage() {
     }
   };
 
+  if (searchParams.get('market') === '1') {
+    return <Navigate to="/agents/market" replace />;
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {/* Header */}
@@ -476,9 +435,6 @@ export default function AgentsPage() {
             >
               添加 Agent
             </Button>
-            <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={openMarket}>
-              市场
-            </Button>
           </div>
           <ThemeToggle />
         </div>
@@ -488,7 +444,15 @@ export default function AgentsPage() {
       <div className="flex min-h-0 flex-1 gap-3 overflow-hidden p-3">
         {/* Left Pane - Agent List */}
         <div className="hidden w-[14rem] shrink-0 flex-col rounded-xl border border-border bg-card lg:w-[15rem] xl:w-[16rem] md:flex">
-          <div className="border-b border-border/50 p-4">
+          <div className="space-y-2 border-b border-border/50 p-4">
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full text-xs"
+              onClick={openAddForm}
+            >
+              添加 Agent
+            </Button>
             <Input
               placeholder="搜索 Agent..."
               value={search}
@@ -503,67 +467,34 @@ export default function AgentsPage() {
               </div>
             ) : (
               <div className="p-2">
-                {sections.map((sec) => (
-                  <div key={sec.key}>
-                    <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">{sec.key}</div>
-                    {sec.names.map((name) => {
-                      const chatting = name === currentAgent;
-                      const selected = !marketOpen && name === selectedName;
-                      return (
-                        <button
-                          key={name}
-                          type="button"
-                          onClick={() => {
-                            setMarketOpen(false);
-                            setSelectedName(name);
-                          }}
-                          className={`w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${selected ? 'bg-accent/80 font-medium' : 'hover:bg-muted/60'}`}
-                        >
-                          <AgentAvatar name={name} />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="truncate text-sm text-foreground">{name}</span>
-                              {chatting && <Badge variant="secondary" className="text-[10px]">当前</Badge>}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ))}
+                {sortedFiltered.map((name) => {
+                  const chatting = name === currentAgent;
+                  const selected = name === selectedName;
+                  return (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => setSelectedName(name)}
+                      className={`w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${selected ? 'bg-accent/80 font-medium' : 'hover:bg-muted/60'}`}
+                    >
+                      <AgentAvatar name={name} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-sm text-foreground">{name}</span>
+                          {chatting && <Badge variant="secondary" className="text-[10px]">当前</Badge>}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </ScrollArea>
-          <div className="shrink-0 space-y-2 border-t border-border/50 p-3">
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full text-xs"
-              onClick={openAddForm}
-            >
-              添加 Agent
-            </Button>
-            <Button
-              variant="default"
-              size="sm"
-              className="w-full bg-violet-600 text-xs hover:bg-violet-600/90"
-              onClick={openMarket}
-            >
-              <IconBuildingStore className="mr-1.5 h-3.5 w-3.5" stroke={1.75} />
-              Agent 市场
-            </Button>
-          </div>
         </div>
 
         {/* Right Pane - Detail */}
         <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-border bg-card overflow-hidden">
-          {marketOpen ? (
-            <AgentMarketPanel
-              existingAgents={agents}
-              onClose={() => setMarketOpen(false)}
-              onInstalled={(name) => void handleTemplateInstalled(name)}
-            />
-          ) : detailName ? (
+          {detailName ? (
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/50 px-4 py-2.5">
                 <nav className="flex flex-wrap gap-1.5">

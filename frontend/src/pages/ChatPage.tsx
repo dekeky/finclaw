@@ -309,7 +309,7 @@ export default function ChatPage() {
                 请前往 Agent 市场，从模板快速创建一位 Agent 后即可开始对话。
               </p>
               <Button asChild className="bg-violet-600 hover:bg-violet-600/90">
-                <Link to="/agents?market=1">前往 Agent 市场</Link>
+                <Link to="/agents/market">前往 Agent 市场</Link>
               </Button>
             </>
           ) : (

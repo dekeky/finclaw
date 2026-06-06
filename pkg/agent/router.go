@@ -123,8 +123,12 @@ func (ar *AgentManagerRouter) getAgent(c *gin.Context) {
 }
 
 type createAgentRequest struct {
-	Name          string        `json:"name" binding:"required"`
-	ModelProvider ModelProvider `json:"model_provider" binding:"required"`
+	Name string `json:"name" binding:"required"`
+	// FromAgent, when set, reuses an existing agent's model provider (model,
+	// api_base and stored api_key). Takes precedence over ModelProvider.
+	FromAgent string `json:"from_agent,omitempty"`
+	// ModelProvider is required unless FromAgent is set.
+	ModelProvider *ModelProvider `json:"model_provider,omitempty"`
 }
 
 type ModelProvider struct {
@@ -184,6 +188,55 @@ func (mp ModelProvider) toPicoModelConfig(apiKey string) *picoclawconfig.ModelCo
 		APIBase:   mp.ApiBase,
 		APIKeys:   picoclawconfig.SimpleSecureStrings(apiKey),
 	}
+}
+
+// modelProviderFromAgent builds a ModelProvider (including the stored api key)
+// from an existing agent's runtime config so a new agent can reuse it.
+func modelProviderFromAgent(am *AgentManager, userID, agentName string) (ModelProvider, error) {
+	agentName = strings.TrimSpace(agentName)
+	if agentName == "" {
+		return ModelProvider{}, fmt.Errorf("from_agent is empty")
+	}
+	cfg, err := resolveAgentRuntimeConfig(am, userID, agentName)
+	if err != nil {
+		return ModelProvider{}, err
+	}
+	alias := strings.TrimSpace(cfg.Agents.Defaults.ModelName)
+	mc, err := cfg.GetModelConfig(alias)
+	if err != nil || mc == nil {
+		return ModelProvider{}, fmt.Errorf("agent %q has no usable model config to reuse", agentName)
+	}
+	key := strings.TrimSpace(mc.APIKey())
+	if key == "" {
+		return ModelProvider{}, fmt.Errorf("agent %q has no saved api key to reuse", agentName)
+	}
+	mp := ModelProvider{
+		ModelName: strings.TrimSpace(mc.ModelName),
+		Model:     strings.TrimSpace(mc.Model),
+		ApiBase:   strings.TrimSpace(mc.APIBase),
+		ApiKey:    key,
+	}
+	if err := fillModelName(&mp); err != nil {
+		return ModelProvider{}, fmt.Errorf("agent %q model config is invalid: %w", agentName, err)
+	}
+	return mp, nil
+}
+
+func resolveCreateModelProvider(am *AgentManager, userID string, req *createAgentRequest) (ModelProvider, error) {
+	if from := strings.TrimSpace(req.FromAgent); from != "" {
+		return modelProviderFromAgent(am, userID, from)
+	}
+	if req.ModelProvider == nil {
+		return ModelProvider{}, fmt.Errorf("either model_provider or from_agent is required")
+	}
+	mp := *req.ModelProvider
+	if err := fillModelName(&mp); err != nil {
+		return ModelProvider{}, err
+	}
+	if strings.TrimSpace(mp.ApiKey) == "" {
+		return ModelProvider{}, fmt.Errorf("api_key is required")
+	}
+	return mp, nil
 }
 
 type probeModelProviderRequest struct {
@@ -261,14 +314,15 @@ func (ar *AgentManagerRouter) createAgent(c *gin.Context) {
 		ginx.NewRender(c, http.StatusBadRequest).Err(err)
 		return
 	}
-	if err := fillModelName(&req.ModelProvider); err != nil {
+	mp, err := resolveCreateModelProvider(ar.agentManager, userID, &req)
+	if err != nil {
 		ginx.NewRender(c, http.StatusBadRequest).Err(err)
 		return
 	}
 
 	home := agentHomeDir(userID)
 	msgBus := bus.NewMessageBus()
-	picoclawAgent, err := picoclaw.NewPicoclawAgent(home, msgBus, req.ModelProvider.toPicoModelConfig(req.ModelProvider.ApiKey), req.Name)
+	picoclawAgent, err := picoclaw.NewPicoclawAgent(home, msgBus, mp.toPicoModelConfig(mp.ApiKey), req.Name)
 	if err != nil {
 		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
 		return
@@ -276,7 +330,7 @@ func (ar *AgentManagerRouter) createAgent(c *gin.Context) {
 	internalKey := AgentKey(userID, req.Name)
 	ar.agentManager.AddAgent(internalKey, picoclawAgent, msgBus)
 
-	ginx.NewRender(c, http.StatusCreated).Data(agentStatusResp{Name: req.Name, ModelProvider: req.ModelProvider.Model})
+	ginx.NewRender(c, http.StatusCreated).Data(agentStatusResp{Name: req.Name, ModelProvider: mp.Model})
 }
 
 type updateModelProviderPayload struct {
