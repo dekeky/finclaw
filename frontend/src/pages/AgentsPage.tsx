@@ -19,6 +19,7 @@ import { DocReadingPanel } from '../components/DocReadingPanel';
 import { ModelConnectivityCheck } from '../components/ModelConnectivityCheck';
 import { uploadAgentToMarket } from '../api/agentMarket';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { useNavigationGuard } from '../state/navigationGuard';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -129,9 +130,11 @@ export default function AgentsPage() {
   const [agentRuntimeLoading, setAgentRuntimeLoading] = useState(false);
   const [agentRuntimeError, setAgentRuntimeError] = useState<string | null>(null);
   const [detailTab, setDetailTabState] = useState<DetailTab>(loadDetailTab);
+  const [personaDirty, setPersonaDirty] = useState(false);
   const [skillFile, setSkillFile] = useState<SkillFileTarget | null>(null);
   const [skillsRefreshRev, setSkillsRefreshRev] = useState(0);
   const { confirm, dialog: confirmDialog } = useConfirm();
+  const { setNavigationGuard } = useNavigationGuard();
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -144,6 +147,51 @@ export default function AgentsPage() {
     saveDetailTab(tab);
     setDetailTabState(tab);
   }, []);
+
+  const confirmLeavePersona = useCallback(async () => {
+    if (!personaDirty) return true;
+    return confirm({
+      title: '未保存的修改',
+      description: '人设有未保存的修改，离开后将丢失。确定要离开吗？',
+      confirmText: '离开',
+      cancelText: '继续编辑',
+    });
+  }, [confirm, personaDirty]);
+
+  const handleDetailTabChange = useCallback(
+    async (tab: DetailTab) => {
+      if (tab === detailTab) return;
+      if (detailTab === 'persona' && tab !== 'persona') {
+        if (!(await confirmLeavePersona())) return;
+      }
+      setDetailTab(tab);
+    },
+    [confirmLeavePersona, detailTab, setDetailTab],
+  );
+
+  const handleSelectAgent = useCallback(
+    async (name: string) => {
+      if (name === selectedName) return;
+      if (detailTab === 'persona') {
+        if (!(await confirmLeavePersona())) return;
+      }
+      setSelectedName(name);
+    },
+    [confirmLeavePersona, detailTab, selectedName],
+  );
+
+  useEffect(() => {
+    if (detailTab !== 'persona') setPersonaDirty(false);
+  }, [detailTab]);
+
+  useEffect(() => {
+    if (detailTab === 'persona' && personaDirty) {
+      setNavigationGuard(confirmLeavePersona);
+    } else {
+      setNavigationGuard(null);
+    }
+    return () => setNavigationGuard(null);
+  }, [confirmLeavePersona, detailTab, personaDirty, setNavigationGuard]);
 
   useEffect(() => { void refresh(); }, []);
 
@@ -474,7 +522,7 @@ export default function AgentsPage() {
                     <button
                       key={name}
                       type="button"
-                      onClick={() => setSelectedName(name)}
+                      onClick={() => void handleSelectAgent(name)}
                       className={`w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${selected ? 'bg-accent/80 font-medium' : 'hover:bg-muted/60'}`}
                     >
                       <AgentAvatar name={name} />
@@ -504,7 +552,7 @@ export default function AgentsPage() {
                       <button
                         key={id}
                         type="button"
-                        onClick={() => setDetailTab(id)}
+                        onClick={() => void handleDetailTabChange(id)}
                         className={cn(
                           'inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm transition-colors',
                           active
@@ -555,7 +603,12 @@ export default function AgentsPage() {
               </div>
 
               {detailTab === 'persona' ? (
-                <AgentPersonaEditor key={detailName} agentName={detailName} className="min-h-0 flex-1" />
+                <AgentPersonaEditor
+                  key={detailName}
+                  agentName={detailName}
+                  className="min-h-0 flex-1"
+                  onDirtyChange={setPersonaDirty}
+                />
               ) : detailTab === 'skills' ? (
                 <AgentSkillsPanel
                   key={detailName}

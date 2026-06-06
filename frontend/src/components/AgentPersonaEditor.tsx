@@ -18,6 +18,7 @@ import {
 import { IconChevronDown, IconSparkles } from '@tabler/icons-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { cn } from '@/lib/cn';
 
 const PERSONA_TABS: PersonaFileName[] = ['AGENT.md', 'SOUL.md', 'USER.md'];
@@ -35,9 +36,12 @@ function fileMap(files: AgentPersonaFile[]): Record<PersonaFileName, AgentPerson
 interface AgentPersonaEditorProps {
   agentName: string;
   className?: string;
+  /** 任一标签存在未保存修改时回调。 */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
-export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorProps) {
+export function AgentPersonaEditor({ agentName, className, onDirtyChange }: AgentPersonaEditorProps) {
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const [activeTab, setActiveTab] = useState<PersonaFileName>('AGENT.md');
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
   const [loading, setLoading] = useState(false);
@@ -110,8 +114,36 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
 
   const activeDraft = drafts[activeTab];
   const dirty = activeDraft !== savedDrafts[activeTab];
+  const hasUnsavedChanges = useMemo(
+    () => PERSONA_TABS.some((name) => drafts[name] !== savedDrafts[name]),
+    [drafts, savedDrafts],
+  );
   const showEdit = viewMode === 'edit';
   const showPreview = viewMode === 'edit' || viewMode === 'preview';
+
+  useEffect(() => {
+    onDirtyChange?.(hasUnsavedChanges);
+  }, [hasUnsavedChanges, onDirtyChange]);
+
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!hasUnsavedChanges) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [hasUnsavedChanges]);
+
+  const confirmDiscardChanges = useCallback(async () => {
+    if (!hasUnsavedChanges) return true;
+    return confirm({
+      title: '未保存的修改',
+      description: '人设有未保存的修改，离开后将丢失。确定要离开吗？',
+      confirmText: '离开',
+      cancelText: '继续编辑',
+    });
+  }, [confirm, hasUnsavedChanges]);
 
   const onSave = async () => {
     if (saving || !dirty) return;
@@ -192,8 +224,15 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
     }
   };
 
+  const onRefresh = async () => {
+    if (loading) return;
+    if (!(await confirmDiscardChanges())) return;
+    void load();
+  };
+
   return (
     <div className={cn('flex min-h-0 flex-col overflow-hidden', className)}>
+      {confirmDialog}
       <PersonaGenerateDialog
         open={generateModalOpen}
         fileName={generateModalFile}
@@ -233,7 +272,7 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
               {initBusy ? '初始化中…' : `初始化缺失 (${missingCount})`}
             </Button>
           )}
-          <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => void load()}>
+          <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => void onRefresh()}>
             刷新
           </Button>
           <div className="flex rounded-lg border border-border/60 p-0.5">
@@ -382,7 +421,13 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
               >
                 撤销
               </Button>
-              <Button type="button" size="sm" disabled={!dirty || saving || generating} onClick={() => void onSave()}>
+              <Button
+                type="button"
+                size="sm"
+                className="bg-violet-600 text-white hover:bg-violet-600/90"
+                disabled={!dirty || saving || generating}
+                onClick={() => void onSave()}
+              >
                 {saving ? '保存中…' : '保存'}
               </Button>
             </div>

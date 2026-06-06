@@ -4,8 +4,9 @@ import {
   IconNews,
   IconRobot,
 } from '@tabler/icons-react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import * as React from 'react';
+import { useNavigationGuard } from '../state/navigationGuard';
 
 import { FinclawMark } from '@/components/FinclawMark';
 import {
@@ -33,6 +34,9 @@ const MORE_NAV = [
 ] as const;
 
 function isNavActive(currentPath: string, url: string): boolean {
+  if (url === '/chat') {
+    return currentPath === '/chat' || currentPath.startsWith('/chat/');
+  }
   if (url === '/agents') {
     return currentPath === '/agents';
   }
@@ -41,14 +45,31 @@ function isNavActive(currentPath: string, url: string): boolean {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const location = useLocation();
+  const navigate = useNavigate();
   const currentPath = location.pathname;
   const { isMobile, setOpenMobile } = useSidebar();
+  const { confirmNavigation } = useNavigationGuard();
 
   const closeMobile = React.useCallback(() => {
     if (isMobile) setOpenMobile(false);
   }, [isMobile, setOpenMobile]);
 
-  const isChatRoute = currentPath === '/chat' || currentPath.startsWith('/chat/');
+  const tryNavigate = React.useCallback(
+    async (e: React.MouseEvent, url: string) => {
+      if (isNavActive(currentPath, url)) {
+        closeMobile();
+        return;
+      }
+      e.preventDefault();
+      if (await confirmNavigation()) {
+        closeMobile();
+        navigate(url);
+      }
+    },
+    [closeMobile, confirmNavigation, currentPath, navigate],
+  );
+
+  const isChatRoute = isNavActive(currentPath, '/chat');
 
   return (
     <Sidebar
@@ -71,7 +92,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 onClick={closeMobile}
                 className={cnYuanbaoNav(isChatRoute)}
               >
-                <Link to="/chat">
+                <Link to="/chat" onClick={(e) => void tryNavigate(e, '/chat')}>
                   <span className="flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-emerald-500/15">
                     <FinclawMark variant="mark" size={18} decorative className="rounded-full" />
                   </span>
@@ -96,7 +117,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     onClick={closeMobile}
                     className={cnYuanbaoNav(active, true)}
                   >
-                    <Link to={item.url}>
+                    <Link to={item.url} onClick={(e) => void tryNavigate(e, item.url)}>
                       <item.icon className="size-4 opacity-60" />
                       <span className="text-[13px]">{item.title}</span>
                     </Link>
@@ -121,7 +142,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     onClick={closeMobile}
                     className={cnYuanbaoNav(active, true)}
                   >
-                    <Link to={item.url}>
+                    <Link to={item.url} onClick={(e) => void tryNavigate(e, item.url)}>
                       <item.icon className="size-4 opacity-60" />
                       <span className="text-[13px]">{item.title}</span>
                     </Link>
