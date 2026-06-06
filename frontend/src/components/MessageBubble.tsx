@@ -1,4 +1,5 @@
 ﻿import { useRef, useLayoutEffect, useState, type Ref } from 'react';
+import { IconChevronRight, IconTimeline } from '@tabler/icons-react';
 import type { ChatMessage, ProcessSegment } from '../types';
 import { formatElapsedSeconds } from '../hooks/useElapsedSeconds';
 import { MarkdownContent } from './MarkdownContent';
@@ -44,7 +45,7 @@ function ThoughtBody({ messageId, content }: { messageId: string; content: strin
   return (
     <div className="flex flex-col gap-1">
       {parts.map((part, index) => (
-        <div key={index} className={index > 0 ? 'border-t border-amber-500/10 pt-1' : undefined}>
+        <div key={index} className={index > 0 ? 'border-t border-border/40 pt-1' : undefined}>
           <MarkdownContent idPrefix={`${messageId}-thought-${index}`} size="sm" compact>
             {part}
           </MarkdownContent>
@@ -114,10 +115,10 @@ function ProcessStreamBody({
       {segments.map((segment, idx) => (
         <div
           key={idx}
-          className={idx > 0 ? 'mt-1.5 border-t border-amber-500/10 pt-1.5' : undefined}
+          className={idx > 0 ? 'mt-1.5 border-t border-border/40 pt-1.5' : undefined}
         >
           {showSegmentLabels && (
-            <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700/70 dark:text-amber-300/70">
+            <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-violet-600/65 dark:text-violet-400/65">
               {segment.type === 'tool' ? '\u5de5\u5177' : '\u601d\u8003'}
             </div>
           )}
@@ -164,7 +165,7 @@ export function ActiveTaskPanel({
           messageId={messageId}
           scrollRef={scrollRef}
           onScroll={handleScroll}
-          className="mt-3 border-t border-amber-500/20 pt-3"
+          className="mt-3 border-t border-violet-500/15 pt-3"
         />
       )}
     </ThinkingIndicatorShell>
@@ -217,29 +218,23 @@ function AgentProcessPanel({
   };
 
   return (
-    <div className="w-full overflow-hidden rounded-lg border border-amber-500/25 bg-amber-500/5">
+    <div className="w-full overflow-hidden rounded-xl border border-violet-500/25 bg-violet-500/[0.05]">
       <button
         type="button"
         onClick={handleToggle}
-        className="flex w-full items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 py-2 text-left transition-colors hover:bg-amber-500/15"
+        className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-violet-500/10 ${open ? 'border-b border-violet-500/15' : ''}`}
       >
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          className={`shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`}
-        >
-          <polyline points="9 18 15 12 9 6" />
-        </svg>
-        <span className="min-w-0 flex-1 truncate text-xs text-amber-800/90 dark:text-amber-200/90">
+        <IconChevronRight
+          className={`size-3 shrink-0 text-violet-500/70 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+          stroke={2}
+        />
+        <IconTimeline className="size-3.5 shrink-0 text-violet-500/80" stroke={1.75} />
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-violet-700/90 dark:text-violet-300/90">
           工作过程
         </span>
         {taskElapsedCompleted && taskElapsedSeconds !== undefined && taskElapsedSeconds > 0 && (
-          <span className="shrink-0 text-[10px] tabular-nums text-amber-700/80 dark:text-amber-300/80">
-            耗时 {formatElapsedSeconds(taskElapsedSeconds)}
+          <span className="shrink-0 font-mono text-[10px] tabular-nums text-violet-600/70 dark:text-violet-400/70">
+            {formatElapsedSeconds(taskElapsedSeconds)}
           </span>
         )}
       </button>

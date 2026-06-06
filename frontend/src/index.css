@@ -181,3 +181,32 @@
   from { opacity: 0; transform: translateY(12px) scale(0.98); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
+
+/* Agent work-in-progress — neutral status cues (ChatGPT / Claude style) */
+@keyframes fc-status-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.92); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+.fc-status-dot {
+  animation: fc-status-pulse 1.8s ease-in-out infinite;
+}
+
+.fc-typing-dot {
+  animation: typingBounce 1.4s ease-in-out infinite;
+}
+
+@keyframes fc-process-breathe {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgb(139 92 246 / 0);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgb(139 92 246 / 0.14),
+      0 4px 14px -4px rgb(139 92 246 / 0.18);
+  }
+}
+
+.fc-process-active {
+  animation: fc-process-breathe 2.8s ease-in-out infinite;
+}
