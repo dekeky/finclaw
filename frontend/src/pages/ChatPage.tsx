@@ -49,7 +49,7 @@ export default function ChatPage() {
     void refresh();
   }, [refresh]);
 
-  const { messages, status, isTyping, sendError, send, clearMessages, restoreMessages, reconnect } = useChatSession();
+  const { messages, status, isTyping, sendError, send, clearMessages, restoreMessages, reconnect, taskStartedAt } = useChatSession();
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyRev, setHistoryRev] = useState(0);
@@ -364,6 +364,7 @@ export default function ChatPage() {
                     isTyping={isTyping}
                     onClear={handleArchiveAndClear}
                     agentName={currentAgent}
+                    taskStartedAt={taskStartedAt}
                   />
                 </ErrorBoundary>
               </div>

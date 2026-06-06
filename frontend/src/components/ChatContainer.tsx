@@ -1,9 +1,13 @@
 import { useEffect, useRef } from 'react';
 import type { ChatMessage } from '../types';
-import { MessageBubble } from './MessageBubble';
-import { formatElapsedSeconds, useElapsedSeconds } from '../hooks/useElapsedSeconds';
-import { isToolMessage } from '../utils/foldPicoclawToolFeedback';
-import { isThoughtMessage } from '../utils/foldThoughtMessages';
+import { ActiveTaskPanel, MessageBubble } from './MessageBubble';
+import { useElapsedSeconds } from '../hooks/useElapsedSeconds';
+import { isChatTaskActive } from '../utils/chatTaskState';
+import {
+  collectActiveTaskSegments,
+  findLastUserIndex,
+  isProcessMessage,
+} from '../utils/foldProcessMessages';
 import { splitAssistantContent } from '../utils/splitAssistantContent';
 import { ChatMascot } from './ChatMascot';
 
@@ -25,6 +29,8 @@ interface ChatContainerProps {
   quickPrompts?: string[];
   /** 仅展示历史记录，不显示「清空」等操作 */
   readOnly?: boolean;
+  /** 当前思考任务的起始时间（ms）；用于刷新后让计时延续 */
+  taskStartedAt?: number | null;
 }
 
 export function ChatContainer({
@@ -36,24 +42,32 @@ export function ChatContainer({
   onQuickPrompt,
   quickPrompts = DOCK_QUICK_PROMPTS,
   readOnly = false,
+  taskStartedAt = null,
 }: ChatContainerProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
 
-  function isThoughtOutputActive(msg: ChatMessage, index: number): boolean {
-    if (index !== messages.length - 1) return false;
-    if (isThoughtMessage(msg)) return true;
-    if (isTyping && msg.role === 'assistant') {
+  const taskActive = !readOnly && isChatTaskActive(messages, isTyping);
+
+  const lastUserIdx = findLastUserIndex(messages);
+
+  function isProcessOutputActive(msg: ChatMessage, index: number): boolean {
+    if (!taskActive || index <= lastUserIdx) return false;
+    if (isProcessMessage(msg)) return true;
+    if (msg.role === 'assistant' && index === messages.length - 1) {
       return Boolean(splitAssistantContent(msg.content).thought);
     }
     return false;
   }
 
+  const taskTiming = useElapsedSeconds(taskActive, { startedAtMs: taskStartedAt });
   const lastMsg = messages.length > 0 ? messages[messages.length - 1] : undefined;
-  const thoughtPanelActive =
-    lastMsg != null && isThoughtOutputActive(lastMsg, messages.length - 1);
-  const showTypingBubble = isTyping && !readOnly && !thoughtPanelActive;
-  const typingTiming = useElapsedSeconds(showTypingBubble);
+  const activeTaskSegments = taskActive ? collectActiveTaskSegments(messages) : [];
+
+  function sharesTaskTiming(msg: ChatMessage, index: number): boolean {
+    if (!taskActive || index !== messages.length - 1) return false;
+    return isProcessOutputActive(msg, index) || lastMsg?.role === 'user';
+  }
 
   useEffect(() => {
     const el = bottomRef.current?.parentElement;
@@ -127,34 +141,26 @@ export function ChatContainer({
         </div>
       )}
 
-      {messages.map((msg, index) => (
-        <MessageBubble
-          key={msg.id}
-          message={msg}
-          variant={variant === 'dock' ? 'dock' : 'default'}
-          toolOutputActive={index === messages.length - 1 && isToolMessage(msg)}
-          thoughtOutputActive={isThoughtOutputActive(msg, index)}
-        />
-      ))}
+      {messages.map((msg, index) => {
+        const attachTaskTiming = sharesTaskTiming(msg, index);
+        return (
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            processOutputActive={isProcessOutputActive(msg, index)}
+            taskElapsedSeconds={attachTaskTiming ? taskTiming.seconds : undefined}
+            taskElapsedCompleted={attachTaskTiming && taskTiming.completed}
+          />
+        );
+      })}
 
-      {showTypingBubble && (
+      {taskActive && (
         <div className="flex w-full items-start">
-          <div className="min-w-0 w-full rounded-2xl rounded-tl-sm border border-border/60 bg-card px-4 py-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-medium tabular-nums text-muted-foreground">
-                努力工作中 · {formatElapsedSeconds(typingTiming.seconds)}
-              </span>
-              <div className="flex gap-1">
-                {[0, 0.2, 0.4].map((delay) => (
-                  <span
-                    key={delay}
-                    className="h-2 w-2 rounded-full bg-violet-400/70 animate-bounce"
-                    style={{ animationDelay: `${delay}s` }}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
+          <ActiveTaskPanel
+            seconds={taskTiming.seconds}
+            segments={activeTaskSegments}
+            messageId={lastMsg?.id ?? 'task'}
+          />
         </div>
       )}
 

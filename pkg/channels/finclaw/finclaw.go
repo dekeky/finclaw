@@ -55,21 +55,28 @@ func (config *FinChannelConfig) getMaxConn() int {
 type FinClawChannel struct {
 	*channels.BaseChannel
 	Ctx          context.Context
+	msgBus       *bus.MessageBus
 	upgrader     websocket.Upgrader
 	conns        map[string]*finConn
 	sessionConns map[string]map[string]*finConn // sessionID -> connID -> *picoConn
 	connsMu      sync.RWMutex
 	sessionBufs  map[string]*SessionBuffer // sessionID -> cached messages buffer
 	bufMu        sync.Mutex
-	config       *FinChannelConfig
-	closed       atomic.Bool
+	// recentUserBySession 记录各 session 最近一条用户输入，用于拦截 picoclaw steering
+	// drain 误将 inbound 重发到 outbound 导致的「用户消息以 assistant 回显」。
+	recentUserMu        sync.Mutex
+	recentUserBySession map[string]string
+	config              *FinChannelConfig
+	closed              atomic.Bool
 }
 
 func NewFinChannel(ctx context.Context, messageBus *bus.MessageBus, config *FinChannelConfig) *FinClawChannel {
 	base := channels.NewBaseChannel("fin", nil, messageBus, nil)
 	return &FinClawChannel{
-		Ctx:         ctx,
-		BaseChannel: base,
+		Ctx:                 ctx,
+		msgBus:              messageBus,
+		BaseChannel:         base,
+		recentUserBySession: make(map[string]string),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -392,6 +399,7 @@ func (fchannel *FinClawChannel) handleMessageSend(fconn *finConn, msg FinMessage
 		"metadata":   metadata,
 	})
 
+	fchannel.recordRecentUserMessage(sessionID, content)
 	fchannel.HandleMessage(fchannel.Ctx, peer, msg.ID, "", chatID, content, nil, metadata)
 
 	logger.InfoCF("fin", "Message sent to bus", map[string]any{
@@ -409,6 +417,64 @@ func truncate(s string, maxLen int) string {
 	return string(runes[:maxLen]) + "..."
 }
 
+func (fchannel *FinClawChannel) recordRecentUserMessage(sessionID, content string) {
+	if sessionID == "" {
+		return
+	}
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return
+	}
+	fchannel.recentUserMu.Lock()
+	fchannel.recentUserBySession[sessionID] = trimmed
+	fchannel.recentUserMu.Unlock()
+}
+
+func (fchannel *FinClawChannel) isMisroutedUserEcho(sessionID, content string, metadata map[string]string) bool {
+	if metadata != nil && metadata["message_kind"] != "" {
+		return false
+	}
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" || sessionID == "" {
+		return false
+	}
+	fchannel.recentUserMu.Lock()
+	recent := fchannel.recentUserBySession[sessionID]
+	fchannel.recentUserMu.Unlock()
+	return recent != "" && recent == trimmed
+}
+
+// republishMisroutedInbound 将 picoclaw steering drain 误发到 outbound 的用户消息重新入队到 inbound。
+func (fchannel *FinClawChannel) republishMisroutedInbound(sessionID string, agentMsg bus.OutboundMessage) {
+	if fchannel.msgBus == nil {
+		return
+	}
+	chatID := agentMsg.ChatID
+	if chatID == "" {
+		chatID = genChatID(sessionID)
+	}
+	ctx, cancel := context.WithTimeout(fchannel.Ctx, 2*time.Second)
+	defer cancel()
+	peer := bus.Peer{Kind: "direct", ID: "fin:" + sessionID}
+	if err := fchannel.msgBus.PublishInbound(ctx, bus.InboundMessage{
+		Channel:  "fin",
+		ChatID:   chatID,
+		Content:  agentMsg.Content,
+		Peer:     peer,
+		Metadata: map[string]string{"platform": "fin", "session_id": sessionID, "requeued": "true"},
+	}); err != nil {
+		logger.WarnCF("fin", "Failed to republish misrouted user echo to inbound", map[string]any{
+			"session_id": sessionID,
+			"error":      err.Error(),
+		})
+		return
+	}
+	logger.InfoCF("fin", "Republished misrouted user echo to inbound bus", map[string]any{
+		"session_id": sessionID,
+		"preview":    truncate(agentMsg.Content, 50),
+	})
+}
+
 func (fchannel *FinClawChannel) ProcessAgentMessage(outbound <-chan bus.OutboundMessage) {
 	for agentMsg := range outbound {
 		logger.InfoCF("fin", "Processing agent message", map[string]any{
@@ -417,6 +483,10 @@ func (fchannel *FinClawChannel) ProcessAgentMessage(outbound <-chan bus.Outbound
 		})
 
 		sessionId := extractSessionIDFromChatId(agentMsg.ChatID)
+		if fchannel.isMisroutedUserEcho(sessionId, agentMsg.Content, agentMsg.Metadata) {
+			fchannel.republishMisroutedInbound(sessionId, agentMsg)
+			continue
+		}
 		fchannel.connsMu.RLock()
 		conns := fchannel.sessionConns[sessionId]
 		fchannel.connsMu.RUnlock()

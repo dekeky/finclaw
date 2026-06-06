@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import type { ChatMessage, ConnectionStatus, MessageKind, WSMessage } from '../types';
-import { foldConsecutiveThoughtMessages } from '../utils/foldThoughtMessages';
-import {
-  foldConsecutivePicoclawToolFeedback,
-  isPicoclawToolFeedbackContent,
-} from '../utils/foldPicoclawToolFeedback';
+import { foldConsecutiveProcessMessages, hasMessageId } from '../utils/foldProcessMessages';
+import { isIncompleteChatTask } from '../utils/chatTaskState';
+import { isPicoclawToolFeedbackContent } from '../utils/foldPicoclawToolFeedback';
 import { isAssistantThoughtOnlyContent } from '../utils/splitAssistantContent';
-import { clearDraft, loadDraft, saveDraft, loadSessionId, saveSessionId } from '@/lib/chatPersistence';
+import { rehydrateChatMessages } from '../utils/rehydrateChatMessages';
+import { clearDraft, loadDraft, saveDraft, loadSessionId, saveSessionId, loadTaskStart, saveTaskStart } from '@/lib/chatPersistence';
 import { getToken, clearToken } from '../api/auth';
 
 const RECONNECT_DELAY = 2000;
@@ -22,6 +22,7 @@ function genId(): string {
 function inferMessageKind(content: string, messageKind?: string): MessageKind | undefined {
   if (messageKind === 'reasoning') return 'thought';
   if (isPicoclawToolFeedbackContent(content)) return 'tool';
+  if (isAssistantThoughtOnlyContent(content)) return 'thought';
   return 'reply';
 }
 
@@ -38,21 +39,71 @@ function parseWsChatMessage(msg: WSMessage, content: string, role: 'user' | 'ass
 }
 
 function foldChatMessages(msgs: ChatMessage[]): ChatMessage[] {
-  return foldConsecutiveThoughtMessages(foldConsecutivePicoclawToolFeedback(msgs));
+  return foldConsecutiveProcessMessages(msgs);
+}
+
+function upsertChatMessage(prev: ChatMessage[], incoming: ChatMessage): ChatMessage[] {
+  // 若 id 已在某条折叠 process 消息的 sourceIds 中，视为已显示，跳过避免重复
+  if (hasMessageId(prev, incoming.id)) {
+    const idx = prev.findIndex((m) => m.id === incoming.id);
+    if (idx < 0) {
+      // 仅在 sourceIds 中找到 → 已经合并显示，无需任何变化
+      return prev;
+    }
+    const existing = prev[idx];
+    // 顶层 id 命中：内容/类型若一致则不变；否则只更新本条而不破坏其它折叠状态
+    if (existing.content === incoming.content && existing.kind === incoming.kind) {
+      return prev;
+    }
+    // 走更新分支前，确认这并不是「折叠 process 消息的首条 sourceId 与 incoming id 相同」的情况，
+    // 否则会把已折叠的合并内容覆盖成单条
+    if (existing.processSegments?.length && existing.processSegments.some((s) => s.sourceIds && s.sourceIds.length > 1)) {
+      // 该 process 消息已合并多条，不应被一条 from_cache 覆盖；忽略此次重放
+      return prev;
+    }
+    const next = [...prev];
+    next[idx] = {
+      ...existing,
+      content: incoming.content,
+      kind: incoming.kind ?? existing.kind,
+      processSegments: incoming.processSegments ?? existing.processSegments,
+    };
+    return foldChatMessages(next);
+  }
+  return foldChatMessages([...prev, incoming]);
+}
+
+function prepareStoredChatMessages(msgs: ChatMessage[]): ChatMessage[] {
+  return foldChatMessages(rehydrateChatMessages(msgs));
+}
+
+/** 检测 picoclaw steering drain 误将用户输入以 assistant 角色回显的情况 */
+function isEchoedUserReply(prev: ChatMessage[], content: string, role: string): boolean {
+  if (role === 'user') return false;
+  const trimmed = content.trim();
+  if (!trimmed) return false;
+  for (let i = prev.length - 1; i >= 0; i--) {
+    if (prev[i].role === 'user') {
+      return prev[i].content.trim() === trimmed;
+    }
+  }
+  return false;
 }
 
 function parseHistory(raw: WSMessage): ChatMessage[] {
   if (!raw.payload?.messages) return [];
-  return raw.payload.messages.map((m) => {
-    const role = m.role === 'user' ? 'user' : 'assistant';
-    return {
-      id: m.id || genId(),
-      role,
-      content: m.content,
-      timestamp: m.timestamp ? new Date(m.timestamp) : new Date(),
-      kind: role === 'assistant' ? inferMessageKind(m.content) : undefined,
-    };
-  });
+  return prepareStoredChatMessages(
+    raw.payload.messages.map((m) => {
+      const role = m.role === 'user' ? 'user' : 'assistant';
+      return {
+        id: m.id || genId(),
+        role,
+        content: m.content,
+        timestamp: m.timestamp ? new Date(m.timestamp) : new Date(),
+        kind: role === 'assistant' ? inferMessageKind(m.content) : undefined,
+      };
+    }),
+  );
 }
 
 export interface UseWebSocketReturn {
@@ -67,6 +118,11 @@ export interface UseWebSocketReturn {
   /** 将归档/历史消息载入当前会话并写入本地草稿 */
   restoreMessages: (messages: ChatMessage[]) => void;
   reconnect: () => void;
+  /**
+   * 当前思考任务的起始时间（ms）。挂载时若 localStorage 中存有未完成任务，会被恢复，
+   * 用于让计时器跨刷新延续显示总耗时；任务结束时置 null 并清除持久化值。
+   */
+  taskStartedAt: number | null;
 }
 
 export interface UseWebSocketOptions {
@@ -84,10 +140,23 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   const persistAgentKey = options?.persistAgentKey ?? null;
   const persistAgentKeyRef = useRef(persistAgentKey);
   persistAgentKeyRef.current = persistAgentKey;
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+    persistAgentKey ? prepareStoredChatMessages(loadDraft(persistAgentKey)) : [],
+  );
   const [status, setStatus] = useState<ConnectionStatus>('idle');
-  const [isTyping, setIsTyping] = useState(false);
+  const [isTyping, setIsTyping] = useState(() => {
+    if (!persistAgentKey) return false;
+    return isIncompleteChatTask(prepareStoredChatMessages(loadDraft(persistAgentKey)));
+  });
   const [sendError, setSendError] = useState<string | null>(null);
+  /** 当前思考任务的起始时间戳（ms）；null 表示无进行中任务 */
+  // 初始化时直接从 persistence 读取，确保 ChatContainer 首帧就能拿到正确的时间戳
+  const [taskStartedAt, setTaskStartedAt] = useState<number | null>(() => {
+    return persistAgentKey ? loadTaskStart(persistAgentKey) : null;
+  });
+  /** 与 taskStartedAt 同步，用于在 callback 内避免重复 beginTask */
+  const taskStartedAtRef = useRef<number | null>(null);
+  taskStartedAtRef.current = taskStartedAt;
   const wsRef = useRef<WebSocket | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const reconnectCountRef = useRef(0);
@@ -105,6 +174,23 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   /** 始终指向最新 messages，供卸载 cleanup 同步落盘 */
   const messagesRef = useRef<ChatMessage[]>(messages);
   messagesRef.current = messages;
+
+  /** 开启一次思考任务：写入起始时间戳并持久化，刷新后可恢复。 */
+  const beginTask = useCallback(() => {
+    const now = Date.now();
+    setTaskStartedAt(now);
+    if (persistAgentKeyRef.current) {
+      saveTaskStart(persistAgentKeyRef.current, now);
+    }
+  }, []);
+
+  /** 关闭当前思考任务并清除持久化值。 */
+  const endTask = useCallback(() => {
+    setTaskStartedAt(null);
+    if (persistAgentKeyRef.current) {
+      saveTaskStart(persistAgentKeyRef.current, null);
+    }
+  }, []);
 
   const reset = useCallback(() => {
     if (typingFallbackRef.current) {
@@ -165,6 +251,10 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         console.log('[Finclaw WS] SessionID set to:', sessionIdRef.current);
         break;
 
+      case 'pong':
+        // 服务端 JSON pong：更新活动时间，避免 visibility 探活误判为死连接
+        break;
+
       case 'history': {
         const history = parseHistory(msg);
         if (history.length === 0) break;
@@ -184,81 +274,79 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
           console.warn('[Finclaw WS] Empty content in message.send:', msg);
           break;
         }
-        // Deduplicate cached messages that may have already been displayed
-        const fromCache = (msg as any).from_cache === true;
-        if (fromCache) {
-          const msgId = msg.id || '';
-          let isDuplicate = false;
-          setMessages(prev => {
-            if (prev.some(m => m.id === msgId)) {
-              isDuplicate = true;
-              return prev;
-            }
-            return foldChatMessages([
-              ...prev,
-              parseWsChatMessage(msg, content, role === 'user' ? 'user' : 'assistant'),
-            ]);
-          });
-          if (isDuplicate) {
-            console.log('[Finclaw WS] Skipping duplicate cached message:', msgId);
-            break;
-          }
-          // Message was added inside setMessages, skip the common path below
-          const messageKind2 =
-            typeof msg.payload?.message_kind === 'string' ? msg.payload.message_kind : undefined;
-          if (role !== 'user') {
-            const inProgress2 =
-              messageKind2 === 'reasoning' ||
-              isPicoclawToolFeedbackContent(content) ||
-              isAssistantThoughtOnlyContent(content);
-            if (!inProgress2) {
-              clearTypingFallback();
-              setIsTyping(false);
-            } else {
-              setIsTyping(true);
-              armTypingFallback();
-            }
-          }
+        if (isEchoedUserReply(messagesRef.current, content, role)) {
+          console.log('[Finclaw WS] Skipping echoed user message mislabeled as assistant:', content.slice(0, 64));
           break;
         }
+        const incoming = parseWsChatMessage(msg, content, role === 'user' ? 'user' : 'assistant');
+        const fromCache = (msg as any).from_cache === true;
         const messageKind =
           typeof msg.payload?.message_kind === 'string' ? msg.payload.message_kind : undefined;
+        const inProgress =
+          messageKind === 'reasoning' ||
+          isPicoclawToolFeedbackContent(content) ||
+          isAssistantThoughtOnlyContent(content);
+
+        // 统一走 upsert：已经被折叠到 process 段中的 sourceId 会被识别并跳过，
+        // 避免「from_cache 重放」覆盖刷新前已合并的多段内容。
+        let added = false;
+        let prevSnapshotLen = 0;
+        setMessages((prev) => {
+          prevSnapshotLen = prev.length;
+          const already = hasMessageId(prev, incoming.id);
+          const next = upsertChatMessage(prev, incoming);
+          added = !already;
+          return next;
+        });
+        // 增量诊断日志：刷新后排查「面板内容未追加」时定位丢失环节
+        console.log('[Finclaw WS] message recv:', {
+          id: incoming.id,
+          fromCache,
+          inProgress,
+          messageKind,
+          role,
+          added,
+          prevLen: prevSnapshotLen,
+          contentPreview: content.slice(0, 64),
+        });
+        if (fromCache && !added) {
+          // 已经显示过的缓存重放：不再触发 typing 状态变更
+          console.log('[Finclaw WS] Skipping already-displayed cached message:', incoming.id);
+          break;
+        }
+
         if (role !== 'user') {
-          // 工具进度 / 思考流 / 仅思考块：仍算进行中，直到出现正文回复
-          const inProgress =
-            messageKind === 'reasoning' ||
-            isPicoclawToolFeedbackContent(content) ||
-            isAssistantThoughtOnlyContent(content);
-          if (!inProgress) {
-            clearTypingFallback();
-            setIsTyping(false);
-          } else {
+          if (inProgress) {
+            // 思考 / 工具进度 / 仅思考块：仍算进行中
             setIsTyping(true);
             armTypingFallback();
+            if (!taskStartedAtRef.current) beginTask();
+          } else {
+            // 收到完整正文回复：结束 typing 状态。
+            clearTypingFallback();
+            setIsTyping(false);
+            endTask();
           }
         }
-        setMessages((prev) =>
-          foldChatMessages([
-            ...prev,
-            parseWsChatMessage(msg, content, role === 'user' ? 'user' : 'assistant'),
-          ]),
-        );
         break;
       }
 
       case 'typing_start':
         setIsTyping(true);
         armTypingFallback();
+        if (!taskStartedAtRef.current) beginTask();
         break;
 
       case 'typing_stop':
         clearTypingFallback();
         setIsTyping(false);
+        endTask();
         break;
 
       case 'error': {
         clearTypingFallback();
         setIsTyping(false);
+        endTask();
         // @ts-ignore backend sends {type:"error", payload:{message:"..."}} or {error:"..."}
         const errContent = (msg.payload as any)?.message || msg.payload?.content || (msg as any).error;
         console.error('[Finclaw WS] Server error:', errContent, 'Full message:', msg);
@@ -289,7 +377,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         break;
       }
     }
-  }, []);
+  }, [beginTask, endTask]);
 
   const connect = useCallback(() => {
     const target = urlRef.current;
@@ -327,7 +415,9 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         const sep = wsUrl.includes('?') ? '&' : '?';
         wsUrl = `${wsUrl}${sep}token=${encodeURIComponent(token)}`;
       }
-      console.log('[Finclaw WS] connect(): creating WebSocket, sid=', sid);
+      // 诊断：dump localStorage 中的 agent bucket 内容
+      try { console.log('[Finclaw WS] connect: bucket=', JSON.parse(localStorage.getItem('finclaw.chat.v1') || '{}').agents?.[persistAgentKeyRef.current || '']); } catch {}
+      console.log('[Finclaw WS] connect(): creating WebSocket, sid=', sid, 'persistAgentKey=', persistAgentKeyRef.current, 'urlHasSid=', wsUrl.includes('sessionId='));
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -442,11 +532,12 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     setIsTyping(false);
     setMessages([]);
     sessionIdRef.current = null;
+    endTask();
     if (persistAgentKey) {
       clearDraft(persistAgentKey);
       saveSessionId(persistAgentKey, null);
     }
-  }, [persistAgentKey]);
+  }, [persistAgentKey, endTask]);
 
   const restoreMessages = useCallback(
     (msgs: ChatMessage[]) => {
@@ -456,14 +547,15 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       }
       setIsTyping(false);
       setSendError(null);
-      const folded = foldChatMessages(msgs);
+      endTask();
+      const folded = prepareStoredChatMessages(msgs);
       setMessages(folded);
       if (persistAgentKey) {
         saveDraft(persistAgentKey, folded);
         skipPersistRef.current = true;
       }
     },
-    [persistAgentKey],
+    [persistAgentKey, endTask],
   );
 
   const reconnect = useCallback(() => {
@@ -515,6 +607,8 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       );
       // 元宝式：发出后即显示「正在思考」，不依赖服务端 typing_start
       setIsTyping(true);
+      // 用户发送即视为新任务开始，记录起点并持久化（覆盖之前可能残留的值）
+      beginTask();
       if (typingFallbackRef.current) {
         clearTimeout(typingFallbackRef.current);
       }
@@ -532,7 +626,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       console.log('[Finclaw WS] Sending:', JSON.stringify(msg));
       ws.send(JSON.stringify(msg));
     },
-    []
+    [beginTask]
   );
 
   const stop = useCallback(() => {
@@ -541,7 +635,8 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       typingFallbackRef.current = null;
     }
     setIsTyping(false);
-  }, []);
+    endTask();
+  }, [endTask]);
 
   // url 变更或挂载/卸载时：重置连接；若有 persistAgentKey 则从本地恢复该 Agent 草稿
   useEffect(() => {
@@ -554,9 +649,36 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     skipPersistRef.current = true;
     console.log('[Finclaw WS] useEffect mount:', { url, persistAgentKey, sessionId: sessionIdRef.current });
     if (persistAgentKey && url) {
-      setMessages(loadDraft(persistAgentKey));
+      const restored = prepareStoredChatMessages(loadDraft(persistAgentKey));
+      // 必须在 connect() 之前同步落盘到 state，否则本地/快速 WS 重连时
+      // from_cache 与实时消息会先写入 []，随后被异步 setMessages(restored) 覆盖而「中断」。
+      messagesRef.current = restored;
+      flushSync(() => {
+        setMessages(restored);
+        if (isIncompleteChatTask(restored)) {
+          setIsTyping(true);
+          const persisted = loadTaskStart(persistAgentKey);
+          const start = persisted ?? Date.now();
+          setTaskStartedAt(start);
+          if (persisted == null) saveTaskStart(persistAgentKey, start);
+        } else {
+          setTaskStartedAt(null);
+          saveTaskStart(persistAgentKey, null);
+        }
+      });
+      if (isIncompleteChatTask(restored)) {
+        if (typingFallbackRef.current) clearTimeout(typingFallbackRef.current);
+        typingFallbackRef.current = setTimeout(() => {
+          typingFallbackRef.current = null;
+          setIsTyping(false);
+        }, TYPING_FALLBACK_MS);
+      }
     } else {
-      setMessages([]);
+      messagesRef.current = [];
+      flushSync(() => {
+        setMessages([]);
+        setTaskStartedAt(null);
+      });
     }
     reset();
     if (url) {
@@ -626,5 +748,29 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     };
   }, [reconnect]);
 
-  return { messages, status, isTyping, sendError, send, stop, clearMessages, restoreMessages, reconnect };
+  // 浏览器刷新/关闭前最后一次落盘：React 的 useEffect cleanup 在 F5 时不一定会跑，
+  // 这里通过 pagehide / beforeunload 主动保 sessionId 与最新 draft。
+  useEffect(() => {
+    if (!persistAgentKey) return;
+    const flush = () => {
+      try {
+        if (sessionIdRef.current) {
+          saveSessionId(persistAgentKey, sessionIdRef.current);
+        }
+        if (messagesRef.current.length > 0) {
+          saveDraft(persistAgentKey, messagesRef.current);
+        }
+      } catch {
+        // 忽略 quota / privacy 错误
+      }
+    };
+    window.addEventListener('pagehide', flush);
+    window.addEventListener('beforeunload', flush);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('beforeunload', flush);
+    };
+  }, [persistAgentKey]);
+
+  return { messages, status, isTyping, sendError, send, stop, clearMessages, restoreMessages, reconnect, taskStartedAt };
 }

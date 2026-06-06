@@ -1,4 +1,4 @@
-import type { ChatMessage, MessageRole } from '@/types';
+import type { ChatMessage, MessageKind, MessageRole, ProcessSegment } from '@/types';
 
 const STORAGE_KEY = 'finclaw.chat.v1';
 const STORAGE_VERSION = 1 as const;
@@ -9,6 +9,8 @@ export interface PersistedMessage {
   role: MessageRole;
   content: string;
   timestamp: string;
+  kind?: MessageKind;
+  processSegments?: ProcessSegment[];
 }
 
 export interface ArchivedChat {
@@ -22,6 +24,8 @@ interface AgentBucket {
   draft: PersistedMessage[];
   archived: ArchivedChat[];
   sessionId?: string;
+  /** 当前进行中思考任务的起始时间戳（ms）。任务结束后清空。 */
+  taskStartMs?: number;
 }
 
 interface PersistRoot {
@@ -62,12 +66,15 @@ function writeRoot(root: PersistRoot): void {
 }
 
 function msgToPersisted(m: ChatMessage): PersistedMessage {
-  return {
+  const row: PersistedMessage = {
     id: m.id,
     role: m.role,
     content: m.content,
     timestamp: (m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp)).toISOString(),
   };
+  if (m.kind) row.kind = m.kind;
+  if (m.processSegments?.length) row.processSegments = m.processSegments;
+  return row;
 }
 
 export function persistedToMessages(rows: PersistedMessage[]): ChatMessage[] {
@@ -76,6 +83,8 @@ export function persistedToMessages(rows: PersistedMessage[]): ChatMessage[] {
     role: m.role,
     content: m.content,
     timestamp: new Date(m.timestamp),
+    kind: m.kind,
+    processSegments: m.processSegments,
   }));
 }
 
@@ -151,12 +160,47 @@ export function deleteArchived(agentName: string, archiveId: string): boolean {
 
 export function loadSessionId(agentName: string): string | null {
   const root = readRoot();
-  return root.agents[agentName]?.sessionId ?? null;
+  const fromRoot = root.agents[agentName]?.sessionId ?? null;
+  if (fromRoot) return fromRoot;
+  // 兜底：从独立 key 读取，避免上层 bucket 被意外覆盖时 sessionId 也跟着丢
+  try {
+    return localStorage.getItem(`finclaw.chat.sid.${agentName}`);
+  } catch {
+    return null;
+  }
 }
 
 export function saveSessionId(agentName: string, sessionId: string | null): void {
   const root = readRoot();
   const prev = root.agents[agentName] ?? emptyBucket();
   root.agents[agentName] = { ...prev, sessionId: sessionId ?? undefined };
+  writeRoot(root);
+  // 同步写入独立 key 作为兜底，避免被其它 bucket 写操作误覆盖
+  try {
+    if (sessionId) {
+      localStorage.setItem(`finclaw.chat.sid.${agentName}`, sessionId);
+    } else {
+      localStorage.removeItem(`finclaw.chat.sid.${agentName}`);
+    }
+  } catch {
+    // ignore quota / privacy
+  }
+}
+
+/** 读取当前正在进行的思考任务起始时间（ms）；无任务时返回 null。 */
+export function loadTaskStart(agentName: string): number | null {
+  const root = readRoot();
+  const v = root.agents[agentName]?.taskStartMs;
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** 记录或清除当前思考任务的起始时间；传 null 表示任务结束。 */
+export function saveTaskStart(agentName: string, startedAtMs: number | null): void {
+  const root = readRoot();
+  const prev = root.agents[agentName] ?? emptyBucket();
+  root.agents[agentName] = {
+    ...prev,
+    taskStartMs: startedAtMs == null ? undefined : startedAtMs,
+  };
   writeRoot(root);
 }

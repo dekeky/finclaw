@@ -281,7 +281,7 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
   }, []);
 
   const { agents, currentAgent, selectAgent, status: agentsStatus } = useAgents();
-  const { messages, status, isTyping, sendError, send, clearMessages, reconnect } = useChatSession();
+  const { messages, status, isTyping, sendError, send, clearMessages, reconnect, taskStartedAt } = useChatSession();
 
   const hasFeed = listEntries.length > 0;
   const noAgent = !currentAgent;
@@ -519,6 +519,7 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
                   agentName={currentAgent}
                   variant="dock"
                   onQuickPrompt={handleSend}
+                  taskStartedAt={taskStartedAt}
                 />
               </div>
             </ErrorBoundary>

@@ -1,52 +1,27 @@
-﻿import { useRef, useLayoutEffect, useEffect, useState } from 'react';
-import type { ChatMessage } from '../types';
-import { formatElapsedSeconds, useElapsedSeconds } from '../hooks/useElapsedSeconds';
+﻿import { useRef, useLayoutEffect, useState, type Ref } from 'react';
+import type { ChatMessage, ProcessSegment } from '../types';
+import { formatElapsedSeconds } from '../hooks/useElapsedSeconds';
 import { MarkdownContent } from './MarkdownContent';
 import { AGGREGATED_TOOL_FEEDBACK_JOIN, isPicoclawToolFeedbackContent } from '../utils/foldPicoclawToolFeedback';
+import { AGGREGATED_THOUGHT_JOIN } from '../utils/foldThoughtMessages';
+import { getProcessSegments, isProcessMessage } from '../utils/foldProcessMessages';
 import { splitAssistantContent } from '../utils/splitAssistantContent';
-import * as Collapsible from '@radix-ui/react-collapsible';
-
-const TOOL_EMOJI = '\u{1F527}';
-
+import { ThinkingIndicator, ThinkingIndicatorShell } from './ThinkingIndicator';
 interface MessageBubbleProps {
   message: ChatMessage;
   variant?: 'default' | 'dock';
-  toolOutputActive?: boolean;
-  thoughtOutputActive?: boolean;
-}
-
-function ellipsisOneLine(text: string, max: number): string {
-  const t = text.replace(/\s+/g, ' ').trim();
-  if (t.length <= max) return t;
-  return `${t.slice(0, max).trimEnd()}\u2026`;
+  processOutputActive?: boolean;
+  /** 由 ChatContainer 统一计时，避免首个工具到达时重置 */
+  taskElapsedSeconds?: number;
+  taskElapsedCompleted?: boolean;
 }
 
 function parseToolFeedbackParts(content: string): string[] {
   return content.split(AGGREGATED_TOOL_FEEDBACK_JOIN).map((s) => s.trim()).filter(Boolean);
 }
 
-function summarizeToolFeedback(content: string): string {
-  const parts = parseToolFeedbackParts(content);
-  if (parts.length <= 1) {
-    const line = content.split('\n')[0]?.trim() || '';
-    if (!line) return '\u5de5\u5177\u6267\u884c';
-    const one = ellipsisOneLine(line, 88);
-    return one.startsWith(TOOL_EMOJI)
-      ? `\u5de5\u5177\u6267\u884c ${one.replace(new RegExp(`^${TOOL_EMOJI}\\s*`), '')}`
-      : `\u5de5\u5177\u6267\u884c ${one}`;
-  }
-  const names: string[] = [];
-  for (const p of parts) {
-    const first = p.split('\n')[0]?.trim() || '';
-    const m = new RegExp(`^${TOOL_EMOJI}\\s*\`([^\`]+)\``).exec(first);
-    if (m) names.push(m[1]);
-  }
-  if (names.length > 0) {
-    const head = names.slice(0, 3).join('\u3001');
-    const suf = names.length > 3 ? ` \u7b49 ${names.length} \u4e2a` : '';
-    return `\u5de5\u5177\u6267\u884c ${head}${suf}`;
-  }
-  return `\u5de5\u5177\u6267\u884c ${parts.length} \u9879`;
+function parseThoughtParts(content: string): string[] {
+  return content.split(AGGREGATED_THOUGHT_JOIN).map((s) => s.trim()).filter(Boolean);
 }
 
 function AssistantMarkdownBody({ messageId, content }: { messageId: string; content: string }) {
@@ -54,6 +29,28 @@ function AssistantMarkdownBody({ messageId, content }: { messageId: string; cont
     <MarkdownContent idPrefix={messageId} size="md">
       {content}
     </MarkdownContent>
+  );
+}
+
+function ThoughtBody({ messageId, content }: { messageId: string; content: string }) {
+  const parts = parseThoughtParts(content);
+  if (parts.length <= 1) {
+    return (
+      <MarkdownContent idPrefix={messageId} size="sm" compact>
+        {content}
+      </MarkdownContent>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      {parts.map((part, index) => (
+        <div key={index} className={index > 0 ? 'border-t border-amber-500/10 pt-1' : undefined}>
+          <MarkdownContent idPrefix={`${messageId}-thought-${index}`} size="sm" compact>
+            {part}
+          </MarkdownContent>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -67,9 +64,9 @@ function ToolFeedbackBody({ messageId, content }: { messageId: string; content: 
     );
   }
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-1">
       {parts.map((part, index) => (
-        <div key={index} className={index > 0 ? 'border-t border-border/40 pt-2' : undefined}>
+        <div key={index} className={index > 0 ? 'border-t border-border/40 pt-1' : undefined}>
           <MarkdownContent idPrefix={`${messageId}-tool-${index}`} size="sm" compact>
             {part}
           </MarkdownContent>
@@ -79,42 +76,131 @@ function ToolFeedbackBody({ messageId, content }: { messageId: string; content: 
   );
 }
 
-type ProcessPanelTone = 'thought' | 'tool';
-
-function CollapsibleProcessPanel({
-  tone,
-  summaryLabel,
-  content,
-  isActive,
-  children,
+function ProcessSegmentBody({
+  segment,
+  index,
+  messageId,
 }: {
-  tone: ProcessPanelTone;
-  summaryLabel: string;
-  content: string;
-  isActive?: boolean;
-  children: React.ReactNode;
+  segment: ProcessSegment;
+  index: number;
+  messageId: string;
+}) {
+  if (segment.type === 'tool') {
+    return <ToolFeedbackBody messageId={`${messageId}-seg-${index}`} content={segment.content} />;
+  }
+  return <ThoughtBody messageId={`${messageId}-seg-${index}`} content={segment.content} />;
+}
+
+function ProcessStreamBody({
+  segments,
+  messageId,
+  scrollRef,
+  onScroll,
+  className = '',
+}: {
+  segments: ProcessSegment[];
+  messageId: string;
+  scrollRef?: Ref<HTMLDivElement>;
+  onScroll?: () => void;
+  className?: string;
+}) {
+  const showSegmentLabels = segments.length > 1;
+  return (
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      className={`max-h-[min(320px,50vh)] overflow-y-auto overflow-x-hidden scroll-smooth text-[13px] leading-relaxed text-muted-foreground [scrollbar-gutter:stable] ${className}`}
+    >
+      {segments.map((segment, idx) => (
+        <div
+          key={idx}
+          className={idx > 0 ? 'mt-1.5 border-t border-amber-500/10 pt-1.5' : undefined}
+        >
+          {showSegmentLabels && (
+            <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700/70 dark:text-amber-300/70">
+              {segment.type === 'tool' ? '\u5de5\u5177' : '\u601d\u8003'}
+            </div>
+          )}
+          <ProcessSegmentBody segment={segment} index={idx} messageId={messageId} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** 进行中：思考标题 + 过程流式内容，同一容器 */
+export function ActiveTaskPanel({
+  seconds,
+  segments,
+  messageId,
+}: {
+  seconds: number;
+  segments: ProcessSegment[];
+  messageId: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const userPinnedRef = useRef(false);
-  const userExpandedRef = useRef(false);
-  const [open, setOpen] = useState(Boolean(isActive));
-
-  useEffect(() => {
-    if (isActive) {
-      setOpen(true);
-      userExpandedRef.current = false;
-      userPinnedRef.current = false;
-    } else if (!userExpandedRef.current) {
-      setOpen(false);
-    }
-  }, [isActive]);
+  const contentKey = segments.map((s) => s.content).join('\u0000');
 
   useLayoutEffect(() => {
-    if (!open || !isActive) return;
+    const el = scrollRef.current;
+    if (!el || userPinnedRef.current || segments.length === 0) return;
+    el.scrollTop = el.scrollHeight;
+  }, [contentKey, segments.length]);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    userPinnedRef.current = !atBottom;
+  };
+
+  return (
+    <ThinkingIndicatorShell>
+      <ThinkingIndicator seconds={seconds} />
+      {segments.length > 0 && (
+        <ProcessStreamBody
+          segments={segments}
+          messageId={messageId}
+          scrollRef={scrollRef}
+          onScroll={handleScroll}
+          className="mt-3 border-t border-amber-500/20 pt-3"
+        />
+      )}
+    </ThinkingIndicatorShell>
+  );
+}
+
+export function getActiveProcessSegments(message: ChatMessage): ProcessSegment[] {
+  if (message.role !== 'assistant') return [];
+  if (isProcessMessage(message)) return getProcessSegments(message);
+  const { thought } = splitAssistantContent(message.content);
+  if (thought) return [{ type: 'thought', content: thought }];
+  return [];
+}
+
+function AgentProcessPanel({
+  segments,
+  messageId,
+  taskElapsedSeconds,
+  taskElapsedCompleted,
+}: {
+  segments: ProcessSegment[];
+  messageId: string;
+  taskElapsedSeconds?: number;
+  taskElapsedCompleted?: boolean;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const userPinnedRef = useRef(false);
+  const [open, setOpen] = useState(false);
+  const contentKey = segments.map((s) => s.content).join('\u0000');
+
+  useLayoutEffect(() => {
+    if (!open) return;
     const el = scrollRef.current;
     if (!el || userPinnedRef.current) return;
     el.scrollTop = el.scrollHeight;
-  }, [content, open, isActive]);
+  }, [contentKey, open]);
 
   const handleScroll = () => {
     const el = scrollRef.current;
@@ -124,29 +210,18 @@ function CollapsibleProcessPanel({
   };
 
   const handleToggle = () => {
-    userExpandedRef.current = true;
-    setOpen((v) => !v);
+    setOpen((v) => {
+      if (!v) userPinnedRef.current = false;
+      return !v;
+    });
   };
 
-  const timing = useElapsedSeconds(Boolean(isActive));
-  const isThought = tone === 'thought';
-  const shellClass = isThought
-    ? 'border-amber-500/25 bg-amber-500/5'
-    : 'border-border/50 bg-muted/15';
-  const headerClass = isThought
-    ? 'border-amber-500/20 bg-amber-500/10 hover:bg-amber-500/15'
-    : 'border-border/30 bg-muted/25 hover:bg-muted/35';
-  const pulseClass = isThought ? 'bg-amber-500' : 'bg-emerald-500';
-  const statusClass = isThought
-    ? 'text-amber-700/80 dark:text-amber-300/80'
-    : 'text-emerald-600/80 dark:text-emerald-400/80';
-
   return (
-    <div className={`w-full overflow-hidden rounded-lg border ${shellClass}`}>
+    <div className="w-full overflow-hidden rounded-lg border border-amber-500/25 bg-amber-500/5">
       <button
         type="button"
         onClick={handleToggle}
-        className={`flex w-full items-center gap-2 border-b px-3 py-2 text-left transition-colors ${headerClass}`}
+        className="flex w-full items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 py-2 text-left transition-colors hover:bg-amber-500/15"
       >
         <svg
           width="12"
@@ -159,280 +234,63 @@ function CollapsibleProcessPanel({
         >
           <polyline points="9 18 15 12 9 6" />
         </svg>
-        {isActive && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${pulseClass} animate-pulse`} aria-hidden />}
-        <span
-          className={`min-w-0 flex-1 truncate text-xs font-medium ${
-            isThought ? 'text-amber-800/90 dark:text-amber-200/90' : 'text-muted-foreground'
-          }`}
-        >
-          {summaryLabel}
+        <span className="min-w-0 flex-1 truncate text-xs text-amber-800/90 dark:text-amber-200/90">
+          工作过程
         </span>
-        {timing.running && (
-          <span className={`shrink-0 text-[10px] tabular-nums ${statusClass}`}>
-            {isThought ? '\u52aa\u529b\u5de5\u4f5c\u4e2d' : '\u5de5\u5177\u6267\u884c\u4e2d'} {formatElapsedSeconds(timing.seconds)}
-          </span>
-        )}
-        {timing.completed && timing.seconds > 0 && (
-          <span className={`shrink-0 text-[10px] tabular-nums ${statusClass}`}>
-            耗时 {formatElapsedSeconds(timing.seconds)}
+        {taskElapsedCompleted && taskElapsedSeconds !== undefined && taskElapsedSeconds > 0 && (
+          <span className="shrink-0 text-[10px] tabular-nums text-amber-700/80 dark:text-amber-300/80">
+            耗时 {formatElapsedSeconds(taskElapsedSeconds)}
           </span>
         )}
       </button>
       {open && (
-        <div
-          ref={scrollRef}
+        <ProcessStreamBody
+          segments={segments}
+          messageId={messageId}
+          scrollRef={scrollRef}
           onScroll={handleScroll}
-          className={`overflow-y-auto overflow-x-hidden px-3 py-3 text-[13px] leading-relaxed scroll-smooth [scrollbar-gutter:stable] ${
-            isThought
-              ? 'max-h-[min(280px,45vh)] text-muted-foreground'
-              : 'max-h-[min(360px,50vh)] text-foreground'
-          }`}
-        >
-          {children}
-        </div>
+          className="px-3 py-2"
+        />
       )}
     </div>
   );
 }
 
-interface ReasoningStep {
-  icon: string;
-  label: string;
-  content: string;
-}
-
-const STEP_INDICATORS: Record<string, string> = {
-  search: '\u{1F50D}',
-  '\u5206\u6790': '\u{1F4CA}',
-  '\u63a8\u7406': '\u{1F4A1}',
-  '\u7ed3\u8bba': '\u2713',
-  '\u9a8c\u8bc1': '\u2705',
-  default: '\u{1F4AD}',
-};
-
-function parseThinkingSteps(content: string): ReasoningStep[] {
-  const steps: ReasoningStep[] = [];
-  const lines = content.split('\n');
-  let currentStep: ReasoningStep | null = null;
-  let currentContent: string[] = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-
-    const stepMatch = /^([\u{1F50D}\u{1F4CA}\u{1F4A1}\u2713\u2705\u2753])\s*([^\n:]+)[:：]?\s*(.*)$/u.exec(trimmed);
-    const headerMatch = /^##?\s*([^\n]+)$/.exec(trimmed);
-
-    if (stepMatch) {
-      if (currentStep) {
-        currentStep.content = currentContent.join('\n').trim();
-        steps.push(currentStep);
-      }
-      currentStep = { icon: stepMatch[1], label: stepMatch[2] || '\u6b65\u9aa4', content: stepMatch[3] || '' };
-      currentContent = [];
-    } else if (headerMatch && currentStep) {
-      const headerText = headerMatch[1].toLowerCase();
-      let icon = STEP_INDICATORS.default;
-      for (const [key, val] of Object.entries(STEP_INDICATORS)) {
-        if (headerText.includes(key)) {
-          icon = val;
-          break;
-        }
-      }
-      currentStep.icon = icon;
-      currentStep.label = headerMatch[1];
-    } else if (currentStep) {
-      currentContent.push(trimmed);
-    } else {
-      currentStep = { icon: '\u{1F4AD}', label: '\u601d\u8003', content: trimmed };
-      currentContent = [];
-    }
-  }
-
-  if (currentStep) {
-    currentStep.content = currentContent.join('\n').trim() || currentStep.content;
-    if (currentStep.content) steps.push(currentStep);
-  }
-
-  if (steps.length === 0 && content.trim()) {
-    steps.push({ icon: '\u{1F4AD}', label: '\u601d\u8003\u8fc7\u7a0b', content: content.trim() });
-  }
-
-  return steps;
-}
-
-function ThinkingPanel({
-  content,
-  isActive,
-  messageId,
-}: {
-  content: string;
-  isActive?: boolean;
-  messageId: string;
-}) {
-  const steps = parseThinkingSteps(content);
-  const [collapsed, setCollapsed] = useState(!isActive);
-  const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set([0]));
-  const timing = useElapsedSeconds(Boolean(isActive));
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const userPinnedRef = useRef(false);
-
-  useEffect(() => {
-    if (isActive) setCollapsed(false);
-  }, [isActive]);
-
-  useLayoutEffect(() => {
-    if (collapsed || !isActive) return;
-    const el = scrollRef.current;
-    if (!el || userPinnedRef.current) return;
-    el.scrollTop = el.scrollHeight;
-  }, [content, collapsed, isActive]);
-
-  const handleScroll = () => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
-    userPinnedRef.current = !atBottom;
-  };
-
-  const toggleStep = (idx: number) => {
-    setExpandedSteps((prev) => {
-      const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx);
-      else next.add(idx);
-      return next;
-    });
-  };
-
-  const isSingleStep = steps.length <= 1;
-
-  return (
-    <Collapsible.Root open={!collapsed} onOpenChange={(open) => setCollapsed(!open)}>
-      <div className="overflow-hidden rounded-lg border border-amber-500/25 bg-amber-500/5">
-        <Collapsible.Trigger asChild>
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 py-2 text-left transition-colors hover:bg-amber-500/15"
-          >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              className={`shrink-0 text-muted-foreground transition-transform ${collapsed ? '' : 'rotate-90'}`}
-            >
-              <polyline points="9 18 15 12 9 6" />
-            </svg>
-            {isActive && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500 animate-pulse" aria-hidden />}
-            <span className="min-w-0 flex-1 truncate text-xs font-medium text-amber-800/90 dark:text-amber-200/90">
-              思考过程{steps.length > 1 ? ` · ${steps.length} 个步骤` : ''}
-            </span>
-            {timing.running && (
-              <span className="shrink-0 text-[10px] tabular-nums text-amber-700/80 dark:text-amber-300/80">
-                努力工作中 · {formatElapsedSeconds(timing.seconds)}
-              </span>
-            )}
-            {timing.completed && timing.seconds > 0 && (
-              <span className="shrink-0 text-[10px] tabular-nums text-amber-700/80 dark:text-amber-300/80">
-                耗时 {formatElapsedSeconds(timing.seconds)}
-              </span>
-            )}
-            {!timing.running && !timing.completed && !collapsed && (
-              <span className="shrink-0 text-[10px] text-amber-700/80 dark:text-amber-300/80">点击折叠</span>
-            )}
-          </button>
-        </Collapsible.Trigger>
-
-        <Collapsible.Content>
-          <div
-            ref={scrollRef}
-            onScroll={handleScroll}
-            className="max-h-[min(320px,50vh)] overflow-y-auto overflow-x-hidden scroll-smooth px-3 py-3 text-[13px] leading-relaxed text-muted-foreground [scrollbar-gutter:stable]"
-          >
-            {steps.map((step, idx) => {
-              const isExpanded = expandedSteps.has(idx);
-              const isLastActive = isActive && idx === steps.length - 1;
-
-              if (isSingleStep) {
-                return (
-                  <div key={idx} className="space-y-2">
-                    <AssistantMarkdownBody messageId={`${messageId}-step-${idx}`} content={step.content} />
-                  </div>
-                );
-              }
-
-              return (
-                <div key={idx} className="mb-3 last:mb-0">
-                  <button type="button" onClick={() => toggleStep(idx)} className="group flex w-full items-center gap-2 text-left">
-                    <span className="shrink-0 text-base">{step.icon}</span>
-                    <span className="text-xs font-medium text-amber-700/90 transition-colors group-hover:text-amber-600/90 dark:text-amber-300/90">
-                      {step.label}
-                    </span>
-                    {isLastActive && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500 animate-pulse" aria-hidden />}
-                    <svg
-                      width="10"
-                      height="10"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      className={`ml-auto shrink-0 text-muted-foreground transition-transform ${isExpanded ? 'rotate-90' : ''}`}
-                    >
-                      <polyline points="9 18 15 12 9 6" />
-                    </svg>
-                  </button>
-                  {isExpanded && (
-                    <div className="mt-2 border-l border-amber-500/20 pl-6">
-                      <AssistantMarkdownBody messageId={`${messageId}-step-${idx}`} content={step.content} />
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </Collapsible.Content>
-      </div>
-    </Collapsible.Root>
-  );
-}
-
-export function MessageBubble({ message, toolOutputActive, thoughtOutputActive }: MessageBubbleProps) {
+export function MessageBubble({
+  message,
+  processOutputActive,
+  taskElapsedSeconds,
+  taskElapsedCompleted,
+}: MessageBubbleProps) {
   const time = message.timestamp.toLocaleTimeString('zh-CN', {
     hour: '2-digit',
     minute: '2-digit',
   });
 
   const isUser = message.role === 'user';
-  const isThoughtMessage = !isUser && message.kind === 'thought';
-  const isToolFeedback = !isUser && (message.kind === 'tool' || isPicoclawToolFeedbackContent(message.content));
+  const isProcess = !isUser && isProcessMessage(message);
+  const isLegacyTool =
+    !isUser && !isProcess && (message.kind === 'tool' || isPicoclawToolFeedbackContent(message.content));
   const { thought, body } =
-    !isUser && !isToolFeedback && !isThoughtMessage
+    !isUser && !isLegacyTool && !isProcess
       ? splitAssistantContent(message.content)
-      : { thought: null as string | null, body: isThoughtMessage ? '' : message.content };
+      : { thought: null as string | null, body: message.content };
 
   const renderMarkdown = (content: string, suffix = '') => (
     <AssistantMarkdownBody messageId={`${message.id}${suffix}`} content={content} />
   );
 
-  if (isThoughtMessage || isToolFeedback) {
-    const panel = isThoughtMessage ? (
-      <ThinkingPanel content={message.content} isActive={thoughtOutputActive} messageId={`${message.id}-thinking`} />
-    ) : (
-      <CollapsibleProcessPanel
-        tone="tool"
-        summaryLabel={summarizeToolFeedback(message.content)}
-        content={message.content}
-        isActive={toolOutputActive}
-      >
-        <ToolFeedbackBody messageId={message.id} content={message.content} />
-      </CollapsibleProcessPanel>
-    );
-
+  if (isProcess || isLegacyTool) {
+    if (processOutputActive) return null;
+    const segments = isProcess ? getProcessSegments(message) : [{ type: 'tool' as const, content: message.content }];
     return (
       <div className="flex min-w-0 w-full animate-in flex-col gap-1 duration-200 fade-in-0 slide-in-from-bottom-1">
-        {panel}
+        <AgentProcessPanel
+          segments={segments}
+          messageId={`${message.id}-process`}
+          taskElapsedSeconds={taskElapsedSeconds}
+          taskElapsedCompleted={taskElapsedCompleted}
+        />
         <span className="px-1 font-mono text-[10px] text-muted-foreground/60">{time}</span>
       </div>
     );
@@ -449,8 +307,13 @@ export function MessageBubble({ message, toolOutputActive, thoughtOutputActive }
           </div>
         ) : (
           <div className="flex w-full flex-col gap-2">
-            {thought && (
-              <ThinkingPanel content={thought} isActive={thoughtOutputActive} messageId={`${message.id}-thinking`} />
+            {thought && !processOutputActive && (
+              <AgentProcessPanel
+                segments={[{ type: 'thought', content: thought }]}
+                messageId={`${message.id}-thinking`}
+                taskElapsedSeconds={taskElapsedSeconds}
+                taskElapsedCompleted={taskElapsedCompleted}
+              />
             )}
             {body && (
               <div className="rounded-2xl rounded-tl-sm border border-border/60 bg-card px-4 py-3 text-[15px] leading-relaxed text-foreground">
