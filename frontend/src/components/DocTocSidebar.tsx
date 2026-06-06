@@ -1,10 +1,19 @@
 import { useState } from 'react';
-import { IconChevronsLeft, IconList } from '@tabler/icons-react';
+import { IconChevronsLeft, IconList, IconX } from '@tabler/icons-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/cn';
 import type { TocHeading } from '@/hooks/useTocHeadings';
 
 /* ─── 类型 ─── */
+
+interface DocTocListProps {
+  headings: TocHeading[];
+  activeId: string | null;
+  onHeadingClick: (id: string) => void;
+  /** 选中条目后的额外回调（如关闭浮层目录） */
+  onAfterNavigate?: () => void;
+  className?: string;
+}
 
 interface DocTocSidebarProps {
   headings: TocHeading[];
@@ -14,6 +23,14 @@ interface DocTocSidebarProps {
   defaultCollapsed?: boolean;
   /** 持久化折叠状态的 localStorage key。 */
   storageKey?: string;
+}
+
+interface DocTocOverlayProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  headings: TocHeading[];
+  activeId: string | null;
+  onHeadingClick: (id: string) => void;
 }
 
 const TOC_COLLAPSE_LS_KEY = 'finclaw.docDock.tocCollapsed';
@@ -29,7 +46,86 @@ function readCollapsed(storageKey: string, defaultCollapsed: boolean): boolean {
   return defaultCollapsed;
 }
 
-/* ─── 组件 ─── */
+/* ─── 目录列表（侧边栏 / 浮层共用） ─── */
+
+export function DocTocList({
+  headings,
+  activeId,
+  onHeadingClick,
+  onAfterNavigate,
+  className,
+}: DocTocListProps) {
+  return (
+    <div className={cn('py-1', className)}>
+      {headings.map((h) => (
+        <button
+          key={h.id}
+          type="button"
+          className={cn(
+            'doc-dock-toc-item',
+            activeId === h.id && 'doc-dock-toc-item--active',
+          )}
+          style={{ paddingLeft: (h.level - 1) * 12 + 12 }}
+          onClick={() => {
+            onHeadingClick(h.id);
+            onAfterNavigate?.();
+          }}
+          title={h.text}
+        >
+          {h.text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ─── 浮层目录：不占正文宽度 ─── */
+
+export function DocTocOverlay({
+  open,
+  onOpenChange,
+  headings,
+  activeId,
+  onHeadingClick,
+}: DocTocOverlayProps) {
+  return (
+    <div
+      className={cn('doc-dock-toc-overlay', open && 'doc-dock-toc-overlay--open')}
+      aria-hidden={!open}
+    >
+      <button
+        type="button"
+        className="doc-dock-toc-overlay-backdrop"
+        aria-label="关闭目录"
+        onClick={() => onOpenChange(false)}
+      />
+      <nav className="doc-dock-toc-overlay-panel" aria-label="目录">
+        <div className="doc-dock-toc-header">
+          <span>目录</span>
+          <button
+            type="button"
+            className="doc-dock-toc-collapse"
+            onClick={() => onOpenChange(false)}
+            title="关闭目录"
+            aria-label="关闭目录"
+          >
+            <IconX className="size-3.5" />
+          </button>
+        </div>
+        <ScrollArea className="min-h-0 flex-1">
+          <DocTocList
+            headings={headings}
+            activeId={activeId}
+            onHeadingClick={onHeadingClick}
+            onAfterNavigate={() => onOpenChange(false)}
+          />
+        </ScrollArea>
+      </nav>
+    </div>
+  );
+}
+
+/* ─── 桌面侧边栏目录 ─── */
 
 export function DocTocSidebar({
   headings,
@@ -49,7 +145,6 @@ export function DocTocSidebar({
     }
   };
 
-  // 收起态：仅保留一条窄轨，带展开按钮
   if (collapsed) {
     return (
       <div className="doc-dock-toc-rail">
@@ -83,23 +178,7 @@ export function DocTocSidebar({
           </button>
         </div>
         <ScrollArea className="min-h-0 flex-1">
-          <div className="py-1">
-            {headings.map((h) => (
-              <button
-                key={h.id}
-                type="button"
-                className={cn(
-                  'doc-dock-toc-item',
-                  activeId === h.id && 'doc-dock-toc-item--active',
-                )}
-                style={{ paddingLeft: (h.level - 1) * 12 + 12 }}
-                onClick={() => onHeadingClick(h.id)}
-                title={h.text}
-              >
-                {h.text}
-              </button>
-            ))}
-          </div>
+          <DocTocList headings={headings} activeId={activeId} onHeadingClick={onHeadingClick} />
         </ScrollArea>
       </div>
     </nav>

@@ -224,7 +224,7 @@ export function MarkdownContent({
   return (
     <div
       className={cn(
-        'markdown-body prose max-w-none dark:prose-invert',
+        'markdown-body prose max-w-none break-words dark:prose-invert',
         'prose-headings:scroll-mt-20 prose-headings:font-semibold prose-headings:tracking-tight',
         compact ? 'prose-p:my-0.5 prose-p:leading-snug' : 'prose-p:my-2 prose-p:leading-relaxed',
         'prose-pre:bg-transparent prose-pre:p-0',

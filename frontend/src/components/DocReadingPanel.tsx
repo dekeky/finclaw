@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { IconX, IconFileDescription, IconRefresh, IconLoader2, IconPencil, IconDeviceFloppy } from '@tabler/icons-react';
+import { IconX, IconFileDescription, IconRefresh, IconLoader2, IconPencil, IconDeviceFloppy, IconList } from '@tabler/icons-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { MarkdownContent } from '@/components/MarkdownContent';
-import { DocTocSidebar } from '@/components/DocTocSidebar';
+import { DocTocSidebar, DocTocOverlay } from '@/components/DocTocSidebar';
 import { useTocHeadings } from '@/hooks/useTocHeadings';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { getAgentDocFile } from '@/api/agentDocs';
 import { cn } from '@/lib/cn';
 
@@ -15,14 +16,33 @@ type DockRect = { left: number; top: number; width: number; height: number };
 const DOCK_MIN_W = 480;
 const DOCK_MIN_H = 400;
 const DOCK_LS_KEY = 'finclaw.docDock.position';
+const MOBILE_BREAKPOINT = 768;
+/** 浮窗宽度低于此值时，目录改为浮层，避免挤压正文 */
+const OVERLAY_TOC_BREAKPOINT = 900;
+
+function isMobileViewport(): boolean {
+  return typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT;
+}
 
 function clampNum(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
 }
 
+function fullscreenDockLayout(): DockRect {
+  return {
+    left: 0,
+    top: 0,
+    width: window.innerWidth,
+    height: window.innerHeight,
+  };
+}
+
 function docDockDefaultSize(): { width: number; height: number } {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
+  if (isMobileViewport()) {
+    return { width: vw, height: vh };
+  }
   const pad = 24;
   // 默认约占视口 85% 宽，80% 高
   const w = Math.round(vw * 0.85);
@@ -34,6 +54,9 @@ function docDockDefaultSize(): { width: number; height: number } {
 }
 
 function fitDockRect(r: DockRect, pad = 8): DockRect {
+  if (isMobileViewport()) {
+    return fullscreenDockLayout();
+  }
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   let { left, top, width, height } = r;
@@ -171,10 +194,15 @@ const DOC_DOCK_CSS = `
 
 /* ─── 内容区 flex 容器 ─── */
 .doc-dock-body {
+  position: relative;
   display: flex;
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+.doc-dock-scroll {
+  min-width: 0;
+  flex: 1;
 }
 
 /* ─── 目录侧边栏 ─── */
@@ -278,6 +306,119 @@ const DOC_DOCK_CSS = `
   color: #7c3aed;
   font-weight: 600;
 }
+
+/* ─── 阅读区：舒适行宽 + 长词换行 ─── */
+.doc-dock-article {
+  width: 100%;
+  margin-inline: auto;
+  box-sizing: border-box;
+}
+.doc-reading-prose {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.doc-reading-prose :is(pre, table, img, video, iframe) {
+  max-width: 100%;
+}
+
+/* ─── 浮层目录：覆盖在正文上方，不占横向空间 ─── */
+.doc-dock-toc-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+.doc-dock-toc-overlay--open {
+  pointer-events: auto;
+}
+.doc-dock-toc-overlay-backdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background: rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  cursor: default;
+}
+.doc-dock-toc-overlay--open .doc-dock-toc-overlay-backdrop {
+  opacity: 1;
+}
+.doc-dock-toc-overlay-panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: min(280px, 86%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.12);
+  transform: translateX(-100%);
+  transition: transform 0.2s ease;
+}
+.doc-dock-toc-overlay--open .doc-dock-toc-overlay-panel {
+  transform: translateX(0);
+}
+.doc-dock-toc-trigger {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  flex-shrink: 0;
+}
+.doc-dock-toc-trigger:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+/* ─── 手机：全屏阅读，隐藏拖拽缩放 ─── */
+@media (max-width: 767px) {
+  .doc-dock--mobile {
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .doc-dock--mobile .doc-dock-resize {
+    display: none;
+  }
+  .doc-dock--mobile .doc-dock-drag {
+    cursor: default;
+  }
+  .doc-dock--mobile .doc-dock-article {
+    padding-inline: 16px;
+    padding-block: 16px;
+    max-width: none;
+  }
+}
+
+/* ─── 平板及以上：居中窄栏，利于长文阅读 ─── */
+@media (min-width: 768px) {
+  .doc-dock-article {
+    max-width: 48rem;
+    padding-inline: 24px;
+    padding-block: 24px;
+  }
+}
+@media (min-width: 1024px) {
+  .doc-dock-article {
+    max-width: 52rem;
+    padding-inline: 32px;
+    padding-block: 28px;
+  }
+}
+@media (min-width: 1280px) {
+  .doc-dock-article {
+    max-width: 56rem;
+  }
+}
 `;
 
 /* ─── 主组件 ─── */
@@ -308,6 +449,8 @@ export function DocReadingPanel({
   defaultTocCollapsed,
   tocStorageKey,
 }: DocReadingPanelProps) {
+  const isMobile = useIsMobile();
+  const [tocOverlayOpen, setTocOverlayOpen] = useState(false);
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -326,8 +469,10 @@ export function DocReadingPanel({
     return fn(a, f);
   }, []);
 
-  // 浮窗位置
-  const [dockLayout, setDockLayout] = useState<DockRect>(() => readStoredDock() ?? defaultDockLayout());
+  // 浮窗位置（手机端全屏，桌面端记忆上次位置）
+  const [dockLayout, setDockLayout] = useState<DockRect>(() =>
+    isMobileViewport() ? fullscreenDockLayout() : (readStoredDock() ?? defaultDockLayout()),
+  );
   const dockRef = useRef<HTMLElement | null>(null);
   const dockDragRef = useRef<{ pointerId: number; sx: number; sy: number; ox: number; oy: number } | null>(null);
   const dockResizeRef = useRef<{ pointerId: number; sx: number; sy: number; orig: DockRect } | null>(null);
@@ -371,17 +516,22 @@ export function DocReadingPanel({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // 视口 resize 时修正位置
+  // 手机/桌面切换或视口变化时修正布局
   useEffect(() => {
+    if (isMobile) {
+      setDockLayout(fullscreenDockLayout());
+      return;
+    }
     const onResize = () => {
       setDockLayout((d) => fitDockRect(d));
     };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, []);
+  }, [isMobile]);
 
-  // 拖拽结束持久化
+  // 拖拽结束持久化（手机全屏不写入）
   const persistLayout = useCallback((next: DockRect) => {
+    if (isMobileViewport()) return;
     writeStoredDock(next);
   }, []);
 
@@ -433,6 +583,12 @@ export function DocReadingPanel({
   );
 
   const showToc = isMd && !loading && !error && content != null && headings.length > 0;
+  const useOverlayToc = showToc && (isMobile || dockLayout.width < OVERLAY_TOC_BREAKPOINT);
+
+  // 切换为侧边栏模式时关闭浮层
+  useEffect(() => {
+    if (!useOverlayToc) setTocOverlayOpen(false);
+  }, [useOverlayToc]);
 
   return (
     <>
@@ -444,7 +600,7 @@ export function DocReadingPanel({
       {/* 浮窗主体 */}
       <aside
         ref={dockRef}
-        className="doc-dock"
+        className={cn('doc-dock', isMobile && 'doc-dock--mobile')}
         style={{
           left: dockLayout.left,
           top: dockLayout.top,
@@ -460,6 +616,7 @@ export function DocReadingPanel({
             role="presentation"
             title="拖拽移动浮窗 · 右下角可调整大小"
             onPointerDown={(e) => {
+              if (isMobile) return;
               if (e.button !== 0) return;
               if ((e.target as HTMLElement).closest('button')) return;
               (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -507,6 +664,18 @@ export function DocReadingPanel({
           </div>
 
           <div className="flex shrink-0 items-center gap-1">
+            {useOverlayToc && (
+              <button
+                type="button"
+                className="doc-dock-toc-trigger"
+                onClick={() => setTocOverlayOpen(true)}
+                title="打开目录"
+                aria-label="打开目录"
+              >
+                <IconList className="size-3.5" />
+                目录
+              </button>
+            )}
             {onSave && !loading && !error && content !== null && (
               editing ? (
                 <>
@@ -565,7 +734,7 @@ export function DocReadingPanel({
             </div>
           ) : (
           <>
-          {showToc && (
+          {showToc && !useOverlayToc && (
             <DocTocSidebar
               headings={headings}
               activeId={activeId}
@@ -574,7 +743,16 @@ export function DocReadingPanel({
               storageKey={tocStorageKey}
             />
           )}
-          <ScrollArea ref={scrollAreaRef} className="min-h-0 flex-1">
+          {useOverlayToc && (
+            <DocTocOverlay
+              open={tocOverlayOpen}
+              onOpenChange={setTocOverlayOpen}
+              headings={headings}
+              activeId={activeId}
+              onHeadingClick={scrollToHeading}
+            />
+          )}
+          <ScrollArea ref={scrollAreaRef} className="doc-dock-scroll min-h-0 flex-1">
             {loading ? (
               <div className="flex flex-col items-center gap-2 px-8 py-16 text-center">
                 <IconLoader2 className="size-5 animate-spin text-muted-foreground/50" />
@@ -597,11 +775,17 @@ export function DocReadingPanel({
                 文件内容为空
               </div>
             ) : isMd ? (
-              <div className="mx-auto max-w-6xl px-10 py-6">
-                <MarkdownContent copyableCode>{content}</MarkdownContent>
+              <div className="doc-dock-article">
+                <MarkdownContent
+                  copyableCode
+                  size={isMobile ? 'sm' : 'md'}
+                  className="doc-reading-prose"
+                >
+                  {content}
+                </MarkdownContent>
               </div>
             ) : (
-              <pre className="overflow-x-auto px-8 py-6 text-sm leading-relaxed whitespace-pre-wrap break-all font-mono text-foreground/90">
+              <pre className="doc-dock-article overflow-x-auto text-sm leading-relaxed whitespace-pre-wrap break-words font-mono text-foreground/90">
                 {content}
               </pre>
             )}
@@ -615,6 +799,7 @@ export function DocReadingPanel({
           className="doc-dock-resize"
           role="presentation"
           onPointerDown={(e) => {
+            if (isMobile) return;
             if (e.button !== 0) return;
             (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
             dockResizeRef.current = {
