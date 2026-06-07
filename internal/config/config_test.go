@@ -5,13 +5,16 @@ import "testing"
 func TestConfLoad(t *testing.T) {
 	conf := FinConfigGet()
 	if conf == nil {
-		t.Errorf("FinConfigGet() = %v", conf)
+		t.Fatalf("FinConfigGet() = nil")
 	}
 	t.Logf("conf = %+v", conf)
-	t.Logf("modelConf: %+v", conf.Agents.Defaults)
+	t.Logf("serverAddr=%s rssServerAddr=%s agentHubAddr=%s", conf.ServerAddr, conf.RSSServerAddr, conf.AgentHubAddr)
 }
 
 func TestFinclawHomePath(t *testing.T) {
-	home := finclawHomePath()
+	home := FinclawHomePath()
+	if home == "" {
+		t.Errorf("FinclawHomePath() returned empty path")
+	}
 	t.Logf("home = %s", home)
 }

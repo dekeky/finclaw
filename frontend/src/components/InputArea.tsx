@@ -1,4 +1,8 @@
 import { useState, useRef, useEffect, type FormEvent, type KeyboardEvent } from 'react';
+import {
+  ChatSlashHints,
+  handleSlashInputKeyDown,
+} from '@/components/ChatSlashHints';
 
 interface InputAreaProps {
   onSend: (content: string) => void;
@@ -29,10 +33,10 @@ export function InputArea({ onSend, disabled, placeholder, compact }: InputAreaP
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
+    handleSlashInputKeyDown(e, value, {
+      onAutocomplete: (command) => setValue(command),
+      onSend: handleSend,
+    });
   };
 
   const onFormSubmit = (e: FormEvent) => {
@@ -46,7 +50,8 @@ export function InputArea({ onSend, disabled, placeholder, compact }: InputAreaP
 
   return (
     <form style={formStyle} onSubmit={onFormSubmit}>
-      <div style={wrapperStyle} className="finclaw-input">
+      <div style={{ ...wrapperStyle, position: 'relative', overflow: 'visible' }} className="finclaw-input">
+        <ChatSlashHints value={value} onPick={(command) => setValue(command)} />
         <textarea
           ref={textareaRef}
           style={styles.textarea}
@@ -57,16 +62,26 @@ export function InputArea({ onSend, disabled, placeholder, compact }: InputAreaP
           rows={1}
           disabled={disabled}
         />
-        <button type="submit" style={btnStyle} disabled={disabled || !value.trim()}>
+        <button
+          type="submit"
+          style={btnStyle}
+          disabled={disabled || !value.trim()}
+          aria-label="发送"
+        >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <line x1="22" y1="2" x2="11" y2="13" />
             <polygon points="22 2 15 22 11 13 2 9 22 2" />
           </svg>
         </button>
       </div>
-      {!compact && (
+      {!compact ? (
         <div style={styles.hint}>
-          <kbd style={styles.kbd}>Enter</kbd> to send · <kbd style={styles.kbd}>Shift</kbd>+<kbd style={styles.kbd}>Enter</kbd> for new line
+          <kbd style={styles.kbd}>Enter</kbd> to send · <kbd style={styles.kbd}>Shift</kbd>+<kbd style={styles.kbd}>Enter</kbd> for new line ·{' '}
+          <kbd style={styles.kbd}>/</kbd> commands
+        </div>
+      ) : (
+        <div style={styles.hintCompact}>
+          <kbd style={styles.kbd}>/</kbd> 命令 · <kbd style={styles.kbd}>/stop</kbd> 中止
         </div>
       )}
     </form>
@@ -139,6 +154,14 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
     marginTop: 12,
     fontSize: 11,
+    color: 'var(--fc-text-muted)',
+    fontFamily: 'JetBrains Mono, monospace',
+  },
+  hintCompact: {
+    display: 'flex',
+    justifyContent: 'center',
+    marginTop: 8,
+    fontSize: 10,
     color: 'var(--fc-text-muted)',
     fontFamily: 'JetBrains Mono, monospace',
   },

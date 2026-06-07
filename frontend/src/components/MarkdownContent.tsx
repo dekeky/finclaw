@@ -1,12 +1,13 @@
-import { useCallback, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import rehypeSlug from 'rehype-slug';
+import type { PluggableList } from 'unified';
 import { useTheme } from '../context/ThemeContext';
 import { cn } from '../lib/cn';
+
+const CodeBlock = lazy(() => import('./CodeBlock'));
 
 export type MarkdownSize = 'sm' | 'md';
 
@@ -18,6 +19,10 @@ export interface MarkdownContentProps {
   className?: string;
   /** 是否显示代码块复制按钮 */
   copyableCode?: boolean;
+  /** 工具输出等密集文本：更紧的行距，且不将单换行转 <br> */
+  compact?: boolean;
+  /** 额外的 rehype 插件（rehype-slug 已内置） */
+  rehypePlugins?: PluggableList;
 }
 
 const SIZE_CLASS: Record<MarkdownSize, string> = {
@@ -64,10 +69,12 @@ export function MarkdownContent({
   size = 'md',
   className,
   copyableCode = true,
+  compact = false,
+  rehypePlugins,
 }: MarkdownContentProps) {
   const { scheme } = useTheme();
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const syntaxStyle = scheme === 'dark' ? oneDark : oneLight;
+  const dark = scheme === 'dark';
 
   const handleCopy = useCallback((code: string, id: string) => {
     void navigator.clipboard.writeText(code).then(() => {
@@ -90,27 +97,22 @@ export function MarkdownContent({
           const lang = match[1];
           return (
             <div className="not-prose my-3">
-              <div className="group/code relative overflow-hidden rounded-lg border border-border/60 bg-muted/30">
-                <div className="flex items-center justify-between border-b border-border/50 bg-muted/50 px-3 py-1.5">
+              <div className="group/code relative overflow-hidden rounded-lg border border-border/60 bg-muted/30 dark:bg-muted/50">
+                <div className="flex items-center justify-between border-b border-border/50 bg-muted/50 dark:bg-muted/70 px-3 py-1.5">
                   <span className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground">{lang}</span>
                   {copyableCode && (
                     <CopyCodeButton code={code} id={codeId} copied={copiedId === codeId} onCopy={handleCopy} />
                   )}
                 </div>
-                <SyntaxHighlighter
-                  style={syntaxStyle}
-                  language={lang}
-                  PreTag="div"
-                  customStyle={{
-                    margin: 0,
-                    padding: '12px 14px',
-                    fontSize: '13px',
-                    lineHeight: 1.55,
-                    background: 'transparent',
-                  }}
+                <Suspense
+                  fallback={
+                    <pre className="overflow-x-auto px-3.5 py-3 font-mono text-[13px] leading-relaxed">
+                      <code>{code}</code>
+                    </pre>
+                  }
                 >
-                  {code}
-                </SyntaxHighlighter>
+                  <CodeBlock code={code} lang={lang} dark={dark} />
+                </Suspense>
               </div>
             </div>
           );
@@ -118,7 +120,7 @@ export function MarkdownContent({
 
         return (
           <code
-            className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.9em] font-normal text-foreground before:content-none after:content-none"
+            className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.9em] font-normal text-foreground before:content-none after:content-none dark:bg-muted/80"
             {...props}
           >
             {children}
@@ -131,7 +133,7 @@ export function MarkdownContent({
             href={href}
             target="_blank"
             rel="noopener noreferrer"
-            className="font-medium text-violet-500 underline decoration-violet-500/30 underline-offset-2 transition-colors hover:text-violet-600"
+            className="font-medium text-violet-500 underline decoration-violet-500/30 underline-offset-2 transition-colors hover:text-violet-600 dark:text-violet-400 dark:hover:text-violet-300 dark:decoration-violet-400/30"
           >
             {children}
           </a>
@@ -207,11 +209,13 @@ export function MarkdownContent({
         return <input type={type} checked={checked} disabled={disabled} readOnly />;
       },
       hr() {
-        return <hr className="my-6 border-border/60" />;
+        return <hr className={compact ? 'my-2 border-border/40' : 'my-6 border-border/60'} />;
       },
     }),
-    [copiedId, copyableCode, handleCopy, idPrefix, syntaxStyle],
+    [compact, copiedId, copyableCode, dark, handleCopy, idPrefix],
   );
+
+  const remarkPlugins = compact ? [remarkGfm] : [remarkGfm, remarkBreaks];
 
   if (!children?.trim()) {
     return null;
@@ -220,17 +224,22 @@ export function MarkdownContent({
   return (
     <div
       className={cn(
-        'markdown-body prose max-w-none dark:prose-invert',
+        'markdown-body prose max-w-none break-words dark:prose-invert',
         'prose-headings:scroll-mt-20 prose-headings:font-semibold prose-headings:tracking-tight',
-        'prose-p:my-2 prose-p:leading-relaxed',
+        compact ? 'prose-p:my-0.5 prose-p:leading-snug' : 'prose-p:my-2 prose-p:leading-relaxed',
         'prose-pre:bg-transparent prose-pre:p-0',
         'prose-code:before:content-none prose-code:after:content-none',
         'prose-strong:font-semibold prose-strong:text-foreground',
+	        'prose-a:text-violet-500 dark:prose-a:text-violet-400',
         SIZE_CLASS[size],
         className,
       )}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components}>
+      <ReactMarkdown
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={[rehypeSlug, ...(rehypePlugins ?? [])]}
+        components={components}
+      >
         {children}
       </ReactMarkdown>
     </div>

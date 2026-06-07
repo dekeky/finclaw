@@ -4,6 +4,7 @@ import { SidebarTrigger } from '@/components/ui/sidebar';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { FinclawMark } from '../FinclawMark';
+import { UserMenu } from './UserMenu';
 import { Link } from 'react-router-dom';
 
 export function AppHeader() {
@@ -34,6 +35,7 @@ export function AppHeader() {
         >
           {scheme === 'dark' ? <IconSun className="size-4" /> : <IconMoon className="size-4" />}
         </Button>
+        <UserMenu />
       </div>
     </header>
   );

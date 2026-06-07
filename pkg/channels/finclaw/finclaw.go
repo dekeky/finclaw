@@ -20,6 +20,7 @@ import (
 type FinChannelConfig struct {
 	ReadTimeout  time.Duration `toml:"readTimeout"`  // in seconds，默认60s，当客户端持续一段时间未发送消息时，会关闭连接
 	PingInterval time.Duration `toml:"pingInterval"` // in seconds，默认30s，用户探活
+	WriteWait    time.Duration `toml:"writeWait"`    // in seconds，默认10s，写超时，防止慢客户端阻塞
 	MaxConn      int           `toml:"maxConn"`      // 最大连接数，默认1000
 }
 
@@ -37,6 +38,13 @@ func (config *FinChannelConfig) getPingInterval() time.Duration {
 	return config.PingInterval * time.Second
 }
 
+func (config *FinChannelConfig) getWriteWait() time.Duration {
+	if config.WriteWait <= 0 {
+		return 10 * time.Second
+	}
+	return config.WriteWait * time.Second
+}
+
 func (config *FinChannelConfig) getMaxConn() int {
 	if config.MaxConn <= 0 {
 		return 1000
@@ -47,19 +55,28 @@ func (config *FinChannelConfig) getMaxConn() int {
 type FinClawChannel struct {
 	*channels.BaseChannel
 	Ctx          context.Context
+	msgBus       *bus.MessageBus
 	upgrader     websocket.Upgrader
 	conns        map[string]*finConn
 	sessionConns map[string]map[string]*finConn // sessionID -> connID -> *picoConn
 	connsMu      sync.RWMutex
-	config       *FinChannelConfig
-	closed       atomic.Bool
+	sessionBufs  map[string]*SessionBuffer // sessionID -> cached messages buffer
+	bufMu        sync.Mutex
+	// recentUserBySession 记录各 session 最近一条用户输入，用于拦截 picoclaw steering
+	// drain 误将 inbound 重发到 outbound 导致的「用户消息以 assistant 回显」。
+	recentUserMu        sync.Mutex
+	recentUserBySession map[string]string
+	config              *FinChannelConfig
+	closed              atomic.Bool
 }
 
 func NewFinChannel(ctx context.Context, messageBus *bus.MessageBus, config *FinChannelConfig) *FinClawChannel {
 	base := channels.NewBaseChannel("fin", nil, messageBus, nil)
 	return &FinClawChannel{
-		Ctx:         ctx,
-		BaseChannel: base,
+		Ctx:                 ctx,
+		msgBus:              messageBus,
+		BaseChannel:         base,
+		recentUserBySession: make(map[string]string),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -69,6 +86,7 @@ func NewFinChannel(ctx context.Context, messageBus *bus.MessageBus, config *FinC
 		},
 		conns:        make(map[string]*finConn),
 		sessionConns: make(map[string]map[string]*finConn),
+		sessionBufs:  make(map[string]*SessionBuffer),
 		config:       config,
 	}
 }
@@ -80,6 +98,69 @@ func (fchannel *FinClawChannel) Close() {
 
 func (fchannel *FinClawChannel) isClosed() bool {
 	return fchannel.closed.Load()
+}
+
+func (fchannel *FinClawChannel) getSessionBuffer(sessionID string) *SessionBuffer {
+	fchannel.bufMu.Lock()
+	defer fchannel.bufMu.Unlock()
+	buf, ok := fchannel.sessionBufs[sessionID]
+	if !ok {
+		buf = NewSessionBuffer(200)
+		fchannel.sessionBufs[sessionID] = buf
+	}
+	return buf
+}
+
+func (fchannel *FinClawChannel) clearSessionBuffer(sessionID string) {
+	fchannel.bufMu.Lock()
+	defer fchannel.bufMu.Unlock()
+	if buf, ok := fchannel.sessionBufs[sessionID]; ok {
+		buf.Clear()
+		delete(fchannel.sessionBufs, sessionID)
+	}
+}
+
+// flushSessionBuffer sends all cached messages to a reconnecting client.
+// After successful delivery, the buffer is cleared to avoid re-delivery.
+func (fchannel *FinClawChannel) flushSessionBuffer(sessionID string, fconn *finConn) {
+	buf := fchannel.getSessionBuffer(sessionID)
+	cached := buf.GetAll()
+	if len(cached) == 0 {
+		return
+	}
+
+	logger.InfoCF("fin", "Flushing cached messages to reconnecting client", map[string]any{
+		"session_id": sessionID,
+		"count":      len(cached),
+		"conn_id":    fconn.id,
+	})
+
+	for _, msg := range cached {
+		payload := map[string]any{
+			"content": msg.Content,
+			"role":    msg.Role,
+		}
+		if msg.Kind != "" {
+			payload["message_kind"] = msg.Kind
+		}
+		response := map[string]any{
+			"type":       TypeMessageSend,
+			"id":         msg.ID,
+			"from_cache": true,
+			"payload":    payload,
+		}
+		if err := fconn.writeJson(response); err != nil {
+			logger.WarnCF("fin", "Failed to deliver cached message", map[string]any{
+				"conn_id": fconn.id,
+				"msg_id":  msg.ID,
+				"error":   err.Error(),
+			})
+			break
+		}
+	}
+
+	// Clear buffer after flush (messages either delivered or lost)
+	fchannel.clearSessionBuffer(sessionID)
 }
 
 // handleWebSocket upgrades the HTTP connection and manages the WebSocket lifecycle.
@@ -109,10 +190,28 @@ func (fchannel *FinClawChannel) HandleWebSocket(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Send connected message so the client knows its sessionID
+	connectedMsg := &FinMessage{
+		Type:      TypeConnected,
+		SessionID: sessionID,
+	}
+	if writeErr := fconn.writeJson(connectedMsg); writeErr != nil {
+		logger.WarnCF("finclaw", "Failed to send connected message", map[string]any{
+			"conn_id": fconn.id,
+			"error":   writeErr.Error(),
+		})
+		fconn.close()
+		fchannel.removeConnection(fconn.id)
+		return
+	}
+
 	logger.InfoCF("finclaw", "WebSocket client connected", map[string]any{
 		"conn_id":    fconn.id,
 		"session_id": sessionID,
 	})
+
+	// Flush cached messages to reconnecting client
+	fchannel.flushSessionBuffer(sessionID, fconn)
 
 	go fchannel.readLoop(fconn)
 }
@@ -134,7 +233,7 @@ func (fchannel *FinClawChannel) createAndAddConnection(conn *websocket.Conn, ses
 		}
 	}
 
-	fconn := newFinConn(connID, conn, sessionID)
+	fconn := newFinConn(connID, conn, sessionID, fchannel.config.getWriteWait())
 	fchannel.conns[fconn.id] = fconn
 	bySession, ok := fchannel.sessionConns[fconn.sessionID]
 	if !ok {
@@ -149,6 +248,7 @@ func (fchannel *FinClawChannel) createAndAddConnection(conn *websocket.Conn, ses
 // readLoop reads messages from a WebSocket connection.
 func (fchannel *FinClawChannel) readLoop(fconn *finConn) {
 	defer func() {
+		fconn.sendCloseFrame()
 		fconn.close()
 		if removed := fchannel.removeConnection(fconn.id); removed != nil {
 			logger.InfoCF("fin", "WebSocket client disconnected", map[string]any{
@@ -237,6 +337,8 @@ func (fchannel *FinClawChannel) handleMessage(fconn *finConn, msg FinMessage) {
 	switch msg.Type {
 	case TypePing:
 		logger.DebugCF("fin", "Ping received", map[string]any{"conn_id": fconn.id})
+		// JSON-level ping also resets the read deadline, keeping the connection alive
+		fconn.SetReadDeadline(fchannel.config.getReadTimeout())
 		pong := NewFinMessage(TypePong, nil)
 		pong.ID = msg.ID
 		fconn.writeJson(pong)
@@ -297,6 +399,7 @@ func (fchannel *FinClawChannel) handleMessageSend(fconn *finConn, msg FinMessage
 		"metadata":   metadata,
 	})
 
+	fchannel.recordRecentUserMessage(sessionID, content)
 	fchannel.HandleMessage(fchannel.Ctx, peer, msg.ID, "", chatID, content, nil, metadata)
 
 	logger.InfoCF("fin", "Message sent to bus", map[string]any{
@@ -314,6 +417,64 @@ func truncate(s string, maxLen int) string {
 	return string(runes[:maxLen]) + "..."
 }
 
+func (fchannel *FinClawChannel) recordRecentUserMessage(sessionID, content string) {
+	if sessionID == "" {
+		return
+	}
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return
+	}
+	fchannel.recentUserMu.Lock()
+	fchannel.recentUserBySession[sessionID] = trimmed
+	fchannel.recentUserMu.Unlock()
+}
+
+func (fchannel *FinClawChannel) isMisroutedUserEcho(sessionID, content string, metadata map[string]string) bool {
+	if metadata != nil && metadata["message_kind"] != "" {
+		return false
+	}
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" || sessionID == "" {
+		return false
+	}
+	fchannel.recentUserMu.Lock()
+	recent := fchannel.recentUserBySession[sessionID]
+	fchannel.recentUserMu.Unlock()
+	return recent != "" && recent == trimmed
+}
+
+// republishMisroutedInbound 将 picoclaw steering drain 误发到 outbound 的用户消息重新入队到 inbound。
+func (fchannel *FinClawChannel) republishMisroutedInbound(sessionID string, agentMsg bus.OutboundMessage) {
+	if fchannel.msgBus == nil {
+		return
+	}
+	chatID := agentMsg.ChatID
+	if chatID == "" {
+		chatID = genChatID(sessionID)
+	}
+	ctx, cancel := context.WithTimeout(fchannel.Ctx, 2*time.Second)
+	defer cancel()
+	peer := bus.Peer{Kind: "direct", ID: "fin:" + sessionID}
+	if err := fchannel.msgBus.PublishInbound(ctx, bus.InboundMessage{
+		Channel:  "fin",
+		ChatID:   chatID,
+		Content:  agentMsg.Content,
+		Peer:     peer,
+		Metadata: map[string]string{"platform": "fin", "session_id": sessionID, "requeued": "true"},
+	}); err != nil {
+		logger.WarnCF("fin", "Failed to republish misrouted user echo to inbound", map[string]any{
+			"session_id": sessionID,
+			"error":      err.Error(),
+		})
+		return
+	}
+	logger.InfoCF("fin", "Republished misrouted user echo to inbound bus", map[string]any{
+		"session_id": sessionID,
+		"preview":    truncate(agentMsg.Content, 50),
+	})
+}
+
 func (fchannel *FinClawChannel) ProcessAgentMessage(outbound <-chan bus.OutboundMessage) {
 	for agentMsg := range outbound {
 		logger.InfoCF("fin", "Processing agent message", map[string]any{
@@ -322,6 +483,10 @@ func (fchannel *FinClawChannel) ProcessAgentMessage(outbound <-chan bus.Outbound
 		})
 
 		sessionId := extractSessionIDFromChatId(agentMsg.ChatID)
+		if fchannel.isMisroutedUserEcho(sessionId, agentMsg.Content, agentMsg.Metadata) {
+			fchannel.republishMisroutedInbound(sessionId, agentMsg)
+			continue
+		}
 		fchannel.connsMu.RLock()
 		conns := fchannel.sessionConns[sessionId]
 		fchannel.connsMu.RUnlock()
@@ -341,24 +506,30 @@ func (fchannel *FinClawChannel) ProcessAgentMessage(outbound <-chan bus.Outbound
 			"payload": payload,
 		}
 
-		// 并行发送给所有订阅该 session 的客户端，一个慢客户端不 block 其他客户端
-		var wg sync.WaitGroup
+		// 异步发送给所有订阅该 session 的客户端，一个慢客户端不 block 消息循环
 		for _, fconn := range conns {
-			wg.Add(1)
 			go func(conn *finConn) {
-				defer wg.Done()
 				if err := conn.writeJson(response); err != nil {
 					logger.WarnCF("fin", "Failed to deliver message to client, closing connection", map[string]any{
 						"conn_id":    conn.id,
 						"session_id": sessionId,
 						"error":      err.Error(),
 					})
+					conn.sendCloseFrame()
 					conn.close()
 					fchannel.removeConnection(conn.id)
 				}
 			}(fconn)
 		}
-		wg.Wait()
+
+		// Also cache the message so it can be delivered to reconnecting clients
+		fchannel.getSessionBuffer(sessionId).Push(&CachedMessage{
+			ID:        msgId,
+			Content:   agentMsg.Content,
+			Role:      "assistant",
+			Kind:      agentMsg.Metadata["message_kind"],
+			Timestamp: time.Now(),
+		})
 	}
 }
 

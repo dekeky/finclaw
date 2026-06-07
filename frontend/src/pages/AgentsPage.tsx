@@ -1,28 +1,62 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { IconCpu, IconFileDescription, IconPuzzle, IconTrash } from '@tabler/icons-react';
+import { Dialog } from 'radix-ui';
+import { Navigate, useSearchParams } from 'react-router-dom';
+import { IconCpu, IconEye, IconEyeOff, IconFileDescription, IconPuzzle, IconTrash, IconUpload } from '@tabler/icons-react';
 import { useAgents } from '../state/agents';
-import { getAgent, type AgentDetailBody } from '../api/agents';
+import {
+  getAgent,
+  getAgentSkillFile,
+  writeAgentSkillFile,
+  deleteAgentSkill,
+  type AgentDetailBody,
+} from '../api/agents';
 import { AgentAvatar } from '../components/AgentAvatar';
+import { AgentCreateDialog } from '../components/AgentCreateDialog';
+import { isAgentModelSetupValid, type ReuseAgentSourceMeta } from '../components/AgentModelSetupSection';
 import { AgentPersonaEditor } from '../components/AgentPersonaEditor';
-import { AgentSkillsPanel } from '../components/AgentSkillsPanel';
+import { AgentSkillsPanel, skillFileKey, type SkillFileTarget } from '../components/AgentSkillsPanel';
+import { DocReadingPanel } from '../components/DocReadingPanel';
+import { ModelConnectivityCheck } from '../components/ModelConnectivityCheck';
+import { uploadAgentToMarket } from '../api/agentMarket';
+import { useConfirm } from '@/components/ui/confirm-dialog';
+import { useNavigationGuard } from '../state/navigationGuard';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
+import { ThemeToggle } from '@/components/chrome/ThemeToggle';
+import { AGENT_MODEL_PRESETS } from '@/lib/agentModelPresets';
 import { cn } from '@/lib/cn';
 
 type FormState = { name: string; model: string; apiBase: string; apiKey: string };
 type EditFormState = { model: string; apiBase: string; apiKey: string };
+type CredMode = 'reuse' | 'manual';
 const EMPTY_FORM: FormState = { name: '', model: '', apiBase: '', apiKey: '' };
 const EMPTY_EDIT_FORM: EditFormState = { model: '', apiBase: '', apiKey: '' };
 
-const PRESETS = [
-  { label: 'DeepSeek Chat', model: 'deepseek/deepseek-chat', apiBase: 'https://api.deepseek.com/v1' },
-  { label: 'DeepSeek Reasoner', model: 'deepseek/deepseek-reasoner', apiBase: 'https://api.deepseek.com/v1' },
-  { label: 'OpenAI GPT-4o', model: 'openai/gpt-4o', apiBase: 'https://api.openai.com/v1' },
-  { label: 'Qwen Plus', model: 'qwen/qwen-plus', apiBase: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-];
+const MARKET_UPLOAD_TOKEN_KEY = 'finclaw.marketUploadToken';
+
+function loadCachedUploadToken(): string {
+  try {
+    return localStorage.getItem(MARKET_UPLOAD_TOKEN_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function saveCachedUploadToken(token: string) {
+  try {
+    if (token) {
+      localStorage.setItem(MARKET_UPLOAD_TOKEN_KEY, token);
+    } else {
+      localStorage.removeItem(MARKET_UPLOAD_TOKEN_KEY);
+    }
+  } catch {
+    /* private mode */
+  }
+}
 
 function ModelFieldHint() {
   return (
@@ -34,11 +68,6 @@ function ModelFieldHint() {
   );
 }
 
-function sectionKey(name: string): string {
-  const ch = name.trim().charAt(0);
-  return /[a-zA-Z]/.test(ch) ? ch.toUpperCase() : '#';
-}
-
 type DetailTab = 'persona' | 'skills' | 'config';
 
 const DETAIL_TAB_STORAGE_KEY = 'finclaw.agents.detailTab';
@@ -48,7 +77,7 @@ const DETAIL_TABS: Array<{
   label: string;
   icon: typeof IconFileDescription;
 }> = [
-  { id: 'persona', label: '人设文件', icon: IconFileDescription },
+  { id: 'persona', label: '人设', icon: IconFileDescription },
   { id: 'skills', label: 'Skills', icon: IconPuzzle },
   { id: 'config', label: '模型配置', icon: IconCpu },
 ];
@@ -71,29 +100,21 @@ function saveDetailTab(tab: DetailTab) {
   }
 }
 
-function groupAgents(names: string[]): Array<{ key: string; names: string[] }> {
-  const sorted = [...names].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
-  const map = new Map<string, string[]>();
-  for (const n of sorted) {
-    const k = sectionKey(n);
-    const arr = map.get(k) ?? [];
-    arr.push(n);
-    map.set(k, arr);
-  }
-  return [...map.entries()].sort(([a], [b]) => {
-    if (a === '#') return 1;
-    if (b === '#') return -1;
-    return a.localeCompare(b, 'en');
-  }).map(([key, list]) => ({ key, names: list }));
-}
-
 export default function AgentsPage() {
   const { agents, currentAgent, refresh, createAgent, updateAgent, deleteAgent } = useAgents();
+  const [searchParams] = useSearchParams();
 
   const [search, setSearch] = useState('');
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [credMode, setCredMode] = useState<CredMode>('manual');
+  const [reuseAgent, setReuseAgent] = useState('');
+  const [reuseMeta, setReuseMeta] = useState<ReuseAgentSourceMeta>({
+    source: null,
+    loading: false,
+    error: null,
+  });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
@@ -109,11 +130,68 @@ export default function AgentsPage() {
   const [agentRuntimeLoading, setAgentRuntimeLoading] = useState(false);
   const [agentRuntimeError, setAgentRuntimeError] = useState<string | null>(null);
   const [detailTab, setDetailTabState] = useState<DetailTab>(loadDetailTab);
+  const [personaDirty, setPersonaDirty] = useState(false);
+  const [skillFile, setSkillFile] = useState<SkillFileTarget | null>(null);
+  const [skillsRefreshRev, setSkillsRefreshRev] = useState(0);
+  const { confirm, dialog: confirmDialog } = useConfirm();
+  const { setNavigationGuard } = useNavigationGuard();
+
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [showUploadToken, setShowUploadToken] = useState(false);
+  const [uploadForm, setUploadForm] = useState({ displayName: '', summary: '', category: 'picoclaw', uploadToken: '' });
 
   const setDetailTab = useCallback((tab: DetailTab) => {
     saveDetailTab(tab);
     setDetailTabState(tab);
   }, []);
+
+  const confirmLeavePersona = useCallback(async () => {
+    if (!personaDirty) return true;
+    return confirm({
+      title: '未保存的修改',
+      description: '人设有未保存的修改，离开后将丢失。确定要离开吗？',
+      confirmText: '离开',
+      cancelText: '继续编辑',
+    });
+  }, [confirm, personaDirty]);
+
+  const handleDetailTabChange = useCallback(
+    async (tab: DetailTab) => {
+      if (tab === detailTab) return;
+      if (detailTab === 'persona' && tab !== 'persona') {
+        if (!(await confirmLeavePersona())) return;
+      }
+      setDetailTab(tab);
+    },
+    [confirmLeavePersona, detailTab, setDetailTab],
+  );
+
+  const handleSelectAgent = useCallback(
+    async (name: string) => {
+      if (name === selectedName) return;
+      if (detailTab === 'persona') {
+        if (!(await confirmLeavePersona())) return;
+      }
+      setSelectedName(name);
+    },
+    [confirmLeavePersona, detailTab, selectedName],
+  );
+
+  useEffect(() => {
+    if (detailTab !== 'persona') setPersonaDirty(false);
+  }, [detailTab]);
+
+  useEffect(() => {
+    if (detailTab === 'persona' && personaDirty) {
+      setNavigationGuard(confirmLeavePersona);
+    } else {
+      setNavigationGuard(null);
+    }
+    return () => setNavigationGuard(null);
+  }, [confirmLeavePersona, detailTab, personaDirty, setNavigationGuard]);
 
   useEffect(() => { void refresh(); }, []);
 
@@ -123,7 +201,10 @@ export default function AgentsPage() {
     return agents.filter((n) => n.toLowerCase().includes(q));
   }, [agents, search]);
 
-  const sections = useMemo(() => groupAgents(filtered), [filtered]);
+  const sortedFiltered = useMemo(
+    () => [...filtered].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN')),
+    [filtered],
+  );
 
   // 仅在校正无效选中项时同步，避免切换列表项时因 currentAgent 变化触发多余更新
   useEffect(() => {
@@ -134,7 +215,67 @@ export default function AgentsPage() {
     });
   }, [agents, currentAgent]);
 
-  const detailName = addOpen ? null : selectedName;
+  const detailName = selectedName;
+
+  const openAddForm = useCallback(() => {
+    void refresh();
+    setForm(EMPTY_FORM);
+    setCredMode(agents.length > 0 ? 'reuse' : 'manual');
+    setReuseAgent(agents[0] ?? '');
+    setReuseMeta({ source: null, loading: false, error: null });
+    setSubmitError(null);
+    setAddOpen(true);
+  }, [agents, refresh]);
+
+  const handleReuseMetaChange = useCallback((meta: ReuseAgentSourceMeta) => {
+    setReuseMeta(meta);
+  }, []);
+
+  // 切换 Agent 或离开 Skills 标签时关闭已打开的 skill 文件
+  useEffect(() => {
+    setSkillFile(null);
+  }, [detailName, detailTab]);
+
+  const loadSkillContent = useCallback(
+    (_agent: string, _file: string): Promise<string> => {
+      if (!detailName || !skillFile) return Promise.reject(new Error('未选择 skill 文件'));
+      return getAgentSkillFile(detailName, skillFile.source, skillFile.skill, skillFile.file).then(
+        (b) => b.content,
+      );
+    },
+    [detailName, skillFile],
+  );
+
+  const saveSkillContent = useCallback(
+    async (content: string) => {
+      if (!detailName || !skillFile) return;
+      await writeAgentSkillFile(detailName, skillFile.source, skillFile.skill, skillFile.file, content);
+    },
+    [detailName, skillFile],
+  );
+
+  const handleDeleteSkill = useCallback(
+    async (source: string, skill: string, name: string) => {
+      if (!detailName) return;
+      const ok = await confirm({
+        title: `删除 Skill 包「${name}」`,
+        description: '将永久删除该 Skill 包及其全部文件，操作不可恢复。',
+        confirmText: '删除',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await deleteAgentSkill(detailName, source, skill);
+        if (skillFile && skillFile.source === source && skillFile.skill === skill) {
+          setSkillFile(null);
+        }
+        setSkillsRefreshRev((n) => n + 1);
+      } catch (err) {
+        window.alert(err instanceof Error ? err.message : '删除失败');
+      }
+    },
+    [detailName, skillFile, confirm],
+  );
 
   useEffect(() => {
     setEditConfigOpen(false);
@@ -180,10 +321,20 @@ export default function AgentsPage() {
     return () => { cancelled = true; };
   }, [detailName]);
 
-  const formValid = useMemo(
-    () => form.name.trim() && form.model.trim() && form.apiBase.trim() && form.apiKey.trim(),
-    [form],
+  const addNameConflict = useMemo(
+    () => form.name.trim().length > 0 && agents.includes(form.name.trim()),
+    [form.name, agents],
   );
+
+  const formValid = useMemo(() => {
+    if (!form.name.trim() || addNameConflict) return false;
+    return isAgentModelSetupValid(
+      credMode,
+      { model: form.model, apiBase: form.apiBase, apiKey: form.apiKey },
+      reuseMeta,
+      reuseAgent,
+    );
+  }, [form, credMode, reuseAgent, reuseMeta, addNameConflict]);
 
   const editFormValid = useMemo(() => {
     const hasStoredKey = editBaseline?.model_provider.has_api_key === true;
@@ -203,16 +354,22 @@ export default function AgentsPage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      await createAgent({
-        name: form.name.trim(),
-        model_provider: {
-          model: form.model.trim(),
-          api_base: form.apiBase.trim(),
-          api_key: form.apiKey.trim(),
-        },
-      });
+      const req =
+        credMode === 'reuse'
+          ? { name: form.name.trim(), from_agent: reuseAgent }
+          : {
+              name: form.name.trim(),
+              model_provider: {
+                model: form.model.trim(),
+                api_base: form.apiBase.trim(),
+                api_key: form.apiKey.trim(),
+              },
+            };
+      const createdName = form.name.trim();
+      await createAgent(req);
       setForm(EMPTY_FORM);
       setAddOpen(false);
+      setSelectedName(createdName);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -222,7 +379,14 @@ export default function AgentsPage() {
 
   const onDelete = async (name: string) => {
     if (pendingDelete) return;
-    if (!window.confirm(`确定移除 Agent「${name}」？后端将终止该 Agent 相关会话。`)) return;
+    const ok = await confirm({
+      title: `删除 Agent「${name}」`,
+      description:
+        '将停止该 Agent 并永久删除其工作区、配置与 Skills；进行中的会话会被终止，操作不可恢复。',
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
     setPendingDelete(name);
     try {
       await deleteAgent(name);
@@ -234,10 +398,39 @@ export default function AgentsPage() {
     }
   };
 
-  const applyPreset = (preset: (typeof PRESETS)[number]) =>
-    setForm((prev) => ({ ...prev, model: preset.model, apiBase: preset.apiBase }));
-  const applyEditPreset = (preset: (typeof PRESETS)[number]) =>
+  const applyEditPreset = (preset: (typeof AGENT_MODEL_PRESETS)[number]) =>
     setEditForm((prev) => ({ ...prev, model: preset.model, apiBase: preset.apiBase }));
+
+  const openUploadDialog = useCallback(() => {
+    if (!detailName) return;
+    setUploadForm({ displayName: detailName, summary: '', category: 'picoclaw', uploadToken: loadCachedUploadToken() });
+    setUploadError(null);
+    setUploadSuccess(false);
+    setShowUploadToken(false);
+    setUploadOpen(true);
+  }, [detailName]);
+
+  const onUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!detailName || uploading) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      await uploadAgentToMarket({
+        agentName: detailName,
+        displayName: uploadForm.displayName.trim() || undefined,
+        summary: uploadForm.summary.trim() || undefined,
+        category: uploadForm.category || undefined,
+        uploadToken: uploadForm.uploadToken.trim() || undefined,
+      });
+      setUploadSuccess(true);
+      saveCachedUploadToken(uploadForm.uploadToken.trim());
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const onEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -267,32 +460,47 @@ export default function AgentsPage() {
     }
   };
 
+  if (searchParams.get('market') === '1') {
+    return <Navigate to="/agents/market" replace />;
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {/* Header */}
-      <div className="flex h-14 shrink-0 items-center justify-between border-b border-border/50 px-4">
-        <div className="flex items-center gap-3">
+      <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border/50 px-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <SidebarExpandTrigger />
           <h1 className="text-base font-medium tracking-tight text-foreground/90">Agent 管理</h1>
           <Badge variant="outline" className="text-[10px]">{agents.length}</Badge>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-xs md:hidden"
-          onClick={() => {
-            void refresh();
-            setAddOpen(true);
-          }}
-        >
-          添加 Agent
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          <div className="flex gap-1 md:hidden">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={openAddForm}
+            >
+              添加 Agent
+            </Button>
+          </div>
+          <ThemeToggle />
+        </div>
       </div>
 
       {/* Content */}
       <div className="flex min-h-0 flex-1 gap-3 overflow-hidden p-3">
         {/* Left Pane - Agent List */}
         <div className="hidden w-[14rem] shrink-0 flex-col rounded-xl border border-border bg-card lg:w-[15rem] xl:w-[16rem] md:flex">
-          <div className="border-b border-border/50 p-4">
+          <div className="space-y-2 border-b border-border/50 p-4">
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full text-xs"
+              onClick={openAddForm}
+            >
+              添加 Agent
+            </Button>
             <Input
               placeholder="搜索 Agent..."
               value={search}
@@ -307,105 +515,34 @@ export default function AgentsPage() {
               </div>
             ) : (
               <div className="p-2">
-                {sections.map((sec) => (
-                  <div key={sec.key}>
-                    <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">{sec.key}</div>
-                    {sec.names.map((name) => {
-                      const chatting = name === currentAgent;
-                      const selected = !addOpen && name === selectedName;
-                      return (
-                        <button
-                          key={name}
-                          type="button"
-                          onClick={() => {
-                            setAddOpen(false);
-                            setSelectedName(name);
-                          }}
-                          className={`w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${selected ? 'bg-accent/80 font-medium' : 'hover:bg-muted/60'}`}
-                        >
-                          <AgentAvatar name={name} />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="truncate text-sm text-foreground">{name}</span>
-                              {chatting && <Badge variant="secondary" className="text-[10px]">当前</Badge>}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ))}
+                {sortedFiltered.map((name) => {
+                  const chatting = name === currentAgent;
+                  const selected = name === selectedName;
+                  return (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => void handleSelectAgent(name)}
+                      className={`w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${selected ? 'bg-accent/80 font-medium' : 'hover:bg-muted/60'}`}
+                    >
+                      <AgentAvatar name={name} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-sm text-foreground">{name}</span>
+                          {chatting && <Badge variant="secondary" className="text-[10px]">当前</Badge>}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </ScrollArea>
-          <div className="shrink-0 border-t border-border/50 p-3">
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full text-xs"
-              onClick={() => {
-                void refresh();
-                setAddOpen(true);
-              }}
-            >
-              添加 Agent
-            </Button>
-          </div>
         </div>
 
         {/* Right Pane - Detail */}
         <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-border bg-card overflow-hidden">
-          {addOpen ? (
-            <ScrollArea className="flex-1">
-              <div className="p-6">
-                <div className="mb-6">
-                  <h2 className="text-lg font-semibold text-foreground">添加 Agent</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">创建 Agent 并绑定模型后即可使用。</p>
-                </div>
-
-                <div className="mb-4 flex flex-wrap gap-2">
-                  {PRESETS.map((p) => (
-                    <button key={p.label} type="button" onClick={() => applyPreset(p)} className="rounded-full border border-violet-500/20 bg-violet-500/5 px-3 py-1 text-xs text-violet-600 transition-colors hover:bg-violet-500/10">
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-
-                <form onSubmit={onSubmit} className="flex flex-col gap-4">
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <label className="mb-1.5 block text-xs font-medium text-muted-foreground">显示名称 *</label>
-                      <Input value={form.name} onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))} placeholder="例如：deepseek-default" />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="mb-1.5 block text-xs font-medium text-muted-foreground">模型 *</label>
-                      <Input
-                        value={form.model}
-                        onChange={(e) => setForm((s) => ({ ...s, model: e.target.value }))}
-                        placeholder="deepseek/deepseek-chat"
-                        className="font-mono text-sm"
-                      />
-                      <ModelFieldHint />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-xs font-medium text-muted-foreground">api_base *</label>
-                      <Input value={form.apiBase} onChange={(e) => setForm((s) => ({ ...s, apiBase: e.target.value }))} placeholder="https://api.deepseek.com/v1" />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">api_key *</label>
-                    <Input type="password" value={form.apiKey} onChange={(e) => setForm((s) => ({ ...s, apiKey: e.target.value }))} placeholder="sk-..." />
-                    <p className="mt-1 text-[11px] text-muted-foreground">密钥仅用于保存到服务端，不会留在浏览器中。</p>
-                  </div>
-                  {submitError && <p className="text-xs text-destructive">{submitError}</p>}
-                  <div className="flex justify-end gap-2">
-                    <Button type="button" variant="ghost" size="sm" onClick={() => setForm(EMPTY_FORM)} disabled={submitting}>清空</Button>
-                    <Button type="submit" size="sm" disabled={!formValid || submitting}>{submitting ? '添加中…' : '保存'}</Button>
-                  </div>
-                </form>
-              </div>
-            </ScrollArea>
-          ) : detailName ? (
+          {detailName ? (
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/50 px-4 py-2.5">
                 <nav className="flex flex-wrap gap-1.5">
@@ -415,7 +552,7 @@ export default function AgentsPage() {
                       <button
                         key={id}
                         type="button"
-                        onClick={() => setDetailTab(id)}
+                        onClick={() => void handleDetailTabChange(id)}
                         className={cn(
                           'inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm transition-colors',
                           active
@@ -429,8 +566,8 @@ export default function AgentsPage() {
                     );
                   })}
                 </nav>
-                {detailTab === 'config' && (
-                  <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2">
+                  {detailTab === 'config' && (
                     <Button
                       variant="default"
                       size="sm"
@@ -442,24 +579,48 @@ export default function AgentsPage() {
                     >
                       {editConfigOpen ? '收起编辑' : '更新配置'}
                     </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                      onClick={() => void onDelete(detailName)}
-                      disabled={pendingDelete === detailName}
-                    >
-                      <IconTrash className="mr-1.5 h-3.5 w-3.5" stroke={1.75} />
-                      {pendingDelete === detailName ? '移除中…' : '移除'}
-                    </Button>
-                  </div>
-                )}
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={openUploadDialog}
+                    disabled={uploading}
+                  >
+                    <IconUpload className="mr-1.5 h-3.5 w-3.5" stroke={1.75} />
+                    发布到市场
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => void onDelete(detailName)}
+                    disabled={pendingDelete === detailName}
+                  >
+                    <IconTrash className="mr-1.5 h-3.5 w-3.5" stroke={1.75} />
+                    {pendingDelete === detailName ? '删除中…' : '删除 Agent'}
+                  </Button>
+                </div>
               </div>
 
               {detailTab === 'persona' ? (
-                <AgentPersonaEditor key={detailName} agentName={detailName} className="min-h-0 flex-1" />
+                <AgentPersonaEditor
+                  key={detailName}
+                  agentName={detailName}
+                  className="min-h-0 flex-1"
+                  onDirtyChange={setPersonaDirty}
+                />
               ) : detailTab === 'skills' ? (
-                <AgentSkillsPanel key={detailName} agentName={detailName} className="min-h-0 flex-1" />
+                <AgentSkillsPanel
+                  key={detailName}
+                  agentName={detailName}
+                  className="min-h-0 flex-1"
+                  onOpenFile={setSkillFile}
+                  activeFileKey={
+                    skillFile ? skillFileKey(skillFile.source, skillFile.skill, skillFile.file) : null
+                  }
+                  onDeleteSkill={handleDeleteSkill}
+                  refreshRev={skillsRefreshRev}
+                />
               ) : (
                 <ScrollArea className="flex-1">
                   <div className="max-w-3xl p-4 md:p-5">
@@ -506,7 +667,7 @@ export default function AgentsPage() {
                         ) : editBaseline ? (
                           <>
                             <div className="mb-3 flex flex-wrap gap-2">
-                              {PRESETS.map((p) => (
+                              {AGENT_MODEL_PRESETS.map((p) => (
                                 <button key={p.label} type="button" onClick={() => applyEditPreset(p)} className="rounded-full border border-violet-500/20 bg-violet-500/5 px-2 py-1 text-[10px] text-violet-600 hover:bg-violet-500/10">
                                   {p.label}
                                 </button>
@@ -532,6 +693,18 @@ export default function AgentsPage() {
                                 <label className="mb-1 block text-xs text-muted-foreground">api_key {editBaseline.model_provider.has_api_key ? '（可选）' : '*'}</label>
                                 <Input type="password" value={editForm.apiKey} onChange={(e) => setEditForm((s) => ({ ...s, apiKey: e.target.value }))} placeholder={editBaseline.model_provider.has_api_key ? '留空沿用已有密钥' : 'sk-...'} disabled={editSubmitting} />
                               </div>
+                              <ModelConnectivityCheck
+                                fields={{
+                                  model: editForm.model,
+                                  apiBase: editForm.apiBase,
+                                  apiKey: editForm.apiKey,
+                                  agentName:
+                                    editForm.apiKey.trim() || editBaseline.model_provider.has_api_key
+                                      ? detailName ?? undefined
+                                      : undefined,
+                                }}
+                                disabled={editSubmitting}
+                              />
                               {editSubmitError && <p className="text-xs text-destructive">{editSubmitError}</p>}
                               <div className="flex justify-end">
                                 <Button type="submit" size="sm" disabled={!editFormValid || editSubmitting}>{editSubmitting ? '保存中…' : '保存'}</Button>
@@ -554,6 +727,169 @@ export default function AgentsPage() {
           )}
         </div>
       </div>
+
+      {detailName && skillFile && (
+        <DocReadingPanel
+          key={skillFileKey(skillFile.source, skillFile.skill, skillFile.file)}
+          agentName={detailName}
+          filePath={`${skillFile.skill}/${skillFile.file}`}
+          loadContent={loadSkillContent}
+          onClose={() => setSkillFile(null)}
+          onSave={saveSkillContent}
+        />
+      )}
+
+      {confirmDialog}
+
+      <AgentCreateDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        title="添加 Agent"
+        existingAgents={agents}
+        name={form.name}
+        onNameChange={(name) => setForm((s) => ({ ...s, name }))}
+        nameConflict={addNameConflict}
+        credMode={credMode}
+        onCredModeChange={setCredMode}
+        reuseAgent={reuseAgent}
+        onReuseAgentChange={setReuseAgent}
+        manual={{ model: form.model, apiBase: form.apiBase, apiKey: form.apiKey }}
+        onManualChange={(patch) => setForm((s) => ({ ...s, ...patch }))}
+        onReuseMetaChange={handleReuseMetaChange}
+        busy={submitting}
+        submitDisabled={!formValid}
+        error={submitError}
+        onSubmit={onSubmit}
+        onCancel={() => setSubmitError(null)}
+      />
+
+      {/* Upload to Marketplace Dialog */}
+      <Dialog.Root
+        open={uploadOpen}
+        onOpenChange={(open) => {
+          if (!open && !uploading) {
+            setUploadOpen(false);
+            setUploadError(null);
+          }
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[1200] bg-black/45 supports-backdrop-filter:backdrop-blur-[2px] data-[state=open]:animate-in data-[state=open]:fade-in-0" />
+          <Dialog.Content
+            className={cn(
+              'fixed left-1/2 top-1/2 z-[1201] w-[min(92vw,32rem)] -translate-x-1/2 -translate-y-1/2',
+              'max-h-[min(90vh,640px)] overflow-y-auto rounded-xl border border-border bg-background p-5 shadow-2xl',
+              'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+            )}
+          >
+            <Dialog.Title className="text-base font-semibold text-foreground">发布到市场</Dialog.Title>
+            <Dialog.Description className="mt-1 text-xs text-muted-foreground">
+              将 Agent「{detailName}」的工作区打包上传至 AgentHub 市场。
+            </Dialog.Description>
+
+            {uploadSuccess ? (
+              <div className="mt-4 rounded-lg border border-green-500/30 bg-green-500/10 p-4 text-center">
+                <p className="text-sm font-medium text-green-700 dark:text-green-300">✅ 上传成功！</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  该 Agent 已发布到 AgentHub 市场，其他用户可以搜索并安装。
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => setUploadOpen(false)}
+                >
+                  完成
+                </Button>
+              </div>
+            ) : (
+              <form onSubmit={onUpload} className="mt-4 flex flex-col gap-4">
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Agent 名称</label>
+                  <Input value={detailName ?? ''} disabled className="bg-muted/50" />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">上传 Token</label>
+                  <div className="relative">
+                    <Input
+                      type={showUploadToken ? 'text' : 'password'}
+                      value={uploadForm.uploadToken}
+                      onChange={(e) => setUploadForm((s) => ({ ...s, uploadToken: e.target.value }))}
+                      placeholder="AgentHub 上传令牌（首次输入后自动缓存）"
+                      disabled={uploading}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onClick={() => setShowUploadToken((v) => !v)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground"
+                    >
+                      {showUploadToken ? <IconEyeOff className="h-4 w-4" /> : <IconEye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">显示名称</label>
+                  <Input
+                    value={uploadForm.displayName}
+                    onChange={(e) => setUploadForm((s) => ({ ...s, displayName: e.target.value }))}
+                    placeholder="在市场中显示的名称（默认为 Agent 名称）"
+                    disabled={uploading}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">简介</label>
+                  <textarea
+                    value={uploadForm.summary}
+                    onChange={(e) => setUploadForm((s) => ({ ...s, summary: e.target.value }))}
+                    placeholder="简短描述该 Agent 的功能与特点..."
+                    disabled={uploading}
+                    rows={3}
+                    className="flex w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">分类</label>
+                  <select
+                    value={uploadForm.category}
+                    onChange={(e) => setUploadForm((s) => ({ ...s, category: e.target.value }))}
+                    disabled={uploading}
+                    className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground"
+                  >
+                    <option value="picoclaw">picoclaw</option>
+                    <option value="openclaw">openclaw</option>
+                  </select>
+                </div>
+
+                {uploadError && (
+                  <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-destructive">
+                    ⚠️ {uploadError}
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 border-t border-border/50 pt-4">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={uploading}
+                    onClick={() => {
+                      setUploadOpen(false);
+                      setUploadError(null);
+                    }}
+                  >
+                    取消
+                  </Button>
+                  <Button type="submit" size="sm" disabled={uploading}>
+                    {uploading ? '上传中…' : '确认上传'}
+                  </Button>
+                </div>
+              </form>
+            )}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   );
 }

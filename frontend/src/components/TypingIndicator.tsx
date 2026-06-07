@@ -1,7 +1,6 @@
 export function TypingIndicator() {
   return (
     <div style={styles.wrapper}>
-      <div style={styles.avatar}>F</div>
       <div style={styles.dots}>
         <span style={{ ...styles.dot, animationDelay: '0s' }} />
         <span style={{ ...styles.dot, animationDelay: '0.2s' }} />
@@ -12,20 +11,7 @@ export function TypingIndicator() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  wrapper: { display: 'flex', gap: 12, alignItems: 'center' },
-  avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    background: 'linear-gradient(135deg, #c9a84c 0%, #e8b84a 100%)',
-    color: '#0c0c0e',
-    fontWeight: 600,
-    fontSize: 14,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
+  wrapper: { display: 'flex', alignItems: 'center' },
   dots: {
     display: 'flex',
     gap: 4,

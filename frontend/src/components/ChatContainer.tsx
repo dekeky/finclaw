@@ -1,11 +1,14 @@
 import { useEffect, useRef } from 'react';
 import type { ChatMessage } from '../types';
-import { MessageBubble } from './MessageBubble';
-import { formatElapsedSeconds, useElapsedSeconds } from '../hooks/useElapsedSeconds';
-import { isToolMessage } from '../utils/foldPicoclawToolFeedback';
-import { isThoughtMessage } from '../utils/foldThoughtMessages';
+import { ActiveTaskPanel, MessageBubble } from './MessageBubble';
+import { useElapsedSeconds } from '../hooks/useElapsedSeconds';
+import { isChatTaskActive } from '../utils/chatTaskState';
+import {
+  collectActiveTaskSegments,
+  findLastUserIndex,
+  isProcessMessage,
+} from '../utils/foldProcessMessages';
 import { splitAssistantContent } from '../utils/splitAssistantContent';
-import { AgentAvatar } from './AgentAvatar';
 import { ChatMascot } from './ChatMascot';
 
 const DOCK_QUICK_PROMPTS = [
@@ -19,13 +22,15 @@ interface ChatContainerProps {
   messages: ChatMessage[];
   isTyping: boolean;
   onClear: () => void;
-  /** 当前对话 Agent，用于助手头像字母与配色 */
+  /** 当前对话 Agent，用于空状态文案 */
   agentName?: string | null;
   variant?: 'default' | 'dock';
   onQuickPrompt?: (text: string) => void;
   quickPrompts?: string[];
   /** 仅展示历史记录，不显示「清空」等操作 */
   readOnly?: boolean;
+  /** 当前思考任务的起始时间（ms）；用于刷新后让计时延续 */
+  taskStartedAt?: number | null;
 }
 
 export function ChatContainer({
@@ -37,24 +42,32 @@ export function ChatContainer({
   onQuickPrompt,
   quickPrompts = DOCK_QUICK_PROMPTS,
   readOnly = false,
+  taskStartedAt = null,
 }: ChatContainerProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
 
-  function isThoughtOutputActive(msg: ChatMessage, index: number): boolean {
-    if (index !== messages.length - 1) return false;
-    if (isThoughtMessage(msg)) return true;
-    if (isTyping && msg.role === 'assistant') {
+  const taskActive = !readOnly && isChatTaskActive(messages, isTyping);
+
+  const lastUserIdx = findLastUserIndex(messages);
+
+  function isProcessOutputActive(msg: ChatMessage, index: number): boolean {
+    if (!taskActive || index <= lastUserIdx) return false;
+    if (isProcessMessage(msg)) return true;
+    if (msg.role === 'assistant' && index === messages.length - 1) {
       return Boolean(splitAssistantContent(msg.content).thought);
     }
     return false;
   }
 
+  const taskTiming = useElapsedSeconds(taskActive, { startedAtMs: taskStartedAt });
   const lastMsg = messages.length > 0 ? messages[messages.length - 1] : undefined;
-  const thoughtPanelActive =
-    lastMsg != null && isThoughtOutputActive(lastMsg, messages.length - 1);
-  const showTypingBubble = isTyping && !readOnly && !thoughtPanelActive;
-  const typingTiming = useElapsedSeconds(showTypingBubble);
+  const activeTaskSegments = taskActive ? collectActiveTaskSegments(messages) : [];
+
+  function sharesTaskTiming(msg: ChatMessage, index: number): boolean {
+    if (!taskActive || index !== messages.length - 1) return false;
+    return isProcessOutputActive(msg, index) || lastMsg?.role === 'user';
+  }
 
   useEffect(() => {
     const el = bottomRef.current?.parentElement;
@@ -70,15 +83,11 @@ export function ChatContainer({
     if (variant === 'dock') {
       return (
         <div className="flex flex-1 flex-col items-center justify-center px-6 py-8 text-center">
-          {agentName ? (
-            <AgentAvatar name={agentName} size="lg" className="mb-3 shadow-md shadow-violet-500/15" />
-          ) : (
-            <ChatMascot
-              size={72}
-              decorative
-              className="mb-3 rounded-2xl shadow-md ring-2 ring-violet-500/15"
-            />
-          )}
+          <ChatMascot
+            size={72}
+            decorative
+            className="mb-3 rounded-2xl shadow-md ring-2 ring-violet-500/15"
+          />
           <h3 className="mb-2 text-base font-medium text-foreground">想问点什么？</h3>
           <p className="mb-4 max-w-xs text-xs text-muted-foreground leading-relaxed">
             可直接输入问题；在资讯列表勾选文章后提问，会自动带上原文链接。
@@ -101,16 +110,7 @@ export function ChatContainer({
       );
     }
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-16">
-        {agentName ? (
-          <AgentAvatar name={agentName} size="xl" className="shadow-lg shadow-violet-500/20" />
-        ) : (
-          <ChatMascot
-            size={112}
-            decorative
-            className="rounded-3xl shadow-lg shadow-violet-500/15 ring-2 ring-violet-500/20"
-          />
-        )}
+      <div className="flex flex-1 flex-col items-center justify-center px-6 py-16">
         <div className="text-center">
           <h2 className="mb-2 text-xl font-medium text-foreground/90">
             {agentName ? `与 ${agentName} 开始对话` : '欢迎使用 Finclaw'}
@@ -141,36 +141,26 @@ export function ChatContainer({
         </div>
       )}
 
-      {messages.map((msg, index) => (
-        <MessageBubble
-          key={msg.id}
-          message={msg}
-          agentName={agentName ?? 'Agent'}
-          variant={variant === 'dock' ? 'dock' : 'default'}
-          toolOutputActive={index === messages.length - 1 && isToolMessage(msg)}
-          thoughtOutputActive={isThoughtOutputActive(msg, index)}
-        />
-      ))}
+      {messages.map((msg, index) => {
+        const attachTaskTiming = sharesTaskTiming(msg, index);
+        return (
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            processOutputActive={isProcessOutputActive(msg, index)}
+            taskElapsedSeconds={attachTaskTiming ? taskTiming.seconds : undefined}
+            taskElapsedCompleted={attachTaskTiming && taskTiming.completed}
+          />
+        );
+      })}
 
-      {showTypingBubble && (
-        <div className="flex items-start gap-3">
-          <AgentAvatar name={agentName ?? 'Agent'} />
-          <div className="rounded-2xl rounded-tl-sm border border-border/60 bg-card px-4 py-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-medium tabular-nums text-muted-foreground">
-                努力工作中 · {formatElapsedSeconds(typingTiming.seconds)}
-              </span>
-              <div className="flex gap-1">
-                {[0, 0.2, 0.4].map((delay) => (
-                  <span
-                    key={delay}
-                    className="h-2 w-2 rounded-full bg-violet-400/70 animate-bounce"
-                    style={{ animationDelay: `${delay}s` }}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
+      {taskActive && (
+        <div className="flex w-full items-start">
+          <ActiveTaskPanel
+            seconds={taskTiming.seconds}
+            segments={activeTaskSegments}
+            messageId={lastMsg?.id ?? 'task'}
+          />
         </div>
       )}
 

@@ -9,8 +9,27 @@ export interface ElapsedTiming {
   completed: boolean;
 }
 
-/** active 为 true 时从 0 递增；结束后冻结总耗时供展示 */
-export function useElapsedSeconds(active: boolean): ElapsedTiming {
+export interface ElapsedOptions {
+  /**
+   * 自定义任务起始时间戳（ms）。
+   * - 传 number 时，elapsed = (now - startedAtMs) / 1000，秒数从该时间点延续；
+   * - 传 null / undefined 时，沿用「active 起算」策略，相当于本次 active 起点为 Date.now()。
+   */
+  startedAtMs?: number | null;
+  /** active 由 false 变 true 时回调，参数为本次最终采用的起始时间戳（ms）。 */
+  onStart?: (startedAtMs: number) => void;
+}
+
+/**
+ * active 为 true 时计时；可通过 `options.startedAtMs` 把起点固定为外部时间戳，
+ * 用于刷新页面后从 localStorage 恢复总耗时（避免归零）。结束后冻结总耗时供展示。
+ */
+export function useElapsedSeconds(active: boolean, options?: ElapsedOptions): ElapsedTiming {
+  const startedAtMs = options?.startedAtMs ?? null;
+  const onStart = options?.onStart;
+  const onStartRef = useRef(onStart);
+  onStartRef.current = onStart;
+
   const [seconds, setSeconds] = useState(0);
   const [completed, setCompleted] = useState(false);
   const startRef = useRef(Date.now());
@@ -18,12 +37,16 @@ export function useElapsedSeconds(active: boolean): ElapsedTiming {
 
   useEffect(() => {
     if (active) {
+      const now = Date.now();
+      const start = startedAtMs != null ? startedAtMs : now;
+      startRef.current = start;
       wasActiveRef.current = true;
-      startRef.current = Date.now();
-      setSeconds(0);
+      const initial = Math.max(0, Math.floor((now - start) / 1000));
+      setSeconds(initial);
       setCompleted(false);
+      onStartRef.current?.(start);
       const id = setInterval(() => {
-        setSeconds(Math.floor((Date.now() - startRef.current) / 1000));
+        setSeconds(Math.max(0, Math.floor((Date.now() - startRef.current) / 1000)));
       }, 1000);
       return () => clearInterval(id);
     }
@@ -34,7 +57,7 @@ export function useElapsedSeconds(active: boolean): ElapsedTiming {
       setCompleted(true);
       wasActiveRef.current = false;
     }
-  }, [active]);
+  }, [active, startedAtMs]);
 
   return { seconds, running: active, completed };
 }

@@ -6,9 +6,10 @@ type (
 
 // Protocol message types.
 const (
-	TypePing        FinMessageType = "ping"
-	TypeError       FinMessageType = "error"
-	TypePong        FinMessageType = "pong"
+	TypePing          FinMessageType = "ping"
+	TypePong          FinMessageType = "pong"
+	TypeConnected     FinMessageType = "connected"
+	TypeError         FinMessageType = "error"
 	TypeMessageSend FinMessageType = "message.send"
 )
 

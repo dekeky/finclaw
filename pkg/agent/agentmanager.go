@@ -148,6 +148,36 @@ func (m *AgentManager) GetFinclawOutboundCh(name string) chan bus.OutboundMessag
 	return m.finclawOutboundChs[name]
 }
 
+// NamesByUser returns agent display names for a given userId.
+func (m *AgentManager) NamesByUser(userID string) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	prefix := userID + ":"
+	names := make([]string, 0)
+	for key := range m.agents {
+		if strings.HasPrefix(key, prefix) {
+			names = append(names, strings.TrimPrefix(key, prefix))
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// AgentKey returns the internal key for a user's agent.
+func AgentKey(userID, agentName string) string {
+	return userID + ":" + agentName
+}
+
+// ParseAgentKey splits an internal key into userID and agentName.
+func ParseAgentKey(key string) (userID, agentName string) {
+	parts := strings.SplitN(key, ":", 2)
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	return "", key
+}
+
 // Remove stops and removes an agent from the manager.
 func (m *AgentManager) Remove(name string) error {
 	m.mu.Lock()
@@ -172,23 +202,45 @@ func (m *AgentManager) Remove(name string) error {
 
 // Init lists agent names persisted on disk: each immediate subdirectory of FinClaw home
 // that contains config.json (same layout as picoclaw agentConfigPath).
+// For backward compatibility, it also scans legacy top-level agent dirs (no userId prefix).
 func Init(ctx context.Context, finclawConf *config.FinclawConfig) (*AgentManager, error) {
 	home := config.FinclawHomePath()
-	agentNames, err := agentNamesFromDisk(home)
+	agentManager := NewAgentManager(ctx, finclawConf)
+
+	// Scan user directories
+	userEntries, err := os.ReadDir(home)
 	if err != nil {
-		return nil, fmt.Errorf("agent names from disk: %w", err)
+		if os.IsNotExist(err) {
+			return agentManager, nil
+		}
+		return nil, fmt.Errorf("read finclaw home: %w", err)
 	}
 
-	agentManager := NewAgentManager(ctx, finclawConf)
-	for _, agentName := range agentNames {
-		agentLoop, msgBus, err := picoclaw.LoadAgentByConfig(home, agentName)
-		if err != nil {
-			return nil, fmt.Errorf("load agent by config: %w", err)
+	for _, ue := range userEntries {
+		if !ue.IsDir() || strings.HasPrefix(ue.Name(), ".") {
+			continue
 		}
-		agentManager.AddAgent(agentName, agentLoop, msgBus)
+		userDir := filepath.Join(home, ue.Name())
+		agentNames, err := agentNamesFromDisk(userDir)
+		if err != nil {
+			continue
+		}
+		for _, agentName := range agentNames {
+			internalKey := ue.Name() + ":" + agentName
+			agentLoop, msgBus, err := picoclaw.LoadAgentByConfig(userDir, agentName)
+			if err != nil {
+				return nil, fmt.Errorf("load agent by config: %w", err)
+			}
+			agentManager.AddAgent(internalKey, agentLoop, msgBus)
+		}
 	}
 
 	return agentManager, nil
+}
+
+// UserAgentHome returns the directory for a user's agents.
+func UserAgentHome(userID string) string {
+	return filepath.Join(config.FinclawHomePath(), userID)
 }
 
 // AgentNamesFromDisk returns sorted directory names under home that have agent config.json.

@@ -18,6 +18,7 @@ import {
 import { IconChevronDown, IconSparkles } from '@tabler/icons-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { cn } from '@/lib/cn';
 
 const PERSONA_TABS: PersonaFileName[] = ['AGENT.md', 'SOUL.md', 'USER.md'];
@@ -35,11 +36,14 @@ function fileMap(files: AgentPersonaFile[]): Record<PersonaFileName, AgentPerson
 interface AgentPersonaEditorProps {
   agentName: string;
   className?: string;
+  /** 任一标签存在未保存修改时回调。 */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
-export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorProps) {
+export function AgentPersonaEditor({ agentName, className, onDirtyChange }: AgentPersonaEditorProps) {
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const [activeTab, setActiveTab] = useState<PersonaFileName>('AGENT.md');
-  const [viewMode, setViewMode] = useState<ViewMode>('edit');
+  const [viewMode, setViewMode] = useState<ViewMode>('preview');
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [files, setFiles] = useState<Record<PersonaFileName, AgentPersonaFile> | null>(null);
@@ -97,6 +101,7 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
   }, [load]);
 
   useEffect(() => {
+    setViewMode('preview');
     setAiPanelOpen(false);
     setAiPrompt('');
     setGenerateError(null);
@@ -109,8 +114,36 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
 
   const activeDraft = drafts[activeTab];
   const dirty = activeDraft !== savedDrafts[activeTab];
+  const hasUnsavedChanges = useMemo(
+    () => PERSONA_TABS.some((name) => drafts[name] !== savedDrafts[name]),
+    [drafts, savedDrafts],
+  );
   const showEdit = viewMode === 'edit';
   const showPreview = viewMode === 'edit' || viewMode === 'preview';
+
+  useEffect(() => {
+    onDirtyChange?.(hasUnsavedChanges);
+  }, [hasUnsavedChanges, onDirtyChange]);
+
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!hasUnsavedChanges) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [hasUnsavedChanges]);
+
+  const confirmDiscardChanges = useCallback(async () => {
+    if (!hasUnsavedChanges) return true;
+    return confirm({
+      title: '未保存的修改',
+      description: '人设有未保存的修改，离开后将丢失。确定要离开吗？',
+      confirmText: '离开',
+      cancelText: '继续编辑',
+    });
+  }, [confirm, hasUnsavedChanges]);
 
   const onSave = async () => {
     if (saving || !dirty) return;
@@ -191,8 +224,15 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
     }
   };
 
+  const onRefresh = async () => {
+    if (loading) return;
+    if (!(await confirmDiscardChanges())) return;
+    void load();
+  };
+
   return (
     <div className={cn('flex min-h-0 flex-col overflow-hidden', className)}>
+      {confirmDialog}
       <PersonaGenerateDialog
         open={generateModalOpen}
         fileName={generateModalFile}
@@ -232,7 +272,7 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
               {initBusy ? '初始化中…' : `初始化缺失 (${missingCount})`}
             </Button>
           )}
-          <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => void load()}>
+          <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => void onRefresh()}>
             刷新
           </Button>
           <div className="flex rounded-lg border border-border/60 p-0.5">
@@ -255,7 +295,7 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-3">
         {loading ? (
-          <p className="text-xs text-muted-foreground">加载人设文件…</p>
+          <p className="text-xs text-muted-foreground">加载人设…</p>
         ) : loadError ? (
           <div className="text-xs text-destructive">⚠️ {loadError}</div>
         ) : (
@@ -277,11 +317,11 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
                   <IconSparkles className="size-4" stroke={1.75} aria-hidden />
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block text-xs font-medium text-violet-800 dark:text-violet-200">AI 生成</span>
+                  <span className="block text-xs font-medium text-violet-800 dark:text-violet-200">AI 润色</span>
                   <span className="block truncate text-[11px] text-muted-foreground">
                     {aiPanelOpen
                       ? '收起提示词输入'
-                      : `点击用自然语言生成 ${PERSONA_FILE_LABELS[activeTab].title}`}
+                      : `点击用自然语言润色 ${PERSONA_FILE_LABELS[activeTab].title}`}
                   </span>
                 </span>
                 <IconChevronDown
@@ -324,7 +364,7 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
                       disabled={!aiPrompt.trim() || generating || saving}
                       onClick={() => void onGenerate()}
                     >
-                      {generating ? '生成中…' : '开始生成'}
+                      {generating ? '润色中…' : '开始润色'}
                     </Button>
                   </div>
                   {generateError && <p className="mt-2 text-xs text-destructive">{generateError}</p>}
@@ -346,7 +386,7 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
                     onChange={(e) => setDrafts((prev) => ({ ...prev, [activeTab]: e.target.value }))}
                     spellCheck={false}
                     className="min-h-0 w-full flex-1 resize-none rounded-lg border border-border bg-background px-4 py-3 font-mono text-[13px] leading-relaxed text-foreground outline-none focus-visible:ring-2 focus-visible:ring-violet-500/30"
-                    placeholder="在此编辑 Markdown，或点击上方 AI 条生成…"
+                    placeholder="在此编辑 Markdown，或点击上方 AI 条润色…"
                     disabled={saving || generating}
                   />
                 </div>
@@ -363,7 +403,7 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
                         {activeDraft}
                       </MarkdownContent>
                     ) : (
-                      <p className="text-sm text-muted-foreground">暂无内容。编辑或 AI 生成后将在此渲染 Markdown。</p>
+                      <p className="text-sm text-muted-foreground">暂无内容。编辑或 AI 润色后将在此渲染 Markdown。</p>
                     )}
                   </div>
                 </div>
@@ -381,7 +421,13 @@ export function AgentPersonaEditor({ agentName, className }: AgentPersonaEditorP
               >
                 撤销
               </Button>
-              <Button type="button" size="sm" disabled={!dirty || saving || generating} onClick={() => void onSave()}>
+              <Button
+                type="button"
+                size="sm"
+                className="bg-violet-600 text-white hover:bg-violet-600/90"
+                disabled={!dirty || saving || generating}
+                onClick={() => void onSave()}
+              >
                 {saving ? '保存中…' : '保存'}
               </Button>
             </div>

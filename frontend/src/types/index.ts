@@ -1,7 +1,14 @@
 export type MessageRole = 'user' | 'assistant';
 
-/** 助手消息子类型：思考过程 / 工具输出 / 正文回复 */
-export type MessageKind = 'reply' | 'thought' | 'tool';
+/** 助手消息子类型：思考 / 工具输出 / 合并过程 / 正文回复 */
+export type MessageKind = 'reply' | 'thought' | 'tool' | 'process';
+
+export interface ProcessSegment {
+  type: 'thought' | 'tool';
+  content: string;
+  /** 该段对应的原始服务端消息 id 列表（合并段可能包含多个）。用于去重 from_cache 重放。 */
+  sourceIds?: string[];
+}
 
 export interface ChatMessage {
   id: string;
@@ -9,6 +16,8 @@ export interface ChatMessage {
   content: string;
   timestamp: Date;
   kind?: MessageKind;
+  /** 合并后的思考 + 工具步骤（kind === 'process'） */
+  processSegments?: ProcessSegment[];
 }
 
 export interface WSMessage {

@@ -1,20 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FinclawMark } from '../FinclawMark';
+import { AgentSwitcher } from '../AgentSwitcher';
 import { ChatContainer } from '../ChatContainer';
 import { InputArea } from '../InputArea';
 import { ErrorBoundary } from '../ErrorBoundary';
-import { useWebSocket } from '../../hooks/useWebSocket';
+import { useChatSession } from '../../state/chatSession';
 import { useAgents } from '../../state/agents';
 import { buildAnalysisUserMessage, type EntryForAnalysis } from '../../utils/analysisPrompt';
 import { rssScopedItemKey } from '../../utils/rssScopedKey';
 import { rssSourceDisplayLabel } from '../../utils/rssSourceLabel';
-
-function buildAgentWsUrl(agentName: string | null): string | null {
-  if (!agentName) return null;
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${window.location.host}/ws/chat/${encodeURIComponent(agentName)}`;
-}
 
 type Props = {
   listEntries: EntryForAnalysis[];
@@ -286,8 +281,7 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
   }, []);
 
   const { agents, currentAgent, selectAgent, status: agentsStatus } = useAgents();
-  const wsUrl = buildAgentWsUrl(currentAgent);
-  const { messages, status, isTyping, sendError, send, clearMessages, reconnect } = useWebSocket(wsUrl);
+  const { messages, status, isTyping, sendError, send, clearMessages, reconnect, taskStartedAt } = useChatSession();
 
   const hasFeed = listEntries.length > 0;
   const noAgent = !currentAgent;
@@ -300,7 +294,7 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
     (text: string) => {
       setHint(null);
       if (noAgent) {
-        setHint('当前没有可用 Agent，请先在「Agent 管理」中添加并选择一位 Agent。');
+        setHint('当前没有可用 Agent，请前往 Agent 市场创建一位 Agent。');
         return;
       }
       const entries = selectedEntries;
@@ -460,30 +454,25 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
             <div className="rss-ai-dock-agentbar">
               <label className="rss-ai-dock-agentbar-label">Agent</label>
               {agents.length > 0 ? (
-                <select
-                  className="rss-ai-dock-select"
-                  value={currentAgent ?? ''}
-                  onChange={(e) => selectAgent(e.target.value || null)}
-                  aria-label="选择 Agent"
-                >
-                  {!currentAgent && <option value="">请选择…</option>}
-                  {agents.map((name) => (
-                    <option key={name} value={name}>
-                      {name}
-                    </option>
-                  ))}
-                </select>
+                <AgentSwitcher
+                  agents={agents}
+                  value={currentAgent}
+                  onChange={selectAgent}
+                  placeholder="请选择…"
+                  showAvatar={false}
+                  triggerClassName="rss-ai-dock-select-trigger"
+                />
               ) : (
                 <span className="rss-ai-dock-agentbar-empty">
                   {agentsStatus === 'loading' ? '加载中…' : '尚未创建 Agent'}
                 </span>
               )}
               <Link
-                to="/agents"
+                to={agents.length === 0 ? '/agents/market' : '/agents'}
                 className="rss-ai-dock-mini-btn rss-ai-dock-mini-btn--primary"
-                title="管理 Agent"
+                title={agents.length === 0 ? '前往 Agent 市场' : '管理 Agent'}
               >
-                {agents.length === 0 ? '创建' : '管理'}
+                {agents.length === 0 ? '市场' : '管理'}
               </Link>
             </div>
 
@@ -530,6 +519,7 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
                   agentName={currentAgent}
                   variant="dock"
                   onQuickPrompt={handleSend}
+                  taskStartedAt={taskStartedAt}
                 />
               </div>
             </ErrorBoundary>
@@ -541,7 +531,9 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
                 compact
                 placeholder={
                   noAgent
-                    ? '请先在「Agent 管理」中添加并选择一位 Agent…'
+                    ? agents.length === 0
+                      ? '请前往 Agent 市场创建 Agent…'
+                      : '请先选择一位 Agent…'
                     : selectedEntries.length > 0
                     ? '输入问题，将附带已选文章的原文链接…'
                     : '随便聊聊，或在列表勾选文章后再提问…'
@@ -841,7 +833,7 @@ const DOCK_CSS = `
   font-size: 12px;
   color: var(--fc-text-muted);
 }
-.rss-ai-dock-select {
+.rss-ai-dock-select-trigger {
   flex: 1;
   min-width: 0;
   font-size: 12px;
@@ -851,10 +843,8 @@ const DOCK_CSS = `
   border: 1px solid var(--fc-border-strong);
   background: var(--fc-bg-app);
   color: var(--fc-text);
-  outline: none;
-  appearance: none;
 }
-.rss-ai-dock-select:focus { border-color: rgba(36,104,242,0.45); }
+.rss-ai-dock-select-trigger:focus-visible { border-color: rgba(36,104,242,0.45); }
 .rss-ai-dock-close {
   width: 32px;
   height: 32px;

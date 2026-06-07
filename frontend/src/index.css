@@ -73,13 +73,13 @@
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
+  --sidebar: oklch(0.975 0.004 250);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent: oklch(0.955 0.006 250);
   --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-border: oklch(0.91 0.006 250);
   --sidebar-ring: oklch(0.708 0 0);
 }
 
@@ -107,13 +107,13 @@
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
+  --sidebar: oklch(0.19 0.008 250);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent: oklch(0.24 0.01 250);
   --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-border: oklch(1 0 0 / 8%);
   --sidebar-ring: oklch(0.556 0 0);
 }
 
@@ -149,12 +149,12 @@
 }
 
 [data-slot="sidebar-container"] {
-  top: 3.5rem !important;
-  height: calc(100svh - 3.5rem) !important;
+  top: 0 !important;
+  height: 100svh !important;
 }
 
 [data-slot="sidebar-gap"] {
-  height: calc(100svh - 3.5rem);
+  height: 100svh;
 }
 
 @keyframes shimmer {
@@ -180,4 +180,33 @@
 @keyframes messageIn {
   from { opacity: 0; transform: translateY(12px) scale(0.98); }
   to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Agent work-in-progress — neutral status cues (ChatGPT / Claude style) */
+@keyframes fc-status-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.92); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+.fc-status-dot {
+  animation: fc-status-pulse 1.8s ease-in-out infinite;
+}
+
+.fc-typing-dot {
+  animation: typingBounce 1.4s ease-in-out infinite;
+}
+
+@keyframes fc-process-breathe {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgb(139 92 246 / 0);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgb(139 92 246 / 0.14),
+      0 4px 14px -4px rgb(139 92 246 / 0.18);
+  }
+}
+
+.fc-process-active {
+  animation: fc-process-breathe 2.8s ease-in-out infinite;
 }
