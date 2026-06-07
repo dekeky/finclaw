@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
+	"github.com/sipeed/picoclaw/pkg/identity"
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
@@ -382,8 +383,7 @@ func (fchannel *FinClawChannel) handleMessageSend(fconn *finConn, msg FinMessage
 	}
 
 	chatID := genChatID(sessionID)
-
-	peer := bus.Peer{Kind: "direct", ID: "fin:" + sessionID}
+	senderID := "fin-user"
 
 	metadata := map[string]string{
 		"platform":   "fin",
@@ -391,16 +391,31 @@ func (fchannel *FinClawChannel) handleMessageSend(fconn *finConn, msg FinMessage
 		"conn_id":    fconn.id,
 	}
 
+	sender := bus.SenderInfo{
+		Platform:    "fin",
+		PlatformID:  senderID,
+		CanonicalID: identity.BuildCanonicalID("fin", senderID),
+	}
+
+	inboundCtx := bus.InboundContext{
+		Channel:   "fin",
+		ChatID:    chatID,
+		ChatType:  "direct",
+		SenderID:  senderID,
+		MessageID: msg.ID,
+		Raw:       metadata,
+	}
+
 	logger.InfoCF("fin", "Sending message to bus", map[string]any{
 		"session_id": sessionID,
 		"chat_id":    chatID,
-		"peer":       peer.ID,
+		"sender_id":  senderID,
 		"preview":    truncate(content, 50),
 		"metadata":   metadata,
 	})
 
 	fchannel.recordRecentUserMessage(sessionID, content)
-	fchannel.HandleMessage(fchannel.Ctx, peer, msg.ID, "", chatID, content, nil, metadata)
+	fchannel.HandleInboundContext(fchannel.Ctx, chatID, content, nil, inboundCtx, sender)
 
 	logger.InfoCF("fin", "Message sent to bus", map[string]any{
 		"session_id": sessionID,
@@ -455,13 +470,24 @@ func (fchannel *FinClawChannel) republishMisroutedInbound(sessionID string, agen
 	}
 	ctx, cancel := context.WithTimeout(fchannel.Ctx, 2*time.Second)
 	defer cancel()
-	peer := bus.Peer{Kind: "direct", ID: "fin:" + sessionID}
-	if err := fchannel.msgBus.PublishInbound(ctx, bus.InboundMessage{
+	senderID := strings.TrimSpace(agentMsg.Context.SenderID)
+	if senderID == "" {
+		senderID = "fin-user"
+	}
+	inboundCtx := bus.InboundContext{
 		Channel:  "fin",
 		ChatID:   chatID,
-		Content:  agentMsg.Content,
-		Peer:     peer,
-		Metadata: map[string]string{"platform": "fin", "session_id": sessionID, "requeued": "true"},
+		ChatType: "direct",
+		SenderID: senderID,
+		Raw: map[string]string{
+			"platform":   "fin",
+			"session_id": sessionID,
+			"requeued":   "true",
+		},
+	}
+	if err := fchannel.msgBus.PublishInbound(ctx, bus.InboundMessage{
+		Context: inboundCtx,
+		Content: agentMsg.Content,
 	}); err != nil {
 		logger.WarnCF("fin", "Failed to republish misrouted user echo to inbound", map[string]any{
 			"session_id": sessionID,
@@ -483,7 +509,7 @@ func (fchannel *FinClawChannel) ProcessAgentMessage(outbound <-chan bus.Outbound
 		})
 
 		sessionId := extractSessionIDFromChatId(agentMsg.ChatID)
-		if fchannel.isMisroutedUserEcho(sessionId, agentMsg.Content, agentMsg.Metadata) {
+		if fchannel.isMisroutedUserEcho(sessionId, agentMsg.Content, agentMsg.Context.Raw) {
 			fchannel.republishMisroutedInbound(sessionId, agentMsg)
 			continue
 		}
@@ -497,7 +523,7 @@ func (fchannel *FinClawChannel) ProcessAgentMessage(outbound <-chan bus.Outbound
 			"content": agentMsg.Content,
 			"role":    "assistant",
 		}
-		if kind := agentMsg.Metadata["message_kind"]; kind != "" {
+		if kind := agentMsg.Context.Raw["message_kind"]; kind != "" {
 			payload["message_kind"] = kind
 		}
 		response := map[string]any{
@@ -527,7 +553,7 @@ func (fchannel *FinClawChannel) ProcessAgentMessage(outbound <-chan bus.Outbound
 			ID:        msgId,
 			Content:   agentMsg.Content,
 			Role:      "assistant",
-			Kind:      agentMsg.Metadata["message_kind"],
+			Kind:      agentMsg.Context.Raw["message_kind"],
 			Timestamp: time.Now(),
 		})
 	}

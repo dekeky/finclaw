@@ -31,7 +31,7 @@ func ProbeModelConfig(ctx context.Context, mc *picoclawconfig.ModelConfig) Model
 		return modelProbeFail(start, fmt.Sprintf("配置无效：%v", err))
 	}
 
-	protocol, modelID := providers.ExtractProtocol(mc.Model)
+	protocol, modelID := providers.ExtractProtocol(mc)
 	if strings.TrimSpace(modelID) == "" {
 		return modelProbeFail(start, "model 格式无效")
 	}
