@@ -1,23 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Dialog } from 'radix-ui';
 import { Navigate, useSearchParams } from 'react-router-dom';
-import { IconCpu, IconEye, IconEyeOff, IconFileDescription, IconPuzzle, IconTrash, IconUpload } from '@tabler/icons-react';
-import { useAgents } from '../state/agents';
+import { IconCpu, IconChevronDown, IconEye, IconEyeOff, IconFileDescription, IconPuzzle, IconSparkles, IconTrash, IconUpload, IconUser } from '@tabler/icons-react';
+import { useAgents, findAgentSummary } from '../state/agents';
 import {
   getAgent,
   getAgentSkillFile,
   writeAgentSkillFile,
   deleteAgentSkill,
+  deleteAgentSkillPath,
   type AgentDetailBody,
 } from '../api/agents';
 import { AgentAvatar } from '../components/AgentAvatar';
+import { AgentProfileSection } from '../components/AgentProfileSection';
 import { AgentCreateDialog } from '../components/AgentCreateDialog';
 import { isAgentModelSetupValid, type ReuseAgentSourceMeta } from '../components/AgentModelSetupSection';
 import { AgentPersonaEditor } from '../components/AgentPersonaEditor';
 import { AgentSkillsPanel, skillFileKey, type SkillFileTarget } from '../components/AgentSkillsPanel';
 import { DocReadingPanel } from '../components/DocReadingPanel';
 import { ModelConnectivityCheck } from '../components/ModelConnectivityCheck';
-import { uploadAgentToMarket } from '../api/agentMarket';
+import { uploadAgentToMarket, generateMarketSummary } from '../api/agentMarket';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useNavigationGuard } from '../state/navigationGuard';
 import { Card, CardContent } from '@/components/ui/card';
@@ -29,6 +31,7 @@ import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
 import { AGENT_MODEL_PRESETS } from '@/lib/agentModelPresets';
 import { cn } from '@/lib/cn';
+import { PRIMARY_BUTTON_CLASS, PRIMARY_LIST_ITEM_SELECTED_CLASS, PRIMARY_TAB_ACTIVE_CLASS, PRIMARY_TAB_INACTIVE_HOVER_CLASS, PRIMARY_AI_PANEL_CLASS, PRIMARY_AI_PANEL_HOVER_CLASS, PRIMARY_ICON_GRADIENT_CLASS } from '@/lib/primaryButton';
 
 type FormState = { name: string; model: string; apiBase: string; apiKey: string };
 type EditFormState = { model: string; apiBase: string; apiKey: string };
@@ -68,7 +71,7 @@ function ModelFieldHint() {
   );
 }
 
-type DetailTab = 'persona' | 'skills' | 'config';
+type DetailTab = 'profile' | 'persona' | 'skills' | 'config';
 
 const DETAIL_TAB_STORAGE_KEY = 'finclaw.agents.detailTab';
 
@@ -77,6 +80,7 @@ const DETAIL_TABS: Array<{
   label: string;
   icon: typeof IconFileDescription;
 }> = [
+  { id: 'profile', label: '基本资料', icon: IconUser },
   { id: 'persona', label: '人设', icon: IconFileDescription },
   { id: 'skills', label: 'Skills', icon: IconPuzzle },
   { id: 'config', label: '模型配置', icon: IconCpu },
@@ -85,11 +89,11 @@ const DETAIL_TABS: Array<{
 function loadDetailTab(): DetailTab {
   try {
     const v = sessionStorage.getItem(DETAIL_TAB_STORAGE_KEY);
-    if (v === 'persona' || v === 'skills' || v === 'config') return v;
+    if (v === 'profile' || v === 'persona' || v === 'skills' || v === 'config') return v;
   } catch {
     /* private mode */
   }
-  return 'persona';
+  return 'profile';
 }
 
 function saveDetailTab(tab: DetailTab) {
@@ -101,7 +105,7 @@ function saveDetailTab(tab: DetailTab) {
 }
 
 export default function AgentsPage() {
-  const { agents, currentAgent, refresh, createAgent, updateAgent, deleteAgent } = useAgents();
+  const { agents, agentNames, avatarRevision, currentAgent, refresh, createAgent, updateAgent, deleteAgent } = useAgents();
   const [searchParams] = useSearchParams();
 
   const [search, setSearch] = useState('');
@@ -142,6 +146,10 @@ export default function AgentsPage() {
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [showUploadToken, setShowUploadToken] = useState(false);
   const [uploadForm, setUploadForm] = useState({ displayName: '', summary: '', category: 'picoclaw', uploadToken: '' });
+  const [summaryPolishOpen, setSummaryPolishOpen] = useState(false);
+  const [summaryPolishPrompt, setSummaryPolishPrompt] = useState('');
+  const [summaryPolishing, setSummaryPolishing] = useState(false);
+  const [summaryPolishError, setSummaryPolishError] = useState<string | null>(null);
 
   const setDetailTab = useCallback((tab: DetailTab) => {
     saveDetailTab(tab);
@@ -198,34 +206,35 @@ export default function AgentsPage() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return agents;
-    return agents.filter((n) => n.toLowerCase().includes(q));
+    return agents.filter((a) => a.name.toLowerCase().includes(q));
   }, [agents, search]);
 
   const sortedFiltered = useMemo(
-    () => [...filtered].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN')),
+    () => [...filtered].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')),
     [filtered],
   );
 
   // 仅在校正无效选中项时同步，避免切换列表项时因 currentAgent 变化触发多余更新
   useEffect(() => {
     setSelectedName((prev) => {
-      if (prev && agents.includes(prev)) return prev;
-      if (currentAgent && agents.includes(currentAgent)) return currentAgent;
-      return agents[0] ?? null;
+      if (prev && agentNames.includes(prev)) return prev;
+      if (currentAgent && agentNames.includes(currentAgent)) return currentAgent;
+      return agentNames[0] ?? null;
     });
-  }, [agents, currentAgent]);
+  }, [agentNames, currentAgent]);
 
   const detailName = selectedName;
+  const detailSummary = useMemo(() => findAgentSummary(agents, detailName), [agents, detailName]);
 
   const openAddForm = useCallback(() => {
     void refresh();
     setForm(EMPTY_FORM);
-    setCredMode(agents.length > 0 ? 'reuse' : 'manual');
-    setReuseAgent(agents[0] ?? '');
+    setCredMode(agentNames.length > 0 ? 'reuse' : 'manual');
+    setReuseAgent(agentNames[0] ?? '');
     setReuseMeta({ source: null, loading: false, error: null });
     setSubmitError(null);
     setAddOpen(true);
-  }, [agents, refresh]);
+  }, [agentNames, refresh]);
 
   const handleReuseMetaChange = useCallback((meta: ReuseAgentSourceMeta) => {
     setReuseMeta(meta);
@@ -267,6 +276,37 @@ export default function AgentsPage() {
       try {
         await deleteAgentSkill(detailName, source, skill);
         if (skillFile && skillFile.source === source && skillFile.skill === skill) {
+          setSkillFile(null);
+        }
+        setSkillsRefreshRev((n) => n + 1);
+      } catch (err) {
+        window.alert(err instanceof Error ? err.message : '删除失败');
+      }
+    },
+    [detailName, skillFile, confirm],
+  );
+
+  const handleDeleteSkillPath = useCallback(
+    async (source: string, skill: string, relPath: string, isDir: boolean, skillName: string) => {
+      if (!detailName) return;
+      const label = relPath.split('/').pop() ?? relPath;
+      const ok = await confirm({
+        title: isDir ? `删除文件夹「${label}」` : `删除文件「${label}」`,
+        description: isDir
+          ? `将永久删除 Skill「${skillName}」下的该文件夹及其全部内容，操作不可恢复。`
+          : `将永久删除 Skill「${skillName}」下的该文件，操作不可恢复。`,
+        confirmText: '删除',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await deleteAgentSkillPath(detailName, source, skill, relPath);
+        if (
+          skillFile &&
+          skillFile.source === source &&
+          skillFile.skill === skill &&
+          (skillFile.file === relPath || skillFile.file.startsWith(`${relPath}/`))
+        ) {
           setSkillFile(null);
         }
         setSkillsRefreshRev((n) => n + 1);
@@ -322,8 +362,8 @@ export default function AgentsPage() {
   }, [detailName]);
 
   const addNameConflict = useMemo(
-    () => form.name.trim().length > 0 && agents.includes(form.name.trim()),
-    [form.name, agents],
+    () => form.name.trim().length > 0 && agentNames.includes(form.name.trim()),
+    [form.name, agentNames],
   );
 
   const formValid = useMemo(() => {
@@ -407,8 +447,29 @@ export default function AgentsPage() {
     setUploadError(null);
     setUploadSuccess(false);
     setShowUploadToken(false);
+    setSummaryPolishOpen(false);
+    setSummaryPolishPrompt('');
+    setSummaryPolishError(null);
     setUploadOpen(true);
   }, [detailName]);
+
+  const onPolishSummary = useCallback(async () => {
+    if (!detailName || summaryPolishing || uploading) return;
+    setSummaryPolishing(true);
+    setSummaryPolishError(null);
+    try {
+      const { summary } = await generateMarketSummary(detailName, {
+        prompt: summaryPolishPrompt.trim() || undefined,
+        current_summary: uploadForm.summary.trim() || undefined,
+        display_name: uploadForm.displayName.trim() || detailName,
+      });
+      setUploadForm((s) => ({ ...s, summary }));
+    } catch (err) {
+      setSummaryPolishError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSummaryPolishing(false);
+    }
+  }, [detailName, summaryPolishing, uploading, summaryPolishPrompt, uploadForm.displayName, uploadForm.summary]);
 
   const onUpload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -478,7 +539,7 @@ export default function AgentsPage() {
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 text-xs"
+              className={cn('h-8 text-xs', PRIMARY_TAB_INACTIVE_HOVER_CLASS, 'dark:hover:bg-violet-500/14')}
               onClick={openAddForm}
             >
               添加 Agent
@@ -496,7 +557,7 @@ export default function AgentsPage() {
             <Button
               variant="outline"
               size="sm"
-              className="w-full text-xs"
+              className={cn('w-full text-xs', PRIMARY_TAB_INACTIVE_HOVER_CLASS, 'dark:hover:bg-violet-500/14')}
               onClick={openAddForm}
             >
               添加 Agent
@@ -515,7 +576,8 @@ export default function AgentsPage() {
               </div>
             ) : (
               <div className="p-2">
-                {sortedFiltered.map((name) => {
+                {sortedFiltered.map((agent) => {
+                  const { name } = agent;
                   const chatting = name === currentAgent;
                   const selected = name === selectedName;
                   return (
@@ -523,9 +585,18 @@ export default function AgentsPage() {
                       key={name}
                       type="button"
                       onClick={() => void handleSelectAgent(name)}
-                      className={`w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${selected ? 'bg-accent/80 font-medium' : 'hover:bg-muted/60'}`}
+                      className={cn(
+                        'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors',
+                        selected
+                          ? PRIMARY_LIST_ITEM_SELECTED_CLASS
+                          : cn('text-foreground', PRIMARY_TAB_INACTIVE_HOVER_CLASS),
+                      )}
                     >
-                      <AgentAvatar name={name} />
+                      <AgentAvatar
+                        name={name}
+                        hasAvatar={agent.has_avatar}
+                        avatarRevision={avatarRevision}
+                      />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="truncate text-sm text-foreground">{name}</span>
@@ -556,8 +627,8 @@ export default function AgentsPage() {
                         className={cn(
                           'inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm transition-colors',
                           active
-                            ? 'bg-violet-500 font-medium text-white shadow-sm shadow-violet-500/25'
-                            : 'bg-muted/50 text-muted-foreground hover:bg-violet-500/10 hover:text-violet-700 dark:hover:text-violet-300',
+                            ? PRIMARY_TAB_ACTIVE_CLASS
+                            : cn('bg-muted/50 text-muted-foreground', PRIMARY_TAB_INACTIVE_HOVER_CLASS),
                         )}
                       >
                         <Icon className="h-4 w-4" stroke={active ? 2 : 1.75} />
@@ -571,7 +642,7 @@ export default function AgentsPage() {
                     <Button
                       variant="default"
                       size="sm"
-                      className="bg-violet-600 hover:bg-violet-600/90"
+                      className={PRIMARY_BUTTON_CLASS}
                       onClick={() => {
                         setEditConfigOpen(!editConfigOpen);
                         if (!editConfigOpen) void loadLatestForEdit();
@@ -581,8 +652,9 @@ export default function AgentsPage() {
                     </Button>
                   )}
                   <Button
-                    variant="outline"
+                    variant="default"
                     size="sm"
+                    className={PRIMARY_BUTTON_CLASS}
                     onClick={openUploadDialog}
                     disabled={uploading}
                   >
@@ -602,7 +674,21 @@ export default function AgentsPage() {
                 </div>
               </div>
 
-              {detailTab === 'persona' ? (
+              {detailTab === 'profile' ? (
+                <ScrollArea className="flex-1">
+                  <div className="max-w-3xl p-4 md:p-5">
+                    <Card size="sm">
+                      <CardContent className="p-4 md:p-5">
+                        <AgentProfileSection
+                          agentName={detailName}
+                          hasAvatar={detailSummary?.has_avatar ?? agentRuntime?.has_avatar ?? false}
+                          onRenamed={setSelectedName}
+                        />
+                      </CardContent>
+                    </Card>
+                  </div>
+                </ScrollArea>
+              ) : detailTab === 'persona' ? (
                 <AgentPersonaEditor
                   key={detailName}
                   agentName={detailName}
@@ -619,6 +705,7 @@ export default function AgentsPage() {
                     skillFile ? skillFileKey(skillFile.source, skillFile.skill, skillFile.file) : null
                   }
                   onDeleteSkill={handleDeleteSkill}
+                  onDeleteSkillPath={handleDeleteSkillPath}
                   refreshRev={skillsRefreshRev}
                 />
               ) : (
@@ -707,7 +794,7 @@ export default function AgentsPage() {
                               />
                               {editSubmitError && <p className="text-xs text-destructive">{editSubmitError}</p>}
                               <div className="flex justify-end">
-                                <Button type="submit" size="sm" disabled={!editFormValid || editSubmitting}>{editSubmitting ? '保存中…' : '保存'}</Button>
+                                <Button type="submit" size="sm" className={PRIMARY_BUTTON_CLASS} disabled={!editFormValid || editSubmitting}>{editSubmitting ? '保存中…' : '保存'}</Button>
                               </div>
                             </form>
                           </>
@@ -745,7 +832,7 @@ export default function AgentsPage() {
         open={addOpen}
         onOpenChange={setAddOpen}
         title="添加 Agent"
-        existingAgents={agents}
+        existingAgents={agentNames}
         name={form.name}
         onNameChange={(name) => setForm((s) => ({ ...s, name }))}
         nameConflict={addNameConflict}
@@ -840,11 +927,73 @@ export default function AgentsPage() {
                 </div>
                 <div>
                   <label className="mb-1.5 block text-xs font-medium text-muted-foreground">简介</label>
+                  <div className={cn('mb-2 overflow-hidden rounded-lg', PRIMARY_AI_PANEL_CLASS)}>
+                    <button
+                      type="button"
+                      onClick={() => setSummaryPolishOpen((open) => !open)}
+                      disabled={summaryPolishing || uploading}
+                      aria-expanded={summaryPolishOpen}
+                      className={cn(
+                        'flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors',
+                        PRIMARY_AI_PANEL_HOVER_CLASS,
+                        (summaryPolishing || uploading) && 'cursor-not-allowed opacity-70',
+                      )}
+                    >
+                      <span className={cn('flex size-7 shrink-0 items-center justify-center rounded-md', PRIMARY_ICON_GRADIENT_CLASS)}>
+                        <IconSparkles className="size-3.5" stroke={1.75} aria-hidden />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-xs font-medium text-violet-800 dark:text-violet-200">AI 润色</span>
+                        <span className="block truncate text-[11px] text-muted-foreground">
+                          {summaryPolishOpen ? '收起提示词' : '根据人设与 Skills 生成或润色简介'}
+                        </span>
+                      </span>
+                      <IconChevronDown
+                        className={cn(
+                          'size-4 shrink-0 text-violet-600/70 transition-transform dark:text-violet-300/70',
+                          summaryPolishOpen && 'rotate-180',
+                        )}
+                        stroke={1.75}
+                        aria-hidden
+                      />
+                    </button>
+                    {summaryPolishOpen && (
+                      <div className="border-t border-violet-500/15 bg-background/60 px-3 py-2.5">
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          <Input
+                            value={summaryPolishPrompt}
+                            onChange={(e) => setSummaryPolishPrompt(e.target.value)}
+                            placeholder="例如：突出量化选股与财报分析能力，语气专业简洁"
+                            disabled={summaryPolishing || uploading}
+                            className="min-w-0 flex-1 border-violet-500/20 text-sm focus-visible:ring-violet-500/30"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                void onPolishSummary();
+                              }
+                            }}
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            className={cn('shrink-0 sm:min-w-[5.5rem]', PRIMARY_BUTTON_CLASS)}
+                            disabled={summaryPolishing || uploading}
+                            onClick={() => void onPolishSummary()}
+                          >
+                            {summaryPolishing ? '润色中…' : '开始润色'}
+                          </Button>
+                        </div>
+                        {summaryPolishError && (
+                          <p className="mt-2 text-xs text-destructive">{summaryPolishError}</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
                   <textarea
                     value={uploadForm.summary}
                     onChange={(e) => setUploadForm((s) => ({ ...s, summary: e.target.value }))}
                     placeholder="简短描述该 Agent 的功能与特点..."
-                    disabled={uploading}
+                    disabled={uploading || summaryPolishing}
                     rows={3}
                     className="flex w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   />
@@ -881,7 +1030,7 @@ export default function AgentsPage() {
                   >
                     取消
                   </Button>
-                  <Button type="submit" size="sm" disabled={uploading}>
+                  <Button type="submit" size="sm" className={PRIMARY_BUTTON_CLASS} disabled={uploading}>
                     {uploading ? '上传中…' : '确认上传'}
                   </Button>
                 </div>

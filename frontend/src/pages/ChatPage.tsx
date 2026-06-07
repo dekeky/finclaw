@@ -13,8 +13,14 @@ import { CHAT_INPUT_GUTTER, CHAT_MAIN_COLUMN, CHAT_SCROLL_GUTTER } from '@/lib/c
 import { DocFileTree } from '../components/DocFileTree';
 import { DocReadingPanel } from '../components/DocReadingPanel';
 import { AgentSkillsPanel, skillFileKey, type SkillFileTarget } from '../components/AgentSkillsPanel';
-import { getAgentSkillFile, writeAgentSkillFile, deleteAgentSkill } from '../api/agents';
-import { writeAgentDocFile, deleteAgentDocPath } from '../api/agentDocs';
+import {
+  getAgentSkillFile,
+  writeAgentSkillFile,
+  deleteAgentSkill,
+  deleteAgentSkillPath,
+} from '../api/agents';
+import { writeAgentDocFile, deleteAgentDocPath, downloadAgentDocFile } from '../api/agentDocs';
+import { messageTouchesDocScanRoot } from '../lib/agentDocRoots';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { useChatSession } from '@/state/chatSession';
@@ -37,6 +43,7 @@ import {
 } from '@/lib/chatPersistence';
 import { useState, useRef, useMemo, useEffect, useCallback, type MouseEvent } from 'react';
 import { cn } from '@/lib/cn';
+import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 import { TOOLBAR_ICON_BUTTON_CLASS } from '@/lib/toolbarButton';
 
 export default function ChatPage() {
@@ -49,7 +56,18 @@ export default function ChatPage() {
     void refresh();
   }, [refresh]);
 
-  const { messages, status, isTyping, sendError, send, clearMessages, restoreMessages, reconnect, taskStartedAt } = useChatSession();
+  const {
+    messages,
+    status,
+    isTyping,
+    sendError,
+    send,
+    clearMessages,
+    restoreMessages,
+    reconnect,
+    taskStartedAt,
+    completedTaskElapsedSec,
+  } = useChatSession();
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyRev, setHistoryRev] = useState(0);
@@ -104,6 +122,15 @@ export default function ChatPage() {
   }, [currentAgent, skillFile]);
 
   // ── 删除 ──
+  const handleDownloadDoc = useCallback(async (fullPath: string) => {
+    if (!currentAgent) return;
+    try {
+      await downloadAgentDocFile(currentAgent, fullPath);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : '下载失败');
+    }
+  }, [currentAgent]);
+
   const handleDeleteDoc = useCallback(async (fullPath: string, isDir: boolean) => {
     if (!currentAgent) return;
     const name = fullPath.split('/').pop() ?? fullPath;
@@ -147,6 +174,37 @@ export default function ChatPage() {
     }
   }, [currentAgent, skillFile, confirm]);
 
+  const handleDeleteSkillPath = useCallback(
+    async (source: string, skill: string, relPath: string, isDir: boolean, skillName: string) => {
+      if (!currentAgent) return;
+      const label = relPath.split('/').pop() ?? relPath;
+      const ok = await confirm({
+        title: isDir ? `删除文件夹「${label}」` : `删除文件「${label}」`,
+        description: isDir
+          ? `将永久删除 Skill「${skillName}」下的该文件夹及其全部内容，操作不可恢复。`
+          : `将永久删除 Skill「${skillName}」下的该文件，操作不可恢复。`,
+        confirmText: '删除',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await deleteAgentSkillPath(currentAgent, source, skill, relPath);
+        if (
+          skillFile &&
+          skillFile.source === source &&
+          skillFile.skill === skill &&
+          (skillFile.file === relPath || skillFile.file.startsWith(`${relPath}/`))
+        ) {
+          setSkillFile(null);
+        }
+        setSkillsRefreshRev((n) => n + 1);
+      } catch (err) {
+        window.alert(err instanceof Error ? err.message : '删除失败');
+      }
+    },
+    [currentAgent, skillFile, confirm],
+  );
+
   const archivedList = useMemo(() => {
     if (!currentAgent) return [];
     return listArchived(currentAgent);
@@ -189,7 +247,7 @@ export default function ChatPage() {
   useEffect(() => {
     const lastMsg = messages[messages.length - 1];
     if (!lastMsg || lastMsg.role !== 'assistant' || lastMsg.kind !== 'tool') return;
-    if (lastMsg.content.includes('write_file') && lastMsg.content.includes('docs/')) {
+    if (messageTouchesDocScanRoot(lastMsg.content)) {
       bumpDocsRefresh();
     }
   }, [messages, bumpDocsRefresh]);
@@ -308,7 +366,7 @@ export default function ChatPage() {
               <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
                 请前往 Agent 市场，从模板快速创建一位 Agent 后即可开始对话。
               </p>
-              <Button asChild className="bg-violet-600 hover:bg-violet-600/90">
+              <Button asChild className={PRIMARY_BUTTON_CLASS}>
                 <Link to="/agents/market">前往 Agent 市场</Link>
               </Button>
             </>
@@ -338,6 +396,7 @@ export default function ChatPage() {
                   selectedDocPath={selectedDocPath}
                   hideHeader
                   onDelete={handleDeleteDoc}
+                  onDownload={handleDownloadDoc}
                 />
               ) : (
                 <AgentSkillsPanel
@@ -349,6 +408,7 @@ export default function ChatPage() {
                     skillFile ? skillFileKey(skillFile.source, skillFile.skill, skillFile.file) : null
                   }
                   onDeleteSkill={handleDeleteSkill}
+                  onDeleteSkillPath={handleDeleteSkillPath}
                   refreshRev={skillsRefreshRev}
                 />
               )}
@@ -365,6 +425,7 @@ export default function ChatPage() {
                     onClear={handleArchiveAndClear}
                     agentName={currentAgent}
                     taskStartedAt={taskStartedAt}
+                    completedTaskElapsedSec={completedTaskElapsedSec}
                   />
                 </ErrorBoundary>
               </div>

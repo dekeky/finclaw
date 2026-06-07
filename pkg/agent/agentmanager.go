@@ -178,6 +178,33 @@ func ParseAgentKey(key string) (userID, agentName string) {
 	return "", key
 }
 
+// ReloadFromDisk stops the agent under key (if running) and loads it again from disk.
+func (m *AgentManager) ReloadFromDisk(internalKey, home, agentName string) error {
+	_ = m.Remove(internalKey)
+	agentLoop, msgBus, err := picoclaw.LoadAgentByConfig(home, agentName)
+	if err != nil {
+		return err
+	}
+	m.AddAgent(internalKey, agentLoop, msgBus)
+	return nil
+}
+
+// Rename renames an agent directory and updates the in-memory registration key.
+func (m *AgentManager) Rename(userID, oldName, newName string) error {
+	home := UserAgentHome(userID)
+	oldKey := AgentKey(userID, oldName)
+	newKey := AgentKey(userID, newName)
+
+	_ = m.Remove(oldKey)
+	if err := picoclaw.RenameAgentDir(home, oldName, newName); err != nil {
+		if loop, msgBus, loadErr := picoclaw.LoadAgentByConfig(home, oldName); loadErr == nil {
+			m.AddAgent(oldKey, loop, msgBus)
+		}
+		return err
+	}
+	return m.ReloadFromDisk(newKey, home, newName)
+}
+
 // Remove stops and removes an agent from the manager.
 func (m *AgentManager) Remove(name string) error {
 	m.mu.Lock()

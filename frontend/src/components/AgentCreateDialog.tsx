@@ -9,6 +9,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/cn';
+import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 
 export interface AgentCreateDialogProps {
   open: boolean;
@@ -129,7 +130,7 @@ export function AgentCreateDialog({
               <Button
                 type="submit"
                 size="sm"
-                className="min-w-[6.5rem] bg-violet-600 hover:bg-violet-600/90"
+                className={cn('min-w-[6.5rem]', PRIMARY_BUTTON_CLASS)}
                 disabled={submitDisabled || busy}
               >
                 {busy ? '创建中…' : '创建 Agent'}

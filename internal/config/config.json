@@ -10,7 +10,8 @@
       "provider": "",
       "model_name": "MiniMax-M2.7-highspeed",
       "max_tokens": 100000,
-      "max_tool_iterations": 500,
+      "context_window": 262144,
+      "max_tool_iterations": 1024,
       "summarize_message_threshold": 20,
       "summarize_token_percent": 75
     }

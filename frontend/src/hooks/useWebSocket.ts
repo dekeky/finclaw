@@ -2,11 +2,21 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import type { ChatMessage, ConnectionStatus, MessageKind, WSMessage } from '../types';
 import { foldConsecutiveProcessMessages, hasMessageId } from '../utils/foldProcessMessages';
-import { isIncompleteChatTask } from '../utils/chatTaskState';
+import { hasCompleteReplyInTurn, isChatTaskActive } from '../utils/chatTaskState';
 import { isPicoclawToolFeedbackContent } from '../utils/foldPicoclawToolFeedback';
 import { isAssistantThoughtOnlyContent } from '../utils/splitAssistantContent';
 import { rehydrateChatMessages } from '../utils/rehydrateChatMessages';
-import { clearDraft, loadDraft, saveDraft, loadSessionId, saveSessionId, loadTaskStart, saveTaskStart } from '@/lib/chatPersistence';
+import {
+  clearDraft,
+  loadDraft,
+  saveDraft,
+  loadSessionId,
+  saveSessionId,
+  loadTaskStart,
+  saveTaskStart,
+  loadLastTaskElapsed,
+  saveLastTaskElapsed,
+} from '@/lib/chatPersistence';
 import { getToken, clearToken } from '../api/auth';
 
 const RECONNECT_DELAY = 2000;
@@ -123,6 +133,8 @@ export interface UseWebSocketReturn {
    * 用于让计时器跨刷新延续显示总耗时；任务结束时置 null 并清除持久化值。
    */
   taskStartedAt: number | null;
+  /** 上一轮已完成任务的总耗时（秒），刷新后供工作过程面板展示。 */
+  completedTaskElapsedSec: number | null;
 }
 
 export interface UseWebSocketOptions {
@@ -146,13 +158,16 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   const [status, setStatus] = useState<ConnectionStatus>('idle');
   const [isTyping, setIsTyping] = useState(() => {
     if (!persistAgentKey) return false;
-    return isIncompleteChatTask(prepareStoredChatMessages(loadDraft(persistAgentKey)));
+    return isChatTaskActive(prepareStoredChatMessages(loadDraft(persistAgentKey)), false);
   });
   const [sendError, setSendError] = useState<string | null>(null);
   /** 当前思考任务的起始时间戳（ms）；null 表示无进行中任务 */
   // 初始化时直接从 persistence 读取，确保 ChatContainer 首帧就能拿到正确的时间戳
   const [taskStartedAt, setTaskStartedAt] = useState<number | null>(() => {
     return persistAgentKey ? loadTaskStart(persistAgentKey) : null;
+  });
+  const [completedTaskElapsedSec, setCompletedTaskElapsedSec] = useState<number | null>(() => {
+    return persistAgentKey ? loadLastTaskElapsed(persistAgentKey) : null;
   });
   /** 与 taskStartedAt 同步，用于在 callback 内避免重复 beginTask */
   const taskStartedAtRef = useRef<number | null>(null);
@@ -179,13 +194,23 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   const beginTask = useCallback(() => {
     const now = Date.now();
     setTaskStartedAt(now);
+    setCompletedTaskElapsedSec(null);
     if (persistAgentKeyRef.current) {
       saveTaskStart(persistAgentKeyRef.current, now);
+      saveLastTaskElapsed(persistAgentKeyRef.current, null);
     }
   }, []);
 
   /** 关闭当前思考任务并清除持久化值。 */
   const endTask = useCallback(() => {
+    const start = taskStartedAtRef.current;
+    if (start != null) {
+      const elapsed = Math.max(0, Math.floor((Date.now() - start) / 1000));
+      setCompletedTaskElapsedSec(elapsed);
+      if (persistAgentKeyRef.current) {
+        saveLastTaskElapsed(persistAgentKeyRef.current, elapsed);
+      }
+    }
     setTaskStartedAt(null);
     if (persistAgentKeyRef.current) {
       saveTaskStart(persistAgentKeyRef.current, null);
@@ -296,6 +321,24 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
           const already = hasMessageId(prev, incoming.id);
           const next = upsertChatMessage(prev, incoming);
           added = !already;
+
+          if (role !== 'user' && !(fromCache && !added)) {
+            if (hasCompleteReplyInTurn(next)) {
+              // 本轮已有正文回复：忽略后续 reasoning/工具消息对 typing 的影响
+              clearTypingFallback();
+              setIsTyping(false);
+              endTask();
+            } else if (inProgress) {
+              setIsTyping(true);
+              armTypingFallback();
+              if (!taskStartedAtRef.current) beginTask();
+            } else {
+              clearTypingFallback();
+              setIsTyping(false);
+              endTask();
+            }
+          }
+
           return next;
         });
         // 增量诊断日志：刷新后排查「面板内容未追加」时定位丢失环节
@@ -312,21 +355,6 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         if (fromCache && !added) {
           // 已经显示过的缓存重放：不再触发 typing 状态变更
           console.log('[Finclaw WS] Skipping already-displayed cached message:', incoming.id);
-          break;
-        }
-
-        if (role !== 'user') {
-          if (inProgress) {
-            // 思考 / 工具进度 / 仅思考块：仍算进行中
-            setIsTyping(true);
-            armTypingFallback();
-            if (!taskStartedAtRef.current) beginTask();
-          } else {
-            // 收到完整正文回复：结束 typing 状态。
-            clearTypingFallback();
-            setIsTyping(false);
-            endTask();
-          }
         }
         break;
       }
@@ -533,9 +561,11 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     setMessages([]);
     sessionIdRef.current = null;
     endTask();
+    setCompletedTaskElapsedSec(null);
     if (persistAgentKey) {
       clearDraft(persistAgentKey);
       saveSessionId(persistAgentKey, null);
+      saveLastTaskElapsed(persistAgentKey, null);
     }
   }, [persistAgentKey, endTask]);
 
@@ -655,18 +685,21 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       messagesRef.current = restored;
       flushSync(() => {
         setMessages(restored);
-        if (isIncompleteChatTask(restored)) {
+        if (isChatTaskActive(restored, false)) {
           setIsTyping(true);
           const persisted = loadTaskStart(persistAgentKey);
           const start = persisted ?? Date.now();
           setTaskStartedAt(start);
+          setCompletedTaskElapsedSec(null);
           if (persisted == null) saveTaskStart(persistAgentKey, start);
         } else {
+          setIsTyping(false);
           setTaskStartedAt(null);
           saveTaskStart(persistAgentKey, null);
+          setCompletedTaskElapsedSec(loadLastTaskElapsed(persistAgentKey));
         }
       });
-      if (isIncompleteChatTask(restored)) {
+      if (isChatTaskActive(restored, false)) {
         if (typingFallbackRef.current) clearTimeout(typingFallbackRef.current);
         typingFallbackRef.current = setTimeout(() => {
           typingFallbackRef.current = null;
@@ -772,5 +805,17 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     };
   }, [persistAgentKey]);
 
-  return { messages, status, isTyping, sendError, send, stop, clearMessages, restoreMessages, reconnect, taskStartedAt };
+  return {
+    messages,
+    status,
+    isTyping,
+    sendError,
+    send,
+    stop,
+    clearMessages,
+    restoreMessages,
+    reconnect,
+    taskStartedAt,
+    completedTaskElapsedSec,
+  };
 }

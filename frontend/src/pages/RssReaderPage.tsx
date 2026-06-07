@@ -184,7 +184,7 @@ export default function RssReaderPage() {
                         <button
                           key={sec}
                           type="button"
-                          className={`rounded-md px-2 py-0.5 text-xs transition-colors ${sec === sector ? 'bg-violet-500/10 text-violet-600 border border-violet-500/20' : 'text-muted-foreground hover:bg-muted/60'}`}
+                          className={`rounded-md px-2 py-0.5 text-xs transition-colors ${sec === sector ? 'bg-primary/10 text-primary border border-primary/20' : 'text-muted-foreground hover:bg-muted/60'}`}
                           onClick={() => setSector(sec)}
                         >
                           {sec}

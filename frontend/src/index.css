@@ -50,6 +50,11 @@
 
 :root {
   --radius: 0.625rem;
+  /* RSS / 旧版 InputArea 等区域仍用亮蓝，与 Agent 主界面 violet 分离 */
+  --fc-primary: #2468f2;
+  --fc-primary-hover: #1a5ad9;
+  --fc-primary-soft: #e8f0ff;
+  --fc-accent-blue: #5b9cff;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -84,6 +89,7 @@
 }
 
 .dark {
+  --fc-primary-soft: rgb(36 104 242 / 14%);
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);

@@ -222,7 +222,7 @@ function AgentProcessPanel({
       <button
         type="button"
         onClick={handleToggle}
-        className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-violet-500/10 ${open ? 'border-b border-violet-500/15' : ''}`}
+        className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-primary/10 ${open ? 'border-b border-primary/15' : ''}`}
       >
         <IconChevronRight
           className={`size-3 shrink-0 text-violet-500/70 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
@@ -232,8 +232,8 @@ function AgentProcessPanel({
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-violet-700/90 dark:text-violet-300/90">
           工作过程
         </span>
-        {taskElapsedCompleted && taskElapsedSeconds !== undefined && taskElapsedSeconds > 0 && (
-          <span className="shrink-0 font-mono text-[10px] tabular-nums text-violet-600/70 dark:text-violet-400/70">
+        {taskElapsedCompleted && taskElapsedSeconds !== undefined && (
+          <span className="shrink-0 text-xs font-medium text-violet-600/85 dark:text-violet-400/85">
             {formatElapsedSeconds(taskElapsedSeconds)}
           </span>
         )}

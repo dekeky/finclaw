@@ -35,7 +35,8 @@ func (h *finReasoningHook) AfterLLM(
 	if h == nil || h.msgBus == nil || resp == nil || resp.Response == nil {
 		return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
-	if resp.Channel != "fin" || strings.TrimSpace(resp.ChatID) == "" {
+	inbound := turnInboundContext(resp.Context)
+	if inbound == nil || inbound.Channel != "fin" || strings.TrimSpace(inbound.ChatID) == "" {
 		return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
 
@@ -48,13 +49,24 @@ func (h *finReasoningHook) AfterLLM(
 	}
 
 	_ = h.msgBus.PublishOutbound(ctx, bus.OutboundMessage{
-		Channel: resp.Channel,
-		ChatID:  resp.ChatID,
-		Content: reasoning,
-		Metadata: map[string]string{
-			"message_kind": reasoningMessageKind,
+		Channel: inbound.Channel,
+		ChatID:  inbound.ChatID,
+		Context: bus.InboundContext{
+			Channel: inbound.Channel,
+			ChatID:  inbound.ChatID,
+			Raw: map[string]string{
+				"message_kind": reasoningMessageKind,
+			},
 		},
+		Content: reasoning,
 	})
 
 	return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
+}
+
+func turnInboundContext(turnCtx *agent.TurnContext) *bus.InboundContext {
+	if turnCtx == nil {
+		return nil
+	}
+	return turnCtx.Inbound
 }

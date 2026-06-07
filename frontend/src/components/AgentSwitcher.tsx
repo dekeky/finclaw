@@ -1,4 +1,5 @@
 import { AgentAvatar } from '@/components/AgentAvatar';
+import type { AgentSummary } from '@/api/agents';
 import {
   Select,
   SelectContent,
@@ -9,9 +10,10 @@ import {
 import { cn } from '@/lib/cn';
 
 export interface AgentSwitcherProps {
-  agents: string[];
+  agents: AgentSummary[];
   value: string | null;
   onChange: (name: string) => void;
+  avatarRevision?: number;
   placeholder?: string;
   className?: string;
   triggerClassName?: string;
@@ -28,6 +30,7 @@ export function AgentSwitcher({
   agents,
   value,
   onChange,
+  avatarRevision = 0,
   placeholder = '选择 Agent…',
   className,
   triggerClassName,
@@ -39,6 +42,7 @@ export function AgentSwitcher({
 }: AgentSwitcherProps) {
   const isSidebar = variant === 'sidebar';
   const isInline = variant === 'inline';
+  const selected = agents.find((a) => a.name === value);
 
   return (
     <div className={cn('min-w-0', isSidebar && 'w-full', className)}>
@@ -64,9 +68,11 @@ export function AgentSwitcher({
               isInline && 'gap-1',
             )}
           >
-            {showAvatar && value && !isInline && (
+            {showAvatar && selected && !isInline && (
               <AgentAvatar
-                name={value}
+                name={selected.name}
+                hasAvatar={selected.has_avatar}
+                avatarRevision={avatarRevision}
                 size="sm"
                 className={cn(
                   'shrink-0',
@@ -87,17 +93,23 @@ export function AgentSwitcher({
             (isSidebar || isInline) && 'min-w-[12rem] rounded-xl border-border/60 shadow-lg',
           )}
         >
-          {agents.map((name) => (
+          {agents.map((agent) => (
             <SelectItem
-              key={name}
-              value={name}
+              key={agent.name}
+              value={agent.name}
               className={cn((isSidebar || isInline) && 'rounded-lg py-2')}
             >
               <span className="flex items-center gap-2.5">
                 {showAvatar && (
-                  <AgentAvatar name={name} size="sm" className="!h-6 !w-6 !text-[10px]" />
+                  <AgentAvatar
+                    name={agent.name}
+                    hasAvatar={agent.has_avatar}
+                    avatarRevision={avatarRevision}
+                    size="sm"
+                    className="!h-6 !w-6 !text-[10px]"
+                  />
                 )}
-                <span className="truncate">{name}</span>
+                <span className="truncate">{agent.name}</span>
               </span>
             </SelectItem>
           ))}

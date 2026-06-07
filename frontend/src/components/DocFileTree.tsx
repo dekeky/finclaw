@@ -19,6 +19,8 @@ interface DocFileTreeProps {
   hideHeader?: boolean;
   /** 提供则在每行显示删除按钮。 */
   onDelete?: (fullPath: string, isDir: boolean) => void;
+  /** 提供则在文件行显示下载按钮。 */
+  onDownload?: (fullPath: string) => void;
 }
 
 function sortFiles(files: DocFileEntry[]): DocFileEntry[] {
@@ -28,7 +30,7 @@ function sortFiles(files: DocFileEntry[]): DocFileEntry[] {
   });
 }
 
-export function DocFileTree({ agentName, refreshRev, onFileSelect, selectedDocPath, hideHeader, onDelete }: DocFileTreeProps) {
+export function DocFileTree({ agentName, refreshRev, onFileSelect, selectedDocPath, hideHeader, onDelete, onDownload }: DocFileTreeProps) {
   const [treeCache, setTreeCache] = useState<Map<string, DocFileEntry[]>>(new Map());
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
@@ -137,6 +139,7 @@ export function DocFileTree({ agentName, refreshRev, onFileSelect, selectedDocPa
               onToggleDir={toggleDir}
               onRetryDir={fetchDir}
               onDelete={onDelete}
+              onDownload={onDownload}
             />
           </div>
         )}
@@ -157,6 +160,7 @@ interface DirectoryNodeProps {
   onToggleDir: (dirPath: string) => void;
   onRetryDir: (dirPath: string) => void;
   onDelete?: (fullPath: string, isDir: boolean) => void;
+  onDownload?: (fullPath: string) => void;
 }
 
 function DirectoryNode({
@@ -171,6 +175,7 @@ function DirectoryNode({
   onToggleDir,
   onRetryDir,
   onDelete,
+  onDownload,
 }: DirectoryNodeProps) {
   const sorted = sortFiles(entries);
 
@@ -199,6 +204,7 @@ function DirectoryNode({
               onToggleDir={onToggleDir}
               onRetryDir={onRetryDir}
               onDelete={onDelete}
+              onDownload={onDownload}
             />
           );
         }
@@ -211,6 +217,7 @@ function DirectoryNode({
             selected={selectedDocPath === fullPath}
             title={fullPath}
             onClick={() => onFileSelect(fullPath)}
+            onDownload={onDownload ? () => onDownload(fullPath) : undefined}
             onDelete={onDelete ? () => onDelete(fullPath, false) : undefined}
           />
         );
@@ -236,6 +243,7 @@ interface DirItemProps {
   onToggleDir: (dirPath: string) => void;
   onRetryDir: (dirPath: string) => void;
   onDelete?: (fullPath: string, isDir: boolean) => void;
+  onDownload?: (fullPath: string) => void;
 }
 
 function DirItem({
@@ -255,6 +263,7 @@ function DirItem({
   onToggleDir,
   onRetryDir,
   onDelete,
+  onDownload,
 }: DirItemProps) {
   return (
     <Collapsible open={expanded} onOpenChange={onToggle}>
@@ -295,6 +304,7 @@ function DirItem({
             onToggleDir={onToggleDir}
             onRetryDir={onRetryDir}
             onDelete={onDelete}
+            onDownload={onDownload}
           />
         ) : null}
       </CollapsibleContent>

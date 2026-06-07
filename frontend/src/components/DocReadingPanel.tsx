@@ -1,12 +1,26 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { IconX, IconFileDescription, IconRefresh, IconLoader2, IconPencil, IconDeviceFloppy, IconList } from '@tabler/icons-react';
+import { IconX, IconFileDescription, IconRefresh, IconLoader2, IconPencil, IconDeviceFloppy, IconList, IconSparkles, IconDownload } from '@tabler/icons-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { DocTocSidebar, DocTocOverlay } from '@/components/DocTocSidebar';
 import { useTocHeadings } from '@/hooks/useTocHeadings';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { getAgentDocFile } from '@/api/agentDocs';
+import { getAgentDocFile, polishAgentDoc } from '@/api/agentDocs';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  initialGenerateSteps,
+  PersonaGenerateDialog,
+  setGenerateStepStatus,
+  type GenerateStep,
+} from '@/components/PersonaGenerateDialog';
 import { cn } from '@/lib/cn';
+import {
+  PRIMARY_AI_PANEL_CLASS,
+  PRIMARY_BUTTON_CLASS,
+  PRIMARY_ICON_GRADIENT_CLASS,
+} from '@/lib/primaryButton';
 
 /* ─── 浮窗布局工具 ─── */
 
@@ -141,14 +155,58 @@ const DOC_DOCK_CSS = `
   animation: docDockIn 0.2s ease-out;
 }
 .doc-dock-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 12px; height: 42px; min-height: 42px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  height: 42px;
+  min-height: 42px;
   border-bottom: 1px solid var(--border);
   background: color-mix(in oklch, var(--muted) 60%, var(--card));
   user-select: none;
 }
+.doc-dock-head-left {
+  min-width: 0;
+  justify-self: start;
+}
+.doc-dock-head-center {
+  justify-self: center;
+  min-width: 0;
+}
+.doc-dock-head-right {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.doc-dock-ai-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 2px;
+  max-width: min(32rem, 52vw);
+  transition: max-width 0.2s ease;
+}
+.doc-dock-ai-bar--open {
+  width: min(32rem, 52vw);
+  padding-right: 6px;
+}
+.doc-dock-ai-trigger {
+  display: flex;
+  align-items: center;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  padding: 2px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
 .doc-dock-drag {
-  flex: 1; cursor: grab; display: flex; align-items: center; gap: 8px;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 .doc-dock-drag:active { cursor: grabbing; }
@@ -382,6 +440,10 @@ const DOC_DOCK_CSS = `
 
 /* ─── 手机：全屏阅读，隐藏拖拽缩放 ─── */
 @media (max-width: 767px) {
+  .doc-dock-ai-bar--open {
+    width: min(18rem, 72vw);
+    max-width: 72vw;
+  }
   .doc-dock--mobile {
     border-radius: 0;
     box-shadow: none;
@@ -451,15 +513,25 @@ export function DocReadingPanel({
 }: DocReadingPanelProps) {
   const isMobile = useIsMobile();
   const [tocOverlayOpen, setTocOverlayOpen] = useState(false);
-  const [content, setContent] = useState<string | null>(null);
+  const [savedContent, setSavedContent] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // 编辑态
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // AI 润色（与人设润色相同：结果仅写入本地 draft，保存后才持久化）
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [generateModalOpen, setGenerateModalOpen] = useState(false);
+  const [generatePhase, setGeneratePhase] = useState<'running' | 'success' | 'error'>('running');
+  const [generateSteps, setGenerateSteps] = useState<GenerateStep[]>(() => initialGenerateSteps());
+  const [generateModalPrompt, setGenerateModalPrompt] = useState('');
 
   // 用 ref 保存加载器，避免内联函数导致的重复加载
   const loadRef = useRef(loadContent);
@@ -487,14 +559,19 @@ export function DocReadingPanel({
     let cancelled = false;
     setLoading(true);
     setError(null);
-    setContent(null);
+    setSavedContent(null);
+    setDraft('');
     setEditing(false);
     setSaveError(null);
+    setAiPanelOpen(false);
+    setAiPrompt('');
+    setGenerateError(null);
 
     runLoad(agentName, filePath)
       .then((body) => {
         if (cancelled) return;
-        setContent(body);
+        setSavedContent(body);
+        setDraft(body);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -541,16 +618,31 @@ export function DocReadingPanel({
     setLoading(true);
     setError(null);
     runLoad(agentName, filePath)
-      .then((body) => setContent(body))
+      .then((body) => {
+        setSavedContent(body);
+        setDraft(body);
+      })
       .catch((err) => setError(err.message || '文件读取失败'))
       .finally(() => setLoading(false));
   }, [agentName, filePath, runLoad]);
 
+  const dirty = onSave != null && savedContent !== null && draft !== savedContent;
+
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!dirty) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
+
   const startEdit = useCallback(() => {
-    setDraft(content ?? '');
     setSaveError(null);
+    setAiPanelOpen(false);
     setEditing(true);
-  }, [content]);
+  }, []);
 
   const cancelEdit = useCallback(() => {
     setEditing(false);
@@ -558,32 +650,97 @@ export function DocReadingPanel({
   }, []);
 
   const handleSave = useCallback(async () => {
-    if (!onSave) return;
+    if (!onSave || !dirty) return;
     setSaving(true);
     setSaveError(null);
     try {
       await onSave(draft);
-      setContent(draft);
+      setSavedContent(draft);
       setEditing(false);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : '保存失败');
     } finally {
       setSaving(false);
     }
-  }, [onSave, draft]);
+  }, [onSave, draft, dirty]);
+
+  const handleUndo = useCallback(() => {
+    if (savedContent == null) return;
+    setDraft(savedContent);
+    setEditing(false);
+    setSaveError(null);
+  }, [savedContent]);
+
+  const handlePolish = useCallback(async () => {
+    const prompt = aiPrompt.trim();
+    if (!prompt || generating) return;
+
+    setGenerating(true);
+    setGenerateError(null);
+    setGenerateModalOpen(true);
+    setGeneratePhase('running');
+    setGenerateModalPrompt(prompt);
+    setGenerateSteps(setGenerateStepStatus(initialGenerateSteps(), 'validate', []));
+
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+    try {
+      await sleep(200);
+      setGenerateSteps(setGenerateStepStatus(initialGenerateSteps(), 'call', ['validate']));
+
+      const { content: polished } = await polishAgentDoc(agentName, {
+        prompt,
+        current_content: draft,
+      });
+
+      setGenerateSteps(setGenerateStepStatus(initialGenerateSteps(), 'finalize', ['validate', 'call']));
+      await sleep(150);
+      setDraft(polished);
+      setGenerateSteps(setGenerateStepStatus(initialGenerateSteps(), null, ['validate', 'call', 'finalize']));
+      setGeneratePhase('success');
+      await sleep(700);
+      setGenerateModalOpen(false);
+      setAiPanelOpen(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '润色失败';
+      setGenerateError(message);
+      setGenerateSteps(setGenerateStepStatus(initialGenerateSteps(), null, ['validate'], 'call'));
+      setGeneratePhase('error');
+      await sleep(2200);
+      setGenerateModalOpen(false);
+    } finally {
+      setGenerating(false);
+    }
+  }, [agentName, aiPrompt, draft, generating]);
 
   const fileName = filePath.split('/').pop() ?? filePath;
   const isMd = isMarkdown(fileName);
 
+  const handleDownload = useCallback(() => {
+    if (savedContent === null) return;
+    const mime = isMd ? 'text/markdown;charset=utf-8' : 'text/plain;charset=utf-8';
+    const blob = new Blob([draft], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }, [draft, fileName, isMd, savedContent]);
+
   // TOC hook（编辑态下隐藏目录）
   const { headings, activeId, scrollToHeading } = useTocHeadings(
     scrollAreaRef,
-    editing ? null : content,
+    editing ? null : draft,
     isMd,
   );
 
-  const showToc = isMd && !loading && !error && content != null && headings.length > 0;
+  const showToc = isMd && !loading && !error && savedContent != null && headings.length > 0;
   const useOverlayToc = showToc && (isMobile || dockLayout.width < OVERLAY_TOC_BREAKPOINT);
+  const showAiPolish = isMd && !loading && !error && savedContent !== null && !editing;
 
   // 切换为侧边栏模式时关闭浮层
   useEffect(() => {
@@ -593,6 +750,15 @@ export function DocReadingPanel({
   return (
     <>
       <style>{DOC_DOCK_CSS}</style>
+      <PersonaGenerateDialog
+        open={generateModalOpen}
+        title={`AI 润色 ${fileName}`}
+        description="正在根据你的描述润色文档…"
+        prompt={generateModalPrompt}
+        steps={generateSteps}
+        error={generateError}
+        phase={generatePhase}
+      />
 
       {/* 半透明遮罩 */}
       <button type="button" className="doc-dock-backdrop" aria-label="关闭文档" onClick={onClose} />
@@ -609,8 +775,9 @@ export function DocReadingPanel({
         }}
         aria-label={`文档: ${fileName}`}
       >
-        {/* 标题栏 - 可拖拽 */}
+        {/* 标题栏：左文件名 · 中 AI 润色 · 右操作 */}
         <div className="doc-dock-head">
+          <div className="doc-dock-head-left">
           <div
             className="doc-dock-drag"
             role="presentation"
@@ -618,7 +785,7 @@ export function DocReadingPanel({
             onPointerDown={(e) => {
               if (isMobile) return;
               if (e.button !== 0) return;
-              if ((e.target as HTMLElement).closest('button')) return;
+              if ((e.target as HTMLElement).closest('button, input, .doc-dock-ai-bar')) return;
               (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
               dockMovedRef.current = false;
               dockDragRef.current = {
@@ -660,10 +827,81 @@ export function DocReadingPanel({
             }}
           >
             <IconFileDescription className={cn('size-4 shrink-0', isMd ? 'text-violet-500/70' : 'text-muted-foreground')} />
-            <span className="doc-dock-title">{fileName}</span>
+            <span className="doc-dock-title">
+              {fileName}
+              {dirty && <span className="ml-1 text-violet-600">•</span>}
+            </span>
+          </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="doc-dock-head-center">
+            {showAiPolish && (
+              <div
+                className={cn(
+                  'flex items-center gap-1.5',
+                  aiPanelOpen && [
+                    'doc-dock-ai-bar doc-dock-ai-bar--open overflow-hidden rounded-lg',
+                    PRIMARY_AI_PANEL_CLASS,
+                  ],
+                  generating && 'opacity-80',
+                )}
+              >
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="doc-dock-ai-trigger transition-opacity hover:opacity-90"
+                      onClick={() => setAiPanelOpen((open) => !open)}
+                      disabled={generating}
+                      aria-label={aiPanelOpen ? '收起润色输入' : 'AI 润色'}
+                      aria-expanded={aiPanelOpen}
+                    >
+                      <span
+                        className={cn(
+                          'flex size-6 shrink-0 items-center justify-center rounded-md',
+                          PRIMARY_ICON_GRADIENT_CLASS,
+                        )}
+                      >
+                        <IconSparkles className="size-3.5" stroke={1.75} aria-hidden />
+                      </span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" sideOffset={6} className="z-[1220]">
+                    {aiPanelOpen ? '收起润色输入' : 'AI 润色'}
+                  </TooltipContent>
+                </Tooltip>
+                {aiPanelOpen && (
+                  <>
+                    <Input
+                      value={aiPrompt}
+                      onChange={(e) => setAiPrompt(e.target.value)}
+                      placeholder="翻译为中文"
+                      disabled={generating || saving}
+                      className="h-7 min-w-0 flex-1 border-violet-500/20 bg-background/80 text-xs focus-visible:ring-violet-500/30"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          void handlePolish();
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      className={cn('h-7 shrink-0 px-2 text-xs', PRIMARY_BUTTON_CLASS)}
+                      disabled={!aiPrompt.trim() || generating || saving}
+                      onClick={() => void handlePolish()}
+                    >
+                      {generating ? '润色中…' : '开始润色'}
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="doc-dock-head-right">
             {useOverlayToc && (
               <button
                 type="button"
@@ -676,38 +914,35 @@ export function DocReadingPanel({
                 目录
               </button>
             )}
-            {onSave && !loading && !error && content !== null && (
+            {!loading && !error && savedContent !== null && (
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                onClick={handleDownload}
+                title="下载"
+                aria-label="下载文档"
+              >
+                <IconDownload className="size-3.5" />
+                下载
+              </button>
+            )}
+            {onSave && !loading && !error && savedContent !== null && (
               editing ? (
-                <>
-                  {saveError && (
-                    <span className="mr-1 max-w-[200px] truncate text-[11px] text-destructive" title={saveError}>
-                      {saveError}
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    className="flex items-center gap-1 rounded-md bg-violet-500 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-violet-600 disabled:opacity-50"
-                    onClick={() => void handleSave()}
-                    disabled={saving}
-                  >
-                    {saving ? <IconLoader2 className="size-3.5 animate-spin" /> : <IconDeviceFloppy className="size-3.5" />}
-                    保存
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                    onClick={cancelEdit}
-                    disabled={saving}
-                  >
-                    取消
-                  </button>
-                </>
+                <button
+                  type="button"
+                  className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  onClick={cancelEdit}
+                  disabled={saving || generating}
+                >
+                  完成编辑
+                </button>
               ) : (
                 <button
                   type="button"
                   className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                   onClick={startEdit}
                   title="编辑"
+                  disabled={generating}
                 >
                   <IconPencil className="size-3.5" />
                   编辑
@@ -721,19 +956,20 @@ export function DocReadingPanel({
         </div>
 
         {/* 内容区 */}
-        <div className="doc-dock-body">
+        <div className="doc-dock-body flex min-h-0 flex-col">
           {editing ? (
             <div className="flex min-h-0 flex-1 flex-col p-3">
               <textarea
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 spellCheck={false}
+                disabled={saving || generating}
                 className="min-h-0 flex-1 w-full resize-none rounded-md border border-border/60 bg-background p-3 font-mono text-[13px] leading-relaxed text-foreground outline-none focus:border-violet-500/60"
                 placeholder="输入文件内容…"
               />
             </div>
           ) : (
-          <>
+          <div className="flex min-h-0 flex-1">
           {showToc && !useOverlayToc && (
             <DocTocSidebar
               headings={headings}
@@ -770,7 +1006,7 @@ export function DocReadingPanel({
                   重试
                 </button>
               </div>
-            ) : content === null ? (
+            ) : savedContent === null ? (
               <div className="px-8 py-16 text-center text-sm text-muted-foreground">
                 文件内容为空
               </div>
@@ -781,16 +1017,54 @@ export function DocReadingPanel({
                   size={isMobile ? 'sm' : 'md'}
                   className="doc-reading-prose"
                 >
-                  {content}
+                  {draft}
                 </MarkdownContent>
               </div>
             ) : (
               <pre className="doc-dock-article overflow-x-auto text-sm leading-relaxed whitespace-pre-wrap break-words font-mono text-foreground/90">
-                {content}
+                {draft}
               </pre>
             )}
           </ScrollArea>
-          </>
+          </div>
+          )}
+
+          {onSave && !loading && !error && savedContent !== null && (
+            <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border/40 px-3 py-2">
+              {saveError && (
+                <span className="mr-auto max-w-[50%] truncate text-[11px] text-destructive" title={saveError}>
+                  {saveError}
+                </span>
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={!dirty || saving || generating}
+                onClick={handleUndo}
+              >
+                撤销
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className={PRIMARY_BUTTON_CLASS}
+                disabled={!dirty || saving || generating}
+                onClick={() => void handleSave()}
+              >
+                {saving ? (
+                  <>
+                    <IconLoader2 className="mr-1 size-3.5 animate-spin" />
+                    保存中…
+                  </>
+                ) : (
+                  <>
+                    <IconDeviceFloppy className="mr-1 size-3.5" />
+                    保存
+                  </>
+                )}
+              </Button>
+            </div>
           )}
         </div>
 

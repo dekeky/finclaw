@@ -280,8 +280,18 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  const { agents, currentAgent, selectAgent, status: agentsStatus } = useAgents();
-  const { messages, status, isTyping, sendError, send, clearMessages, reconnect, taskStartedAt } = useChatSession();
+  const { agents, currentAgent, selectAgent, status: agentsStatus, avatarRevision } = useAgents();
+  const {
+    messages,
+    status,
+    isTyping,
+    sendError,
+    send,
+    clearMessages,
+    reconnect,
+    taskStartedAt,
+    completedTaskElapsedSec,
+  } = useChatSession();
 
   const hasFeed = listEntries.length > 0;
   const noAgent = !currentAgent;
@@ -458,6 +468,7 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
                   agents={agents}
                   value={currentAgent}
                   onChange={selectAgent}
+                  avatarRevision={avatarRevision}
                   placeholder="请选择…"
                   showAvatar={false}
                   triggerClassName="rss-ai-dock-select-trigger"
@@ -520,6 +531,7 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
                   variant="dock"
                   onQuickPrompt={handleSend}
                   taskStartedAt={taskStartedAt}
+                  completedTaskElapsedSec={completedTaskElapsedSec}
                 />
               </div>
             </ErrorBoundary>

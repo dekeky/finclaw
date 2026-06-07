@@ -169,3 +169,31 @@ export async function uploadAgentToMarket(
   if (!body) throw new Error('empty body');
   return body;
 }
+
+export interface GenerateMarketSummaryRequest {
+  prompt?: string;
+  current_summary?: string;
+  display_name?: string;
+}
+
+export interface GenerateMarketSummaryBody {
+  summary: string;
+}
+
+/** POST /api/v1/agents/:name/market-summary/generate —— AI 润色市场简介。 */
+export async function generateMarketSummary(
+  agentName: string,
+  req: GenerateMarketSummaryRequest = {},
+): Promise<GenerateMarketSummaryBody> {
+  const res = await fetch(
+    `/api/v1/agents/${encodeURIComponent(agentName)}/market-summary/generate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(req),
+    },
+  );
+  const body = await parseGinx<GenerateMarketSummaryBody | null>(res);
+  if (!body) throw new Error('empty body');
+  return body;
+}
