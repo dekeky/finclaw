@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
+	"time"
 
 	picoagent "github.com/sipeed/picoclaw/pkg/agent"
 	picoclawconfig "github.com/sipeed/picoclaw/pkg/config"
@@ -37,6 +39,14 @@ type SkillFileContent struct {
 	Name    string `json:"name"`
 	Content string `json:"content"`
 	Size    int64  `json:"size"`
+}
+
+// SkillDirEntry is one file or directory inside a skill package folder.
+type SkillDirEntry struct {
+	Name    string `json:"name"`
+	Size    int64  `json:"size"`
+	ModTime string `json:"mod_time"`
+	IsDir   bool   `json:"is_dir"`
 }
 
 // AgentSkillsSummary lists skills for an agent workspace plus AGENT.md frontmatter filter.
@@ -181,6 +191,99 @@ func validateSkillSegment(seg string) error {
 	return nil
 }
 
+func validateSkillRelPath(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("path is required")
+	}
+	if strings.HasPrefix(name, "/") || strings.Contains(name, "\\") {
+		return fmt.Errorf("path %q contains invalid characters", name)
+	}
+	for _, s := range strings.Split(name, "/") {
+		s = strings.TrimSpace(s)
+		if s == "" || s == "." || s == ".." {
+			return fmt.Errorf("path %q contains invalid segments", name)
+		}
+	}
+	return nil
+}
+
+func skillRelPathWithinRoot(workspace, source, skillDir, relPath string) (string, error) {
+	base, err := skillDirWithinRoot(workspace, source, skillDir)
+	if err != nil {
+		return "", err
+	}
+	relPath = strings.TrimSpace(relPath)
+	if relPath == "" {
+		return base, nil
+	}
+	if err := validateSkillRelPath(relPath); err != nil {
+		return "", err
+	}
+	path := filepath.Clean(filepath.Join(base, relPath))
+	rel, err := filepath.Rel(base, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q escapes skill root", relPath)
+	}
+	return path, nil
+}
+
+func sortSkillDirEntries(entries []SkillDirEntry) []SkillDirEntry {
+	out := append([]SkillDirEntry(nil), entries...)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].IsDir != out[j].IsDir {
+			return out[i].IsDir
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+// ListSkillDir lists files and subdirectories inside one skill package folder.
+func ListSkillDir(workspace, source, skillDir, subpath string) ([]SkillDirEntry, error) {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return nil, errWorkspaceRequired()
+	}
+	if err := validateSkillSegment(skillDir); err != nil {
+		return nil, err
+	}
+	subpath = strings.TrimSpace(subpath)
+	if subpath != "" {
+		if err := validateSkillRelPath(subpath); err != nil {
+			return nil, err
+		}
+	}
+	dir, err := skillRelPathWithinRoot(workspace, source, skillDir, subpath)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []SkillDirEntry{}, nil
+		}
+		return nil, fmt.Errorf("read skill directory: %w", err)
+	}
+	out := make([]SkillDirEntry, 0, len(entries))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		out = append(out, SkillDirEntry{
+			Name:    e.Name(),
+			Size:    info.Size(),
+			ModTime: info.ModTime().Format(time.RFC3339),
+			IsDir:   e.IsDir(),
+		})
+	}
+	return sortSkillDirEntries(out), nil
+}
+
 // ReadSkillFile reads one markdown file inside a skill directory.
 // The (source, skillDir, file) triple is validated and confined to its skill root
 // to prevent path traversal / arbitrary file reads.
@@ -195,20 +298,13 @@ func ReadSkillFile(workspace, source, skillDir, file string) (*SkillFileContent,
 	if strings.TrimSpace(file) == "" {
 		file = "SKILL.md"
 	}
-	if err := validateSkillSegment(file); err != nil {
+	if err := validateSkillRelPath(file); err != nil {
 		return nil, err
 	}
 
-	root, err := skillRootForSource(workspace, source)
+	path, err := skillRelPathWithinRoot(workspace, source, skillDir, file)
 	if err != nil {
 		return nil, err
-	}
-	rootClean := filepath.Clean(root)
-	path := filepath.Clean(filepath.Join(rootClean, skillDir, file))
-
-	rel, err := filepath.Rel(rootClean, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil, fmt.Errorf("path %q escapes skill root", file)
 	}
 
 	info, err := os.Stat(path)
@@ -258,17 +354,17 @@ func WriteSkillFile(workspace, source, skillDir, file, content string) (*SkillFi
 	if strings.TrimSpace(file) == "" {
 		file = "SKILL.md"
 	}
-	if err := validateSkillSegment(file); err != nil {
+	if err := validateSkillRelPath(file); err != nil {
 		return nil, err
 	}
 	if len(content) > maxSkillFileSize {
 		return nil, fmt.Errorf("content exceeds 5MB size limit")
 	}
-	dir, err := skillDirWithinRoot(workspace, source, skillDir)
+	path, err := skillRelPathWithinRoot(workspace, source, skillDir, file)
 	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(dir, file)
+	dir := filepath.Dir(path)
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		return nil, fmt.Errorf("%q is a directory", file)
 	}
@@ -279,6 +375,35 @@ func WriteSkillFile(workspace, source, skillDir, file, content string) (*SkillFi
 		return nil, fmt.Errorf("write skill file: %w", err)
 	}
 	return &SkillFileContent{Name: file, Content: content, Size: int64(len(content))}, nil
+}
+
+// DeleteSkillPath removes one file or directory (recursively) inside a skill package.
+func DeleteSkillPath(workspace, source, skillDir, relPath string) error {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return errWorkspaceRequired()
+	}
+	if err := validateSkillSegment(skillDir); err != nil {
+		return err
+	}
+	if err := validateSkillRelPath(relPath); err != nil {
+		return err
+	}
+	path, err := skillRelPathWithinRoot(workspace, source, skillDir, relPath)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%q not found", relPath)
+		}
+		return fmt.Errorf("stat path: %w", err)
+	}
+	if info.IsDir() {
+		return os.RemoveAll(path)
+	}
+	return os.Remove(path)
 }
 
 // DeleteSkill removes an entire skill package directory and all its files.

@@ -32,6 +32,8 @@ func (ar *AgentManagerRouter) ConfigRouter() {
 	group := ar.r.Group("/api/v1/agents", ar.authMiddleware)
 	group.GET("/:name/skills", ar.getAgentSkills)
 	group.DELETE("/:name/skills", ar.deleteSkill)
+	group.GET("/:name/skills/dir", ar.listSkillDir)
+	group.DELETE("/:name/skills/path", ar.deleteSkillPath)
 	group.GET("/:name/skills/file", ar.getSkillFile)
 	group.PUT("/:name/skills/file", ar.putSkillFile)
 	group.GET("/:name/workspace-files", ar.getWorkspaceFiles)
@@ -781,6 +783,45 @@ func (ar *AgentManagerRouter) putSkillFile(c *gin.Context) {
 	ginx.NewRender(c).Data(content)
 }
 
+// GET /api/v1/agents/:name/skills/dir?source=&skill=&subpath= — list files inside a skill package.
+func (ar *AgentManagerRouter) listSkillDir(c *gin.Context) {
+	userID := getUserID(c)
+	name := c.Param("name")
+	source := strings.TrimSpace(c.Query("source"))
+	skill := strings.TrimSpace(c.Query("skill"))
+	subpath := strings.TrimSpace(c.Query("subpath"))
+	workspace, err := ar.resolveAgentWorkspace(userID, name)
+	if err != nil {
+		ginx.NewRender(c, http.StatusNotFound).Err(err)
+		return
+	}
+	entries, err := picoclaw.ListSkillDir(workspace, source, skill, subpath)
+	if err != nil {
+		renderSkillErr(c, err)
+		return
+	}
+	ginx.NewRender(c).Data(gin.H{"files": entries})
+}
+
+// DELETE /api/v1/agents/:name/skills/path?source=&skill=&path= — delete one file or folder inside a skill package.
+func (ar *AgentManagerRouter) deleteSkillPath(c *gin.Context) {
+	userID := getUserID(c)
+	name := c.Param("name")
+	source := strings.TrimSpace(c.Query("source"))
+	skill := strings.TrimSpace(c.Query("skill"))
+	relPath := strings.TrimSpace(c.Query("path"))
+	workspace, err := ar.resolveAgentWorkspace(userID, name)
+	if err != nil {
+		ginx.NewRender(c, http.StatusNotFound).Err(err)
+		return
+	}
+	if err := picoclaw.DeleteSkillPath(workspace, source, skill, relPath); err != nil {
+		renderSkillErr(c, err)
+		return
+	}
+	ginx.NewRender(c).Data(gin.H{"deleted": relPath})
+}
+
 // DELETE /api/v1/agents/:name/skills?source=&skill= — delete an entire skill package.
 func (ar *AgentManagerRouter) deleteSkill(c *gin.Context) {
 	userID := getUserID(c)
@@ -1004,6 +1045,7 @@ func (ar *AgentManagerRouter) listDocFiles(c *gin.Context) {
 }
 
 // GET /api/v1/agents/:name/docs/*filepath — read a file from agent's docs/ directory.
+// Query ?download=1 serves the raw file with Content-Disposition: attachment.
 func (ar *AgentManagerRouter) getDocFile(c *gin.Context) {
 	userID := getUserID(c)
 	name := c.Param("name")
@@ -1013,12 +1055,45 @@ func (ar *AgentManagerRouter) getDocFile(c *gin.Context) {
 		ginx.NewRender(c, http.StatusNotFound).Err(err)
 		return
 	}
+	if c.Query("download") != "" {
+		ar.serveDocFileDownload(c, workspace, filename)
+		return
+	}
 	content, err := ReadDocFile(workspace, filename)
 	if err != nil {
 		renderDocErr(c, err)
 		return
 	}
 	ginx.NewRender(c).Data(content)
+}
+
+func (ar *AgentManagerRouter) serveDocFileDownload(c *gin.Context, workspace, filename string) {
+	data, _, err := readDocFileBytes(workspace, filename)
+	if err != nil {
+		renderDocErr(c, err)
+		return
+	}
+	baseName := filepath.Base(filename)
+	safeName := strings.ReplaceAll(baseName, `"`, `_`)
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, safeName))
+	c.Data(http.StatusOK, docDownloadContentType(filename), data)
+}
+
+func docDownloadContentType(filename string) string {
+	switch strings.ToLower(filepath.Ext(filename)) {
+	case ".md", ".markdown":
+		return "text/markdown; charset=utf-8"
+	case ".txt":
+		return "text/plain; charset=utf-8"
+	case ".json":
+		return "application/json; charset=utf-8"
+	case ".csv":
+		return "text/csv; charset=utf-8"
+	case ".html", ".htm":
+		return "text/html; charset=utf-8"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 type putDocFileReq struct {

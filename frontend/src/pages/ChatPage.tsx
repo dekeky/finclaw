@@ -13,8 +13,13 @@ import { CHAT_INPUT_GUTTER, CHAT_MAIN_COLUMN, CHAT_SCROLL_GUTTER } from '@/lib/c
 import { DocFileTree } from '../components/DocFileTree';
 import { DocReadingPanel } from '../components/DocReadingPanel';
 import { AgentSkillsPanel, skillFileKey, type SkillFileTarget } from '../components/AgentSkillsPanel';
-import { getAgentSkillFile, writeAgentSkillFile, deleteAgentSkill } from '../api/agents';
-import { writeAgentDocFile, deleteAgentDocPath } from '../api/agentDocs';
+import {
+  getAgentSkillFile,
+  writeAgentSkillFile,
+  deleteAgentSkill,
+  deleteAgentSkillPath,
+} from '../api/agents';
+import { writeAgentDocFile, deleteAgentDocPath, downloadAgentDocFile } from '../api/agentDocs';
 import { messageTouchesDocScanRoot } from '../lib/agentDocRoots';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -117,6 +122,15 @@ export default function ChatPage() {
   }, [currentAgent, skillFile]);
 
   // ── 删除 ──
+  const handleDownloadDoc = useCallback(async (fullPath: string) => {
+    if (!currentAgent) return;
+    try {
+      await downloadAgentDocFile(currentAgent, fullPath);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : '下载失败');
+    }
+  }, [currentAgent]);
+
   const handleDeleteDoc = useCallback(async (fullPath: string, isDir: boolean) => {
     if (!currentAgent) return;
     const name = fullPath.split('/').pop() ?? fullPath;
@@ -159,6 +173,37 @@ export default function ChatPage() {
       window.alert(err instanceof Error ? err.message : '删除失败');
     }
   }, [currentAgent, skillFile, confirm]);
+
+  const handleDeleteSkillPath = useCallback(
+    async (source: string, skill: string, relPath: string, isDir: boolean, skillName: string) => {
+      if (!currentAgent) return;
+      const label = relPath.split('/').pop() ?? relPath;
+      const ok = await confirm({
+        title: isDir ? `删除文件夹「${label}」` : `删除文件「${label}」`,
+        description: isDir
+          ? `将永久删除 Skill「${skillName}」下的该文件夹及其全部内容，操作不可恢复。`
+          : `将永久删除 Skill「${skillName}」下的该文件，操作不可恢复。`,
+        confirmText: '删除',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await deleteAgentSkillPath(currentAgent, source, skill, relPath);
+        if (
+          skillFile &&
+          skillFile.source === source &&
+          skillFile.skill === skill &&
+          (skillFile.file === relPath || skillFile.file.startsWith(`${relPath}/`))
+        ) {
+          setSkillFile(null);
+        }
+        setSkillsRefreshRev((n) => n + 1);
+      } catch (err) {
+        window.alert(err instanceof Error ? err.message : '删除失败');
+      }
+    },
+    [currentAgent, skillFile, confirm],
+  );
 
   const archivedList = useMemo(() => {
     if (!currentAgent) return [];
@@ -351,6 +396,7 @@ export default function ChatPage() {
                   selectedDocPath={selectedDocPath}
                   hideHeader
                   onDelete={handleDeleteDoc}
+                  onDownload={handleDownloadDoc}
                 />
               ) : (
                 <AgentSkillsPanel
@@ -362,6 +408,7 @@ export default function ChatPage() {
                     skillFile ? skillFileKey(skillFile.source, skillFile.skill, skillFile.file) : null
                   }
                   onDeleteSkill={handleDeleteSkill}
+                  onDeleteSkillPath={handleDeleteSkillPath}
                   refreshRev={skillsRefreshRev}
                 />
               )}

@@ -199,32 +199,40 @@ func resolveDocLocation(workspace, relPath string) (string, error) {
 	return filepath.Join(workspace, "docs", relPath), nil
 }
 
-func ReadDocFile(workspace, filename string) (*DocFileContent, error) {
+func readDocFileBytes(workspace, filename string) ([]byte, int64, error) {
 	path, err := resolveDocLocation(workspace, filename)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("file %q not found", filename)
+			return nil, 0, fmt.Errorf("file %q not found", filename)
 		}
-		return nil, fmt.Errorf("stat file: %w", err)
+		return nil, 0, fmt.Errorf("stat file: %w", err)
 	}
 	if info.IsDir() {
-		return nil, fmt.Errorf("%q is a directory", filename)
+		return nil, 0, fmt.Errorf("%q is a directory", filename)
 	}
 	if info.Size() > maxDocFileSize {
-		return nil, fmt.Errorf("file %q exceeds 5MB size limit", filename)
+		return nil, 0, fmt.Errorf("file %q exceeds 5MB size limit", filename)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read file: %w", err)
+		return nil, 0, fmt.Errorf("read file: %w", err)
+	}
+	return data, info.Size(), nil
+}
+
+func ReadDocFile(workspace, filename string) (*DocFileContent, error) {
+	data, size, err := readDocFileBytes(workspace, filename)
+	if err != nil {
+		return nil, err
 	}
 	return &DocFileContent{
 		Name:    filename,
 		Content: string(data),
-		Size:    info.Size(),
+		Size:    size,
 	}, nil
 }
 

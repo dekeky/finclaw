@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { IconX, IconFileDescription, IconRefresh, IconLoader2, IconPencil, IconDeviceFloppy, IconList, IconSparkles } from '@tabler/icons-react';
+import { IconX, IconFileDescription, IconRefresh, IconLoader2, IconPencil, IconDeviceFloppy, IconList, IconSparkles, IconDownload } from '@tabler/icons-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { DocTocSidebar, DocTocOverlay } from '@/components/DocTocSidebar';
@@ -716,6 +716,21 @@ export function DocReadingPanel({
   const fileName = filePath.split('/').pop() ?? filePath;
   const isMd = isMarkdown(fileName);
 
+  const handleDownload = useCallback(() => {
+    if (savedContent === null) return;
+    const mime = isMd ? 'text/markdown;charset=utf-8' : 'text/plain;charset=utf-8';
+    const blob = new Blob([draft], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }, [draft, fileName, isMd, savedContent]);
+
   // TOC hook（编辑态下隐藏目录）
   const { headings, activeId, scrollToHeading } = useTocHeadings(
     scrollAreaRef,
@@ -897,6 +912,18 @@ export function DocReadingPanel({
               >
                 <IconList className="size-3.5" />
                 目录
+              </button>
+            )}
+            {!loading && !error && savedContent !== null && (
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                onClick={handleDownload}
+                title="下载"
+                aria-label="下载文档"
+              >
+                <IconDownload className="size-3.5" />
+                下载
               </button>
             )}
             {onSave && !loading && !error && savedContent !== null && (

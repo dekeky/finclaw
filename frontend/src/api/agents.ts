@@ -403,6 +403,50 @@ export async function deleteAgentSkill(
   await parseGinx<unknown>(res);
 }
 
+export interface SkillDirEntry {
+  name: string;
+  size: number;
+  mod_time: string;
+  is_dir: boolean;
+}
+
+export interface SkillDirListBody {
+  files: SkillDirEntry[];
+}
+
+/** GET /agents/:name/skills/dir —— 列出 skill 包内文件与子目录。 */
+export async function listAgentSkillDir(
+  name: string,
+  source: string,
+  skill: string,
+  subpath?: string,
+): Promise<SkillDirListBody> {
+  const params = new URLSearchParams({ source, skill });
+  if (subpath) params.set('subpath', subpath);
+  const res = await fetch(
+    `${AGENTS_API}/${encodeURIComponent(name)}/skills/dir?${params.toString()}`,
+    { headers: authHeaders() },
+  );
+  const body = await parseGinx<SkillDirListBody | null>(res);
+  if (!body.body) return { files: [] };
+  return body.body;
+}
+
+/** DELETE /agents/:name/skills/path —— 删除 skill 包内单个文件或文件夹。 */
+export async function deleteAgentSkillPath(
+  name: string,
+  source: string,
+  skill: string,
+  path: string,
+): Promise<void> {
+  const params = new URLSearchParams({ source, skill, path });
+  const res = await fetch(
+    `${AGENTS_API}/${encodeURIComponent(name)}/skills/path?${params.toString()}`,
+    { method: 'DELETE', headers: authHeaders() },
+  );
+  await parseGinx<unknown>(res);
+}
+
 /** GET /agents/:name/workspace-files —— 读取人设 Markdown 文件。 */
 export async function getAgentWorkspaceFiles(name: string): Promise<AgentWorkspaceFilesBody> {
   const res = await fetch(`${AGENTS_API}/${encodeURIComponent(name)}/workspace-files`, { headers: authHeaders() });

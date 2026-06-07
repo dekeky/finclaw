@@ -20,7 +20,7 @@ function RowShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="group/row grid w-full min-w-0 grid-cols-[minmax(0,1fr)_2.75rem] items-center">
+    <div className="group/row grid w-full min-w-0 grid-cols-[minmax(0,1fr)_4rem] items-center">
       {children}
       {actions ?? <span className={cn(TREE_ACTION_COL_CLASS, 'shrink-0')} aria-hidden />}
     </div>
@@ -68,8 +68,10 @@ export function AssetTreeFileRow({
   title,
   meta,
   onClick,
+  onDownload,
   onDelete,
   deleteTitle = '删除文件',
+  downloadTitle = '下载文件',
 }: {
   name: string;
   depth: number;
@@ -77,12 +79,22 @@ export function AssetTreeFileRow({
   title?: string;
   meta?: string;
   onClick?: () => void;
+  onDownload?: () => void;
   onDelete?: () => void;
   deleteTitle?: string;
+  downloadTitle?: string;
 }) {
   return (
     <RowShell
-      actions={<TreeRowActions meta={meta} onDelete={onDelete} deleteTitle={deleteTitle} />}
+      actions={
+        <TreeRowActions
+          meta={meta}
+          onDownload={onDownload}
+          onDelete={onDelete}
+          deleteTitle={deleteTitle}
+          downloadTitle={downloadTitle}
+        />
+      }
     >
       <button
         type="button"

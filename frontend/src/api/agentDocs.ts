@@ -60,6 +60,36 @@ export async function writeAgentDocFile(
   return parseGinx<DocFileBody>(await res.json());
 }
 
+/** GET /agents/:name/docs/:file?download=1 —— 下载原始文件。 */
+export async function downloadAgentDocFile(name: string, file: string): Promise<void> {
+  const encodedPath = file.split('/').map(encodeURIComponent).join('/');
+  const res = await fetch(
+    `${AGENTS_API}/${encodeURIComponent(name)}/docs/${encodedPath}?download=1`,
+    { headers: { ...authHeaders() } },
+  );
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const json = (await res.json()) as GinxResponse<unknown>;
+      if (json.errMsg) message = json.errMsg;
+    } catch {
+      // ignore non-JSON error bodies
+    }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const fileName = file.split('/').pop() ?? file;
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function deleteAgentDocPath(name: string, file: string): Promise<void> {
   const encodedPath = file.split('/').map(encodeURIComponent).join('/');
   const res = await fetch(`${AGENTS_API}/${encodeURIComponent(name)}/docs/${encodedPath}`, {

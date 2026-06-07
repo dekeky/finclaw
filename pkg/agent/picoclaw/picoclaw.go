@@ -13,6 +13,19 @@ import (
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
+const (
+	defaultMaxToolIterations = 1024
+	defaultContextWindow     = 256 * 1024 // 256k tokens
+)
+
+func applyFinclawAgentDefaults(conf *picoclawconfig.Config) {
+	if conf == nil {
+		return
+	}
+	conf.Agents.Defaults.MaxToolIterations = defaultMaxToolIterations
+	conf.Agents.Defaults.ContextWindow = defaultContextWindow
+}
+
 func LoadAgentByConfig(rootDir, agentName string) (*agent.AgentLoop, *bus.MessageBus, error) {
 	configPath := agentConfigPath(rootDir, agentName)
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
@@ -77,6 +90,7 @@ func newPicoclawConfig(rootDir, agentName string) (*picoclawconfig.Config, error
 	picoConfigPath := agentConfigPath(rootDir, agentName)
 	if _, err := os.Stat(picoConfigPath); os.IsNotExist(err) {
 		conf := picoclawconfig.DefaultConfig()
+		applyFinclawAgentDefaults(conf)
 		picoclawconfig.SaveConfig(picoConfigPath, conf)
 		return conf, nil
 	}

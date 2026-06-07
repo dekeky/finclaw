@@ -8,6 +8,7 @@ import {
   getAgentSkillFile,
   writeAgentSkillFile,
   deleteAgentSkill,
+  deleteAgentSkillPath,
   type AgentDetailBody,
 } from '../api/agents';
 import { AgentAvatar } from '../components/AgentAvatar';
@@ -275,6 +276,37 @@ export default function AgentsPage() {
       try {
         await deleteAgentSkill(detailName, source, skill);
         if (skillFile && skillFile.source === source && skillFile.skill === skill) {
+          setSkillFile(null);
+        }
+        setSkillsRefreshRev((n) => n + 1);
+      } catch (err) {
+        window.alert(err instanceof Error ? err.message : '删除失败');
+      }
+    },
+    [detailName, skillFile, confirm],
+  );
+
+  const handleDeleteSkillPath = useCallback(
+    async (source: string, skill: string, relPath: string, isDir: boolean, skillName: string) => {
+      if (!detailName) return;
+      const label = relPath.split('/').pop() ?? relPath;
+      const ok = await confirm({
+        title: isDir ? `删除文件夹「${label}」` : `删除文件「${label}」`,
+        description: isDir
+          ? `将永久删除 Skill「${skillName}」下的该文件夹及其全部内容，操作不可恢复。`
+          : `将永久删除 Skill「${skillName}」下的该文件，操作不可恢复。`,
+        confirmText: '删除',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await deleteAgentSkillPath(detailName, source, skill, relPath);
+        if (
+          skillFile &&
+          skillFile.source === source &&
+          skillFile.skill === skill &&
+          (skillFile.file === relPath || skillFile.file.startsWith(`${relPath}/`))
+        ) {
           setSkillFile(null);
         }
         setSkillsRefreshRev((n) => n + 1);
@@ -673,6 +705,7 @@ export default function AgentsPage() {
                     skillFile ? skillFileKey(skillFile.source, skillFile.skill, skillFile.file) : null
                   }
                   onDeleteSkill={handleDeleteSkill}
+                  onDeleteSkillPath={handleDeleteSkillPath}
                   refreshRev={skillsRefreshRev}
                 />
               ) : (
