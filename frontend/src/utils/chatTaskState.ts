@@ -2,6 +2,16 @@ import type { ChatMessage } from '../types';
 import { findLastUserIndex, isProcessMessage } from './foldProcessMessages';
 import { splitAssistantContent } from './splitAssistantContent';
 
+/** 当前轮次内最后一条工作过程消息（折叠后的 process / thought / tool） */
+export function findLastProcessIndexInTurn(messages: ChatMessage[]): number {
+  const start = findLastUserIndex(messages) + 1;
+  let lastIdx = -1;
+  for (let i = start; i < messages.length; i++) {
+    if (isProcessMessage(messages[i])) lastIdx = i;
+  }
+  return lastIdx;
+}
+
 /** 当前轮次内最后一条带正文的助手回复（含 thought+body 拆分后的 body） */
 export function findCompleteReplyIndexInTurn(messages: ChatMessage[]): number {
   const start = findLastUserIndex(messages) + 1;

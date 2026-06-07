@@ -15,6 +15,7 @@ import { DocReadingPanel } from '../components/DocReadingPanel';
 import { AgentSkillsPanel, skillFileKey, type SkillFileTarget } from '../components/AgentSkillsPanel';
 import { getAgentSkillFile, writeAgentSkillFile, deleteAgentSkill } from '../api/agents';
 import { writeAgentDocFile, deleteAgentDocPath } from '../api/agentDocs';
+import { messageTouchesDocScanRoot } from '../lib/agentDocRoots';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { useChatSession } from '@/state/chatSession';
@@ -50,7 +51,18 @@ export default function ChatPage() {
     void refresh();
   }, [refresh]);
 
-  const { messages, status, isTyping, sendError, send, clearMessages, restoreMessages, reconnect, taskStartedAt } = useChatSession();
+  const {
+    messages,
+    status,
+    isTyping,
+    sendError,
+    send,
+    clearMessages,
+    restoreMessages,
+    reconnect,
+    taskStartedAt,
+    completedTaskElapsedSec,
+  } = useChatSession();
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyRev, setHistoryRev] = useState(0);
@@ -190,7 +202,7 @@ export default function ChatPage() {
   useEffect(() => {
     const lastMsg = messages[messages.length - 1];
     if (!lastMsg || lastMsg.role !== 'assistant' || lastMsg.kind !== 'tool') return;
-    if (lastMsg.content.includes('write_file') && lastMsg.content.includes('docs/')) {
+    if (messageTouchesDocScanRoot(lastMsg.content)) {
       bumpDocsRefresh();
     }
   }, [messages, bumpDocsRefresh]);
@@ -366,6 +378,7 @@ export default function ChatPage() {
                     onClear={handleArchiveAndClear}
                     agentName={currentAgent}
                     taskStartedAt={taskStartedAt}
+                    completedTaskElapsedSec={completedTaskElapsedSec}
                   />
                 </ErrorBoundary>
               </div>

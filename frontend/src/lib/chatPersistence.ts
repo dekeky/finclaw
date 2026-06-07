@@ -26,6 +26,8 @@ interface AgentBucket {
   sessionId?: string;
   /** 当前进行中思考任务的起始时间戳（ms）。任务结束后清空。 */
   taskStartMs?: number;
+  /** 上一轮已完成任务的总耗时（秒），供刷新后在工作过程面板展示。 */
+  lastTaskElapsedSec?: number;
 }
 
 interface PersistRoot {
@@ -201,6 +203,24 @@ export function saveTaskStart(agentName: string, startedAtMs: number | null): vo
   root.agents[agentName] = {
     ...prev,
     taskStartMs: startedAtMs == null ? undefined : startedAtMs,
+  };
+  writeRoot(root);
+}
+
+/** 读取上一轮已完成任务的总耗时（秒）。 */
+export function loadLastTaskElapsed(agentName: string): number | null {
+  const root = readRoot();
+  const v = root.agents[agentName]?.lastTaskElapsedSec;
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
+}
+
+/** 记录或清除上一轮已完成任务的总耗时（秒）。 */
+export function saveLastTaskElapsed(agentName: string, seconds: number | null): void {
+  const root = readRoot();
+  const prev = root.agents[agentName] ?? emptyBucket();
+  root.agents[agentName] = {
+    ...prev,
+    lastTaskElapsedSec: seconds == null ? undefined : Math.max(0, Math.floor(seconds)),
   };
   writeRoot(root);
 }

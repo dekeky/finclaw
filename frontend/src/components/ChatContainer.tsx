@@ -2,7 +2,11 @@ import { useEffect, useRef } from 'react';
 import type { ChatMessage } from '../types';
 import { ActiveTaskPanel, MessageBubble } from './MessageBubble';
 import { useElapsedSeconds } from '../hooks/useElapsedSeconds';
-import { findCompleteReplyIndexInTurn, isChatTaskActive } from '../utils/chatTaskState';
+import {
+  findCompleteReplyIndexInTurn,
+  findLastProcessIndexInTurn,
+  isChatTaskActive,
+} from '../utils/chatTaskState';
 import {
   collectActiveTaskSegments,
   findLastUserIndex,
@@ -31,6 +35,8 @@ interface ChatContainerProps {
   readOnly?: boolean;
   /** 当前思考任务的起始时间（ms）；用于刷新后让计时延续 */
   taskStartedAt?: number | null;
+  /** 上一轮已完成任务的总耗时（秒）；刷新后供工作过程面板展示 */
+  completedTaskElapsedSec?: number | null;
 }
 
 export function ChatContainer({
@@ -43,6 +49,7 @@ export function ChatContainer({
   quickPrompts = DOCK_QUICK_PROMPTS,
   readOnly = false,
   taskStartedAt = null,
+  completedTaskElapsedSec = null,
 }: ChatContainerProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
@@ -61,14 +68,25 @@ export function ChatContainer({
   }
 
   const taskTiming = useElapsedSeconds(taskActive, { startedAtMs: taskStartedAt });
+  const finishedElapsedSec =
+    taskTiming.completed || !taskActive
+      ? (taskTiming.completed ? taskTiming.seconds : completedTaskElapsedSec)
+      : null;
   const lastMsg = messages.length > 0 ? messages[messages.length - 1] : undefined;
   const activeTaskSegments = taskActive ? collectActiveTaskSegments(messages) : [];
 
   const completeReplyIdx = findCompleteReplyIndexInTurn(messages);
+  const lastProcessIdx = findLastProcessIndexInTurn(messages);
 
   function sharesTaskTiming(msg: ChatMessage, index: number): boolean {
     if (!taskActive) {
-      return completeReplyIdx >= 0 && index === completeReplyIdx;
+      // 完成后把总耗时挂在「工作过程」面板上（独立 process 消息）
+      if (lastProcessIdx >= 0) return index === lastProcessIdx;
+      // 无独立过程消息时，思考块可能嵌在正文回复里
+      if (completeReplyIdx >= 0 && index === completeReplyIdx) {
+        return Boolean(splitAssistantContent(messages[completeReplyIdx].content).thought);
+      }
+      return false;
     }
     if (index !== messages.length - 1) return false;
     return isProcessOutputActive(msg, index) || lastMsg?.role === 'user';
@@ -153,8 +171,14 @@ export function ChatContainer({
             key={msg.id}
             message={msg}
             processOutputActive={isProcessOutputActive(msg, index)}
-            taskElapsedSeconds={attachTaskTiming ? taskTiming.seconds : undefined}
-            taskElapsedCompleted={attachTaskTiming && taskTiming.completed}
+            taskElapsedSeconds={
+              attachTaskTiming
+                ? taskActive
+                  ? taskTiming.seconds
+                  : (finishedElapsedSec ?? undefined)
+                : undefined
+            }
+            taskElapsedCompleted={attachTaskTiming && !taskActive && finishedElapsedSec != null}
           />
         );
       })}

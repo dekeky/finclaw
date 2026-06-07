@@ -6,7 +6,17 @@ import { hasCompleteReplyInTurn, isChatTaskActive } from '../utils/chatTaskState
 import { isPicoclawToolFeedbackContent } from '../utils/foldPicoclawToolFeedback';
 import { isAssistantThoughtOnlyContent } from '../utils/splitAssistantContent';
 import { rehydrateChatMessages } from '../utils/rehydrateChatMessages';
-import { clearDraft, loadDraft, saveDraft, loadSessionId, saveSessionId, loadTaskStart, saveTaskStart } from '@/lib/chatPersistence';
+import {
+  clearDraft,
+  loadDraft,
+  saveDraft,
+  loadSessionId,
+  saveSessionId,
+  loadTaskStart,
+  saveTaskStart,
+  loadLastTaskElapsed,
+  saveLastTaskElapsed,
+} from '@/lib/chatPersistence';
 import { getToken, clearToken } from '../api/auth';
 
 const RECONNECT_DELAY = 2000;
@@ -123,6 +133,8 @@ export interface UseWebSocketReturn {
    * 用于让计时器跨刷新延续显示总耗时；任务结束时置 null 并清除持久化值。
    */
   taskStartedAt: number | null;
+  /** 上一轮已完成任务的总耗时（秒），刷新后供工作过程面板展示。 */
+  completedTaskElapsedSec: number | null;
 }
 
 export interface UseWebSocketOptions {
@@ -154,6 +166,9 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   const [taskStartedAt, setTaskStartedAt] = useState<number | null>(() => {
     return persistAgentKey ? loadTaskStart(persistAgentKey) : null;
   });
+  const [completedTaskElapsedSec, setCompletedTaskElapsedSec] = useState<number | null>(() => {
+    return persistAgentKey ? loadLastTaskElapsed(persistAgentKey) : null;
+  });
   /** 与 taskStartedAt 同步，用于在 callback 内避免重复 beginTask */
   const taskStartedAtRef = useRef<number | null>(null);
   taskStartedAtRef.current = taskStartedAt;
@@ -179,13 +194,23 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   const beginTask = useCallback(() => {
     const now = Date.now();
     setTaskStartedAt(now);
+    setCompletedTaskElapsedSec(null);
     if (persistAgentKeyRef.current) {
       saveTaskStart(persistAgentKeyRef.current, now);
+      saveLastTaskElapsed(persistAgentKeyRef.current, null);
     }
   }, []);
 
   /** 关闭当前思考任务并清除持久化值。 */
   const endTask = useCallback(() => {
+    const start = taskStartedAtRef.current;
+    if (start != null) {
+      const elapsed = Math.max(0, Math.floor((Date.now() - start) / 1000));
+      setCompletedTaskElapsedSec(elapsed);
+      if (persistAgentKeyRef.current) {
+        saveLastTaskElapsed(persistAgentKeyRef.current, elapsed);
+      }
+    }
     setTaskStartedAt(null);
     if (persistAgentKeyRef.current) {
       saveTaskStart(persistAgentKeyRef.current, null);
@@ -536,9 +561,11 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     setMessages([]);
     sessionIdRef.current = null;
     endTask();
+    setCompletedTaskElapsedSec(null);
     if (persistAgentKey) {
       clearDraft(persistAgentKey);
       saveSessionId(persistAgentKey, null);
+      saveLastTaskElapsed(persistAgentKey, null);
     }
   }, [persistAgentKey, endTask]);
 
@@ -663,11 +690,13 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
           const persisted = loadTaskStart(persistAgentKey);
           const start = persisted ?? Date.now();
           setTaskStartedAt(start);
+          setCompletedTaskElapsedSec(null);
           if (persisted == null) saveTaskStart(persistAgentKey, start);
         } else {
           setIsTyping(false);
           setTaskStartedAt(null);
           saveTaskStart(persistAgentKey, null);
+          setCompletedTaskElapsedSec(loadLastTaskElapsed(persistAgentKey));
         }
       });
       if (isChatTaskActive(restored, false)) {
@@ -776,5 +805,17 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     };
   }, [persistAgentKey]);
 
-  return { messages, status, isTyping, sendError, send, stop, clearMessages, restoreMessages, reconnect, taskStartedAt };
+  return {
+    messages,
+    status,
+    isTyping,
+    sendError,
+    send,
+    stop,
+    clearMessages,
+    restoreMessages,
+    reconnect,
+    taskStartedAt,
+    completedTaskElapsedSec,
+  };
 }

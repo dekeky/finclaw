@@ -212,12 +212,19 @@ func (c *Client) DownloadTemplate(name, version string) (zipPath string, cleanup
 // AgentHub. Top-level files must match by name; top-level directories are
 // included recursively.
 var uploadAllowlist = map[string]bool{
-	"AGENT.md": true,
-	"SOUL.md":  true,
-	"USER.md":  true,
-	"memory":   true,
-	"skills":   true,
-	"docs":     true,
+	"AGENT.md":  true,
+	"SOUL.md":   true,
+	"USER.md":   true,
+	"memory":    true,
+	"skills":    true,
+	"docs":      true,
+	"doc":       true,
+	"reports":   true,
+	"report":    true,
+	"analysis":  true,
+	"research":  true,
+	"memos":     true,
+	"screening": true,
 }
 
 // isUploadAllowed returns true if a workspace-relative path should be included

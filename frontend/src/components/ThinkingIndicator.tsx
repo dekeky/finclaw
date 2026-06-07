@@ -84,7 +84,7 @@ export function ThinkingIndicator({ seconds }: ThinkingIndicatorProps) {
 
       {seconds !== undefined && (
 
-        <span className="ml-auto shrink-0 font-mono text-[11px] tabular-nums text-violet-600/75 dark:text-violet-400/75">
+        <span className="ml-auto shrink-0 text-xs font-medium text-violet-600/75 dark:text-violet-400/75">
 
           {formatElapsedSeconds(seconds)}
 
