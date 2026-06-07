@@ -8,9 +8,15 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/** Agent 列表项（来自后端 GET /api/v1/agents）。 */
+export interface AgentSummary {
+  name: string;
+  has_avatar: boolean;
+}
+
 /** Agent 列表响应（来自后端 GET /api/v1/agents）。 */
 export interface AgentListBody {
-  agents: string[];
+  agents: AgentSummary[];
   total: number;
 }
 
@@ -74,6 +80,7 @@ export interface AgentModelProviderInfo {
 /** GET /api/v1/agents/:name — 与后端 agentDetailResp 对齐。 */
 export interface AgentDetailBody {
   name: string;
+  has_avatar: boolean;
   workspace?: string;
   model_provider: AgentModelProviderInfo;
 }
@@ -155,10 +162,53 @@ async function parseGinx<T>(res: Response): Promise<GinxResponse<T>> {
 }
 
 /** GET /agents —— 列出所有 Agent。 */
-export async function listAgents(): Promise<string[]> {
+export async function listAgents(): Promise<AgentSummary[]> {
   const res = await fetch(AGENTS_API, { headers: authHeaders() });
   const body = await parseGinx<AgentListBody | null>(res);
   return body.body?.agents ?? [];
+}
+
+/** 带鉴权的 Agent 头像 URL（img 标签可直接使用，Auth 中间件支持 ?token=）。 */
+export function agentAvatarUrl(name: string, revision = 0): string | null {
+  const token = getToken();
+  if (!token) return null;
+  const base = `${AGENTS_API}/${encodeURIComponent(name)}/avatar?token=${encodeURIComponent(token)}`;
+  return revision > 0 ? `${base}&v=${revision}` : base;
+}
+
+/** PATCH /agents/:name/profile —— 重命名 Agent。 */
+export async function renameAgent(name: string, newName: string): Promise<AgentStatusBody> {
+  const res = await fetch(`${AGENTS_API}/${encodeURIComponent(name)}/profile`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ new_name: newName }),
+  });
+  const body = await parseGinx<AgentStatusBody | null>(res);
+  if (!body.body) throw new Error('empty body');
+  return body.body;
+}
+
+/** PUT /agents/:name/avatar —— 上传或替换头像（base64 / data URL）。 */
+export async function uploadAgentAvatar(name: string, data: string): Promise<{ has_avatar: boolean }> {
+  const res = await fetch(`${AGENTS_API}/${encodeURIComponent(name)}/avatar`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ data }),
+  });
+  const body = await parseGinx<{ has_avatar: boolean } | null>(res);
+  if (!body.body) throw new Error('empty body');
+  return body.body;
+}
+
+/** DELETE /agents/:name/avatar —— 移除自定义头像。 */
+export async function deleteAgentAvatar(name: string): Promise<{ has_avatar: boolean }> {
+  const res = await fetch(`${AGENTS_API}/${encodeURIComponent(name)}/avatar`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+  const body = await parseGinx<{ has_avatar: boolean } | null>(res);
+  if (!body.body) throw new Error('empty body');
+  return body.body;
 }
 
 /** GET /agents/:name —— 查询单个 Agent 的运行时配置摘要（无 API Key）。 */

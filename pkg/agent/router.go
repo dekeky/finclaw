@@ -1,6 +1,7 @@
 package agentruntime
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"os"
@@ -38,10 +39,16 @@ func (ar *AgentManagerRouter) ConfigRouter() {
 	group.PUT("/:name/workspace-files/:file", ar.putWorkspaceFile)
 	group.POST("/:name/workspace-files/init", ar.initWorkspaceFiles)
 	group.GET("/:name/docs", ar.listDocFiles)
+	group.POST("/:name/docs/polish", ar.polishDocFile)
 	group.GET("/:name/docs/*filepath", ar.getDocFile)
 	group.PUT("/:name/docs/*filepath", ar.putDocFile)
 	group.DELETE("/:name/docs/*filepath", ar.deleteDocFile)
 	group.POST("/model-probe", ar.probeModelProvider)
+	group.GET("/:name/avatar", ar.getAgentAvatar)
+	group.PUT("/:name/avatar", ar.putAgentAvatar)
+	group.DELETE("/:name/avatar", ar.deleteAgentAvatar)
+	group.PATCH("/:name/profile", ar.patchAgentProfile)
+	group.POST("/:name/market-summary/generate", ar.generateMarketSummary)
 	group.GET("/:name", ar.getAgent)
 	group.GET("", ar.listAgents)
 	group.POST("", ar.createAgent)
@@ -59,16 +66,29 @@ func agentHomeDir(userID string) string {
 	return UserAgentHome(userID)
 }
 
+type agentSummary struct {
+	Name      string `json:"name"`
+	HasAvatar bool   `json:"has_avatar"`
+}
+
 type agentListResp struct {
-	Agents []string `json:"agents"`
-	Total  int      `json:"total"`
+	Agents []agentSummary `json:"agents"`
+	Total  int            `json:"total"`
 }
 
 // GET /api/v1/agents — list agents for the authenticated user.
 func (ar *AgentManagerRouter) listAgents(c *gin.Context) {
 	userID := getUserID(c)
 	names := ar.agentManager.NamesByUser(userID)
-	ginx.NewRender(c).Data(agentListResp{Agents: names, Total: len(names)})
+	home := agentHomeDir(userID)
+	summaries := make([]agentSummary, 0, len(names))
+	for _, name := range names {
+		summaries = append(summaries, agentSummary{
+			Name:      name,
+			HasAvatar: picoclaw.HasAvatar(home, name),
+		})
+	}
+	ginx.NewRender(c).Data(agentListResp{Agents: summaries, Total: len(summaries)})
 }
 
 type agentModelProviderInfo struct {
@@ -79,6 +99,7 @@ type agentModelProviderInfo struct {
 
 type agentDetailResp struct {
 	Name          string                 `json:"name"`
+	HasAvatar     bool                   `json:"has_avatar"`
 	Workspace     string                 `json:"workspace,omitempty"`
 	ModelProvider agentModelProviderInfo `json:"model_provider"`
 }
@@ -94,14 +115,16 @@ func (ar *AgentManagerRouter) getAgent(c *gin.Context) {
 		ginx.NewRender(c, http.StatusNotFound).Err(fmt.Errorf("agent %q not found", name))
 		return
 	}
+	home := agentHomeDir(userID)
+	hasAvatar := picoclaw.HasAvatar(home, name)
 	loop, ok := a.(*picoagent.AgentLoop)
 	if !ok || loop == nil {
-		ginx.NewRender(c).Data(agentDetailResp{Name: name})
+		ginx.NewRender(c).Data(agentDetailResp{Name: name, HasAvatar: hasAvatar})
 		return
 	}
 	cfg := loop.GetConfig()
 	if cfg == nil {
-		ginx.NewRender(c).Data(agentDetailResp{Name: name})
+		ginx.NewRender(c).Data(agentDetailResp{Name: name, HasAvatar: hasAvatar})
 		return
 	}
 	modelAlias := strings.TrimSpace(cfg.Agents.Defaults.ModelName)
@@ -117,6 +140,7 @@ func (ar *AgentManagerRouter) getAgent(c *gin.Context) {
 	}
 	ginx.NewRender(c).Data(agentDetailResp{
 		Name:          name,
+		HasAvatar:     picoclaw.HasAvatar(agentHomeDir(userID), name),
 		Workspace:     strings.TrimSpace(cfg.Agents.Defaults.Workspace),
 		ModelProvider: info,
 	})
@@ -441,6 +465,161 @@ func (ar *AgentManagerRouter) updateAgent(c *gin.Context) {
 	ginx.NewRender(c).Data(agentStatusResp{Name: name, ModelProvider: mp.Model})
 }
 
+type patchAgentProfileRequest struct {
+	NewName string `json:"new_name" binding:"required"`
+}
+
+// PATCH /api/v1/agents/:name/profile — rename an agent (directory + runtime key).
+func (ar *AgentManagerRouter) patchAgentProfile(c *gin.Context) {
+	userID := getUserID(c)
+	oldName := strings.TrimSpace(c.Param("name"))
+	var req patchAgentProfileRequest
+	ginx.PanicIfNotNil(c.ShouldBindJSON(&req))
+	newName := strings.TrimSpace(req.NewName)
+	if err := validateAgentName(oldName); err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+		return
+	}
+	if err := validateAgentName(newName); err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+		return
+	}
+	if oldName == newName {
+		ginx.NewRender(c).Data(agentStatusResp{Name: newName})
+		return
+	}
+
+	oldKey := AgentKey(userID, oldName)
+	if _, ok := ar.agentManager.Get(oldKey); !ok {
+		home := agentHomeDir(userID)
+		if _, err := os.Stat(picoclaw.AgentConfigPath(home, oldName)); err != nil {
+			ginx.NewRender(c, http.StatusNotFound).Err(fmt.Errorf("agent %q not found", oldName))
+			return
+		}
+	}
+
+	if err := ar.agentManager.Rename(userID, oldName, newName); err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			ginx.NewRender(c, http.StatusConflict).Err(err)
+			return
+		}
+		if strings.Contains(err.Error(), "not found") {
+			ginx.NewRender(c, http.StatusNotFound).Err(err)
+			return
+		}
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	ginx.NewRender(c).Data(agentStatusResp{Name: newName})
+}
+
+// GET /api/v1/agents/:name/avatar — serve the agent's custom avatar PNG.
+func (ar *AgentManagerRouter) getAgentAvatar(c *gin.Context) {
+	userID := getUserID(c)
+	name := strings.TrimSpace(c.Param("name"))
+	if err := validateAgentName(name); err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+		return
+	}
+	path := picoclaw.AvatarPath(agentHomeDir(userID), name)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			ginx.NewRender(c, http.StatusNotFound).Err(fmt.Errorf("avatar not found"))
+			return
+		}
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	c.Data(http.StatusOK, "image/png", data)
+}
+
+type putAgentAvatarRequest struct {
+	// Base64-encoded image bytes (JPEG, PNG, or GIF).
+	Data string `json:"data" binding:"required"`
+}
+
+// PUT /api/v1/agents/:name/avatar — upload or replace the agent avatar.
+func (ar *AgentManagerRouter) putAgentAvatar(c *gin.Context) {
+	userID := getUserID(c)
+	name := strings.TrimSpace(c.Param("name"))
+	if err := validateAgentName(name); err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+		return
+	}
+	internalKey := AgentKey(userID, name)
+	if _, ok := ar.agentManager.Get(internalKey); !ok {
+		home := agentHomeDir(userID)
+		if _, err := os.Stat(picoclaw.AgentConfigPath(home, name)); err != nil {
+			ginx.NewRender(c, http.StatusNotFound).Err(fmt.Errorf("agent %q not found", name))
+			return
+		}
+	}
+	var req putAgentAvatarRequest
+	ginx.PanicIfNotNil(c.ShouldBindJSON(&req))
+	raw, err := decodeAvatarPayload(req.Data)
+	if err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+		return
+	}
+	home := agentHomeDir(userID)
+	if err := picoclaw.SaveAvatar(home, name, raw); err != nil {
+		renderAvatarErr(c, err)
+		return
+	}
+	ginx.NewRender(c).Data(gin.H{"has_avatar": true})
+}
+
+// DELETE /api/v1/agents/:name/avatar — remove a custom avatar.
+func (ar *AgentManagerRouter) deleteAgentAvatar(c *gin.Context) {
+	userID := getUserID(c)
+	name := strings.TrimSpace(c.Param("name"))
+	if err := validateAgentName(name); err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+		return
+	}
+	internalKey := AgentKey(userID, name)
+	if _, ok := ar.agentManager.Get(internalKey); !ok {
+		home := agentHomeDir(userID)
+		if _, err := os.Stat(picoclaw.AgentConfigPath(home, name)); err != nil {
+			ginx.NewRender(c, http.StatusNotFound).Err(fmt.Errorf("agent %q not found", name))
+			return
+		}
+	}
+	if err := picoclaw.DeleteAvatar(agentHomeDir(userID), name); err != nil {
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	ginx.NewRender(c).Data(gin.H{"has_avatar": false})
+}
+
+func decodeAvatarPayload(data string) ([]byte, error) {
+	data = strings.TrimSpace(data)
+	if data == "" {
+		return nil, fmt.Errorf("avatar data is required")
+	}
+	if idx := strings.Index(data, ","); idx >= 0 && strings.HasPrefix(strings.ToLower(data[:idx]), "data:") {
+		data = data[idx+1:]
+	}
+	raw, err := base64.StdEncoding.DecodeString(data)
+	if err != nil {
+		return nil, fmt.Errorf("invalid base64 avatar data")
+	}
+	return raw, nil
+}
+
+func renderAvatarErr(c *gin.Context, err error) {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "exceeds") || strings.Contains(msg, "invalid") || strings.Contains(msg, "unsupported") || strings.Contains(msg, "empty"):
+		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+	case strings.Contains(msg, "not found"):
+		ginx.NewRender(c, http.StatusNotFound).Err(err)
+	default:
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+	}
+}
+
 // DELETE /api/v1/agents/:name — stop and remove an agent from memory and disk.
 func (ar *AgentManagerRouter) deleteAgent(c *gin.Context) {
 	userID := getUserID(c)
@@ -725,8 +904,81 @@ func (ar *AgentManagerRouter) generateWorkspaceFile(c *gin.Context) {
 	ginx.NewRender(c).Data(generateWorkspaceFileResp{Content: content})
 }
 
+type generateMarketSummaryReq struct {
+	Prompt         string `json:"prompt,omitempty"`
+	CurrentSummary string `json:"current_summary,omitempty"`
+	DisplayName    string `json:"display_name,omitempty"`
+}
+
+type generateMarketSummaryResp struct {
+	Summary string `json:"summary"`
+}
+
+// POST /api/v1/agents/:name/market-summary/generate — AI draft or polish AgentHub listing summary.
+func (ar *AgentManagerRouter) generateMarketSummary(c *gin.Context) {
+	userID := getUserID(c)
+	name := c.Param("name")
+	cfg, err := ar.resolveAgentConfig(userID, name)
+	if err != nil {
+		ginx.NewRender(c, http.StatusNotFound).Err(err)
+		return
+	}
+	workspace, err := ar.resolveAgentWorkspace(userID, name)
+	if err != nil {
+		ginx.NewRender(c, http.StatusNotFound).Err(err)
+		return
+	}
+	var req generateMarketSummaryReq
+	ginx.PanicIfNotNil(c.ShouldBindJSON(&req))
+	summary, err := picoclaw.GenerateMarketSummary(c.Request.Context(), cfg, workspace, name, picoclaw.GenerateMarketSummaryRequest{
+		Prompt:         req.Prompt,
+		CurrentSummary: req.CurrentSummary,
+		DisplayName:    req.DisplayName,
+	})
+	if err != nil {
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	ginx.NewRender(c).Data(generateMarketSummaryResp{Summary: summary})
+}
+
 type docListResp struct {
 	Files []DocFileEntry `json:"files"`
+}
+
+type polishDocFileReq struct {
+	Prompt         string `json:"prompt"`
+	CurrentContent string `json:"current_content,omitempty"`
+}
+
+type polishDocFileResp struct {
+	Content string `json:"content"`
+}
+
+// POST /api/v1/agents/:name/docs/polish — AI polish markdown document from user prompt.
+func (ar *AgentManagerRouter) polishDocFile(c *gin.Context) {
+	userID := getUserID(c)
+	name := c.Param("name")
+	cfg, err := ar.resolveAgentConfig(userID, name)
+	if err != nil {
+		ginx.NewRender(c, http.StatusNotFound).Err(err)
+		return
+	}
+	var req polishDocFileReq
+	ginx.PanicIfNotNil(c.ShouldBindJSON(&req))
+	content, err := picoclaw.PolishDocMarkdown(c.Request.Context(), cfg, picoclaw.PolishDocRequest{
+		Prompt:         req.Prompt,
+		CurrentContent: req.CurrentContent,
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "is required") {
+			ginx.NewRender(c, http.StatusBadRequest).Err(err)
+			return
+		}
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	ginx.NewRender(c).Data(polishDocFileResp{Content: content})
 }
 
 // GET /api/v1/agents/:name/docs — list files in agent's docs/ directory.

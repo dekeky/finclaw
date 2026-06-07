@@ -68,3 +68,20 @@ export async function deleteAgentDocPath(name: string, file: string): Promise<vo
   });
   parseGinx<unknown>(await res.json());
 }
+
+export interface PolishDocBody {
+  content: string;
+}
+
+/** POST /agents/:name/docs/polish —— 根据提示词 AI 润色 Markdown 文档。 */
+export async function polishAgentDoc(
+  name: string,
+  body: { prompt: string; current_content?: string },
+): Promise<PolishDocBody> {
+  const res = await fetch(`${AGENTS_API}/${encodeURIComponent(name)}/docs/polish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  return parseGinx<PolishDocBody>(await res.json());
+}

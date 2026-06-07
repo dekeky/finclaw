@@ -10,8 +10,12 @@ import {
 import {
   createAgent as apiCreateAgent,
   deleteAgent as apiDeleteAgent,
+  deleteAgentAvatar as apiDeleteAgentAvatar,
   listAgents,
+  renameAgent as apiRenameAgent,
   updateAgent as apiUpdateAgent,
+  uploadAgentAvatar as apiUploadAgentAvatar,
+  type AgentSummary,
   type CreateAgentRequest,
   type UpdateAgentRequest,
 } from '../api/agents';
@@ -21,15 +25,22 @@ const SELECTED_AGENT_STORAGE_KEY = 'finclaw.selectedAgent';
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 export interface AgentsState {
-  agents: string[];
+  agents: AgentSummary[];
+  /** 仅名称列表，便于下拉与校验。 */
+  agentNames: string[];
   status: LoadStatus;
   error: string | null;
+  /** 头像变更后递增，用于刷新 img 缓存。 */
+  avatarRevision: number;
   /** 当前对话所选中的 Agent 名称（持久化在 localStorage）。 */
   currentAgent: string | null;
   selectAgent: (name: string | null) => void;
   refresh: () => Promise<void>;
   createAgent: (req: CreateAgentRequest) => Promise<void>;
   updateAgent: (name: string, req: UpdateAgentRequest) => Promise<void>;
+  renameAgent: (oldName: string, newName: string) => Promise<void>;
+  uploadAgentAvatar: (name: string, dataUrl: string) => Promise<void>;
+  deleteAgentAvatar: (name: string) => Promise<void>;
   deleteAgent: (name: string) => Promise<void>;
 }
 
@@ -53,11 +64,14 @@ function persistAgent(name: string | null) {
 }
 
 export function AgentsProvider({ children }: { children: React.ReactNode }) {
-  const [agents, setAgents] = useState<string[]>([]);
+  const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [status, setStatus] = useState<LoadStatus>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [avatarRevision, setAvatarRevision] = useState(0);
   const [currentAgent, setCurrentAgentRaw] = useState<string | null>(() => readPersistedAgent());
   const inflightRef = useRef<Promise<void> | null>(null);
+
+  const agentNames = useMemo(() => agents.map((a) => a.name), [agents]);
 
   const selectAgent = useCallback((name: string | null) => {
     setCurrentAgentRaw(name);
@@ -73,11 +87,9 @@ export function AgentsProvider({ children }: { children: React.ReactNode }) {
         setAgents(list);
         setStatus('ready');
         setError(null);
-        // 校正 currentAgent
         setCurrentAgentRaw((prev) => {
-          if (prev && list.includes(prev)) return prev;
-          // 没有选中或已失效，则尝试自动选第一个
-          const next = list[0] ?? null;
+          if (prev && list.some((a) => a.name === prev)) return prev;
+          const next = list[0]?.name ?? null;
           persistAgent(next);
           return next;
         });
@@ -97,7 +109,6 @@ export function AgentsProvider({ children }: { children: React.ReactNode }) {
     async (req: CreateAgentRequest) => {
       await apiCreateAgent(req);
       await refresh();
-      // 自动切换到刚创建的 Agent
       selectAgent(req.name);
     },
     [refresh, selectAgent],
@@ -111,6 +122,37 @@ export function AgentsProvider({ children }: { children: React.ReactNode }) {
     [refresh],
   );
 
+  const renameAgent = useCallback(
+    async (oldName: string, newName: string) => {
+      await apiRenameAgent(oldName, newName);
+      await refresh();
+      setCurrentAgentRaw((prev) => {
+        if (prev !== oldName) return prev;
+        persistAgent(newName);
+        return newName;
+      });
+    },
+    [refresh],
+  );
+
+  const uploadAgentAvatar = useCallback(
+    async (name: string, dataUrl: string) => {
+      await apiUploadAgentAvatar(name, dataUrl);
+      await refresh();
+      setAvatarRevision((v) => v + 1);
+    },
+    [refresh],
+  );
+
+  const deleteAgentAvatar = useCallback(
+    async (name: string) => {
+      await apiDeleteAgentAvatar(name);
+      await refresh();
+      setAvatarRevision((v) => v + 1);
+    },
+    [refresh],
+  );
+
   const deleteAgent = useCallback(
     async (name: string) => {
       await apiDeleteAgent(name);
@@ -119,7 +161,6 @@ export function AgentsProvider({ children }: { children: React.ReactNode }) {
         if (prev !== name) return prev;
         return null;
       });
-      // refresh 已经处理了 fallback；再确保移除持久化
       if (currentAgent === name) persistAgent(null);
     },
     [refresh, currentAgent],
@@ -132,16 +173,36 @@ export function AgentsProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<AgentsState>(
     () => ({
       agents,
+      agentNames,
       status,
       error,
+      avatarRevision,
       currentAgent,
       selectAgent,
       refresh,
       createAgent,
       updateAgent,
+      renameAgent,
+      uploadAgentAvatar,
+      deleteAgentAvatar,
       deleteAgent,
     }),
-    [agents, status, error, currentAgent, selectAgent, refresh, createAgent, updateAgent, deleteAgent],
+    [
+      agents,
+      agentNames,
+      status,
+      error,
+      avatarRevision,
+      currentAgent,
+      selectAgent,
+      refresh,
+      createAgent,
+      updateAgent,
+      renameAgent,
+      uploadAgentAvatar,
+      deleteAgentAvatar,
+      deleteAgent,
+    ],
   );
 
   return <AgentsContext.Provider value={value}>{children}</AgentsContext.Provider>;
@@ -153,4 +214,10 @@ export function useAgents(): AgentsState {
     throw new Error('useAgents must be used within AgentsProvider');
   }
   return ctx;
+}
+
+/** 从 agents 列表查找单个 Agent 摘要。 */
+export function findAgentSummary(agents: AgentSummary[], name: string | null | undefined): AgentSummary | undefined {
+  if (!name) return undefined;
+  return agents.find((a) => a.name === name);
 }

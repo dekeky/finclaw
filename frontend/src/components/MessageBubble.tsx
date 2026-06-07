@@ -222,7 +222,7 @@ function AgentProcessPanel({
       <button
         type="button"
         onClick={handleToggle}
-        className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-violet-500/10 ${open ? 'border-b border-violet-500/15' : ''}`}
+        className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-primary/10 ${open ? 'border-b border-primary/15' : ''}`}
       >
         <IconChevronRight
           className={`size-3 shrink-0 text-violet-500/70 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}

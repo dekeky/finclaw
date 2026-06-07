@@ -37,6 +37,7 @@ import {
 } from '@/lib/chatPersistence';
 import { useState, useRef, useMemo, useEffect, useCallback, type MouseEvent } from 'react';
 import { cn } from '@/lib/cn';
+import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 import { TOOLBAR_ICON_BUTTON_CLASS } from '@/lib/toolbarButton';
 
 export default function ChatPage() {
@@ -308,7 +309,7 @@ export default function ChatPage() {
               <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
                 请前往 Agent 市场，从模板快速创建一位 Agent 后即可开始对话。
               </p>
-              <Button asChild className="bg-violet-600 hover:bg-violet-600/90">
+              <Button asChild className={PRIMARY_BUTTON_CLASS}>
                 <Link to="/agents/market">前往 Agent 市场</Link>
               </Button>
             </>

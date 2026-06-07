@@ -14,8 +14,8 @@ export default function NewsPage() {
       <div className="flex flex-1 items-center justify-center p-6">
         <Card className="max-w-md text-center">
           <CardHeader>
-            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-500/10">
-              <IconNews className="h-6 w-6 text-violet-500" />
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10">
+              <IconNews className="h-6 w-6 text-primary" />
             </div>
             <CardTitle>金融资讯即将上线</CardTitle>
             <CardDescription className="space-y-2">

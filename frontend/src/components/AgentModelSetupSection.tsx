@@ -153,7 +153,7 @@ export function AgentModelSetupSection({
             <SelectTrigger
               size="default"
               aria-label="选择来源 Agent"
-              className="h-10 w-full rounded-lg border-border/80 bg-background shadow-xs transition-colors hover:bg-muted/40 data-[state=open]:bg-muted/50 focus-visible:ring-violet-500/30"
+              className="h-10 w-full rounded-lg border-border/80 bg-background shadow-xs transition-colors hover:bg-muted/40 data-[state=open]:bg-muted/50 focus-visible:ring-primary/30"
             >
               <SelectValue
                 placeholder="选择 Agent"

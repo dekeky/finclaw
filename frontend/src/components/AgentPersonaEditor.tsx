@@ -15,11 +15,17 @@ import {
   setGenerateStepStatus,
   type GenerateStep,
 } from './PersonaGenerateDialog';
-import { IconChevronDown, IconSparkles } from '@tabler/icons-react';
+import { IconSparkles } from '@tabler/icons-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { cn } from '@/lib/cn';
+import {
+  PRIMARY_AI_PANEL_CLASS,
+  PRIMARY_BUTTON_CLASS,
+  PRIMARY_ICON_GRADIENT_CLASS,
+} from '@/lib/primaryButton';
 
 const PERSONA_TABS: PersonaFileName[] = ['AGENT.md', 'SOUL.md', 'USER.md'];
 
@@ -212,6 +218,7 @@ export function AgentPersonaEditor({ agentName, className, onDirtyChange }: Agen
       setGeneratePhase('success');
       await sleep(700);
       setGenerateModalOpen(false);
+      setAiPanelOpen(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setGenerateError(message);
@@ -241,8 +248,8 @@ export function AgentPersonaEditor({ agentName, className, onDirtyChange }: Agen
         error={generateError}
         phase={generatePhase}
       />
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/40 px-4 py-2">
-        <div className="flex flex-wrap gap-1">
+      <div className="grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2 border-b border-border/40 px-4 py-2">
+        <div className="flex min-w-0 flex-wrap gap-1 justify-self-start">
           {PERSONA_TABS.map((name) => {
             const label = PERSONA_FILE_LABELS[name].title;
             const isMissing = files && !files[name].exists;
@@ -266,7 +273,73 @@ export function AgentPersonaEditor({ agentName, className, onDirtyChange }: Agen
             );
           })}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+
+        {!loading && !loadError && (
+          <div
+            className={cn(
+              'flex min-w-0 items-center justify-self-center gap-1.5',
+              aiPanelOpen && [
+                'w-full max-w-xl overflow-hidden rounded-lg p-0.5 pr-1.5',
+                PRIMARY_AI_PANEL_CLASS,
+              ],
+              generating && 'opacity-80',
+            )}
+          >
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="flex shrink-0 items-center rounded-md border-none bg-transparent p-0 transition-opacity hover:opacity-90"
+                  onClick={() => setAiPanelOpen((open) => !open)}
+                  disabled={generating}
+                  aria-label={aiPanelOpen ? '收起润色输入' : 'AI 润色'}
+                  aria-expanded={aiPanelOpen}
+                >
+                  <span
+                    className={cn(
+                      'flex size-6 items-center justify-center rounded-md',
+                      PRIMARY_ICON_GRADIENT_CLASS,
+                    )}
+                  >
+                    <IconSparkles className="size-3.5" stroke={1.75} aria-hidden />
+                  </span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={6}>
+                {aiPanelOpen ? '收起润色输入' : 'AI 润色'}
+              </TooltipContent>
+            </Tooltip>
+            {aiPanelOpen && (
+              <>
+                <Input
+                  value={aiPrompt}
+                  onChange={(e) => setAiPrompt(e.target.value)}
+                  placeholder="翻译为中文"
+                  disabled={generating || saving}
+                  className="h-7 min-w-0 flex-1 border-violet-500/20 bg-background/80 text-xs focus-visible:ring-violet-500/30"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      void onGenerate();
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  className={cn('h-7 shrink-0 px-2 text-xs', PRIMARY_BUTTON_CLASS)}
+                  disabled={!aiPrompt.trim() || generating || saving}
+                  onClick={() => void onGenerate()}
+                >
+                  {generating ? '润色中…' : '开始润色'}
+                </Button>
+              </>
+            )}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center justify-self-end gap-2">
           {missingCount > 0 && (
             <Button type="button" variant="outline" size="sm" disabled={initBusy || loading} onClick={() => void onInitMissing()}>
               {initBusy ? '初始化中…' : `初始化缺失 (${missingCount})`}
@@ -300,78 +373,6 @@ export function AgentPersonaEditor({ agentName, className, onDirtyChange }: Agen
           <div className="text-xs text-destructive">⚠️ {loadError}</div>
         ) : (
           <>
-            <div className="mb-3 shrink-0 overflow-hidden rounded-lg border border-violet-500/25 bg-gradient-to-r from-violet-500/[0.08] via-fuchsia-500/[0.05] to-violet-500/[0.08]">
-              <button
-                type="button"
-                onClick={() => setAiPanelOpen((open) => !open)}
-                disabled={generating}
-                aria-expanded={aiPanelOpen}
-                className={cn(
-                  'flex w-full items-center gap-3 px-3.5 py-2.5 text-left transition-colors',
-                  'hover:from-violet-500/12 hover:via-fuchsia-500/8 hover:to-violet-500/12',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-                  generating && 'cursor-wait opacity-80',
-                )}
-              >
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow-sm shadow-violet-500/30">
-                  <IconSparkles className="size-4" stroke={1.75} aria-hidden />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-xs font-medium text-violet-800 dark:text-violet-200">AI 润色</span>
-                  <span className="block truncate text-[11px] text-muted-foreground">
-                    {aiPanelOpen
-                      ? '收起提示词输入'
-                      : `点击用自然语言润色 ${PERSONA_FILE_LABELS[activeTab].title}`}
-                  </span>
-                </span>
-                <IconChevronDown
-                  className={cn(
-                    'size-4 shrink-0 text-violet-600/70 transition-transform duration-200 dark:text-violet-300/70',
-                    aiPanelOpen && 'rotate-180',
-                  )}
-                  stroke={1.75}
-                  aria-hidden
-                />
-              </button>
-
-              {aiPanelOpen && (
-                <div className="border-t border-violet-500/15 bg-background/60 px-3.5 py-3 backdrop-blur-sm">
-                  <div className="flex flex-col gap-2 lg:flex-row">
-                    <Input
-                      value={aiPrompt}
-                      onChange={(e) => setAiPrompt(e.target.value)}
-                      placeholder={
-                        activeTab === 'SOUL.md'
-                          ? '例如：沉稳专业的价值投资顾问，说话简洁，少用 emoji'
-                          : activeTab === 'USER.md'
-                            ? '例如：中文用户，东八区，偏好简洁直接的回答'
-                            : '例如：专注 A 股量化选股的助手，擅长财务分析与风险提示'
-                      }
-                      disabled={generating || saving}
-                      className="min-w-0 flex-1 border-violet-500/20 text-sm focus-visible:ring-violet-500/30"
-                      autoFocus
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          void onGenerate();
-                        }
-                      }}
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="shrink-0 bg-violet-600 hover:bg-violet-600/90 lg:min-w-[6.5rem]"
-                      disabled={!aiPrompt.trim() || generating || saving}
-                      onClick={() => void onGenerate()}
-                    >
-                      {generating ? '润色中…' : '开始润色'}
-                    </Button>
-                  </div>
-                  {generateError && <p className="mt-2 text-xs text-destructive">{generateError}</p>}
-                </div>
-              )}
-            </div>
-
             <div
               className={cn(
                 'grid min-h-0 flex-1 gap-4',
@@ -424,7 +425,7 @@ export function AgentPersonaEditor({ agentName, className, onDirtyChange }: Agen
               <Button
                 type="button"
                 size="sm"
-                className="bg-violet-600 text-white hover:bg-violet-600/90"
+                className={PRIMARY_BUTTON_CLASS}
                 disabled={!dirty || saving || generating}
                 onClick={() => void onSave()}
               >

@@ -5,7 +5,7 @@ import { useAgents } from '@/state/agents';
 
 /** 元宝式：主内容区左上角「名称 + 下拉箭头」，用于切换 Agent */
 export function ChatMainToolbar() {
-  const { agents, currentAgent, selectAgent, status, refresh } = useAgents();
+  const { agents, currentAgent, selectAgent, status, refresh, avatarRevision } = useAgents();
 
   if (status === 'loading') {
     return (
@@ -34,6 +34,7 @@ export function ChatMainToolbar() {
       agents={agents}
       value={currentAgent}
       onChange={selectAgent}
+      avatarRevision={avatarRevision}
       variant="inline"
       placeholder="选择 Agent"
       showAvatar={false}

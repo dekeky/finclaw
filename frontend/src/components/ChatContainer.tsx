@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { ChatMessage } from '../types';
 import { ActiveTaskPanel, MessageBubble } from './MessageBubble';
 import { useElapsedSeconds } from '../hooks/useElapsedSeconds';
-import { isChatTaskActive } from '../utils/chatTaskState';
+import { findCompleteReplyIndexInTurn, isChatTaskActive } from '../utils/chatTaskState';
 import {
   collectActiveTaskSegments,
   findLastUserIndex,
@@ -64,8 +64,13 @@ export function ChatContainer({
   const lastMsg = messages.length > 0 ? messages[messages.length - 1] : undefined;
   const activeTaskSegments = taskActive ? collectActiveTaskSegments(messages) : [];
 
+  const completeReplyIdx = findCompleteReplyIndexInTurn(messages);
+
   function sharesTaskTiming(msg: ChatMessage, index: number): boolean {
-    if (!taskActive || index !== messages.length - 1) return false;
+    if (!taskActive) {
+      return completeReplyIdx >= 0 && index === completeReplyIdx;
+    }
+    if (index !== messages.length - 1) return false;
     return isProcessOutputActive(msg, index) || lastMsg?.role === 'user';
   }
 
@@ -98,7 +103,7 @@ export function ChatContainer({
                 <button
                   key={q}
                   type="button"
-                  className="rounded-full border border-violet-500/20 bg-violet-500/5 px-3 py-1.5 text-xs text-violet-600 transition-colors hover:bg-violet-500/10 hover:border-violet-500/30"
+                  className="rounded-full border border-violet-500/20 bg-violet-500/5 px-3 py-1.5 text-xs text-violet-600 transition-colors hover:bg-violet-500/10 hover:border-violet-500/30 dark:text-violet-300"
                   onClick={() => onQuickPrompt(q)}
                 >
                   {q}

@@ -10,7 +10,7 @@ import { cn } from '@/lib/cn';
 
 export default function AgentMarketPage() {
   const navigate = useNavigate();
-  const { agents, refresh, selectAgent } = useAgents();
+  const { agentNames, refresh, selectAgent } = useAgents();
   const [search, setSearch] = useState('');
 
   useEffect(() => {
@@ -66,7 +66,7 @@ export default function AgentMarketPage() {
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card">
           <AgentMarketPanel
-            existingAgents={agents}
+            existingAgents={agentNames}
             hideTitle
             search={search}
             onSearchChange={setSearch}

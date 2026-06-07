@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/cn';
+import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 
 const LAST_MODEL_KEY = 'finclaw.market.lastModel';
 
@@ -452,7 +453,7 @@ export function AgentMarketPanel({
                   key={tpl.agentName}
                   type="button"
                   onClick={() => void openTemplate(tpl)}
-                  className="flex flex-col rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-violet-500/40 hover:bg-violet-500/5 hover:shadow-sm"
+                  className="flex flex-col rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-primary/40 hover:bg-primary/5 hover:shadow-sm"
                 >
                   <div className="mb-2 flex items-start justify-between gap-2">
                     <span className="line-clamp-2 text-sm font-medium leading-snug text-foreground">
@@ -524,7 +525,7 @@ export function AgentMarketPanel({
             <Button
               type="button"
               size="sm"
-              className="h-8 shrink-0 text-xs"
+              className={cn('h-8 shrink-0 text-xs', PRIMARY_BUTTON_CLASS)}
               disabled={!templateInstallable || detailLoading}
               onClick={openInstallDialog}
             >

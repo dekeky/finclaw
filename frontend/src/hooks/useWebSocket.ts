@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import type { ChatMessage, ConnectionStatus, MessageKind, WSMessage } from '../types';
 import { foldConsecutiveProcessMessages, hasMessageId } from '../utils/foldProcessMessages';
-import { isIncompleteChatTask } from '../utils/chatTaskState';
+import { hasCompleteReplyInTurn, isChatTaskActive } from '../utils/chatTaskState';
 import { isPicoclawToolFeedbackContent } from '../utils/foldPicoclawToolFeedback';
 import { isAssistantThoughtOnlyContent } from '../utils/splitAssistantContent';
 import { rehydrateChatMessages } from '../utils/rehydrateChatMessages';
@@ -146,7 +146,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   const [status, setStatus] = useState<ConnectionStatus>('idle');
   const [isTyping, setIsTyping] = useState(() => {
     if (!persistAgentKey) return false;
-    return isIncompleteChatTask(prepareStoredChatMessages(loadDraft(persistAgentKey)));
+    return isChatTaskActive(prepareStoredChatMessages(loadDraft(persistAgentKey)), false);
   });
   const [sendError, setSendError] = useState<string | null>(null);
   /** 当前思考任务的起始时间戳（ms）；null 表示无进行中任务 */
@@ -296,6 +296,24 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
           const already = hasMessageId(prev, incoming.id);
           const next = upsertChatMessage(prev, incoming);
           added = !already;
+
+          if (role !== 'user' && !(fromCache && !added)) {
+            if (hasCompleteReplyInTurn(next)) {
+              // 本轮已有正文回复：忽略后续 reasoning/工具消息对 typing 的影响
+              clearTypingFallback();
+              setIsTyping(false);
+              endTask();
+            } else if (inProgress) {
+              setIsTyping(true);
+              armTypingFallback();
+              if (!taskStartedAtRef.current) beginTask();
+            } else {
+              clearTypingFallback();
+              setIsTyping(false);
+              endTask();
+            }
+          }
+
           return next;
         });
         // 增量诊断日志：刷新后排查「面板内容未追加」时定位丢失环节
@@ -312,21 +330,6 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         if (fromCache && !added) {
           // 已经显示过的缓存重放：不再触发 typing 状态变更
           console.log('[Finclaw WS] Skipping already-displayed cached message:', incoming.id);
-          break;
-        }
-
-        if (role !== 'user') {
-          if (inProgress) {
-            // 思考 / 工具进度 / 仅思考块：仍算进行中
-            setIsTyping(true);
-            armTypingFallback();
-            if (!taskStartedAtRef.current) beginTask();
-          } else {
-            // 收到完整正文回复：结束 typing 状态。
-            clearTypingFallback();
-            setIsTyping(false);
-            endTask();
-          }
         }
         break;
       }
@@ -655,18 +658,19 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       messagesRef.current = restored;
       flushSync(() => {
         setMessages(restored);
-        if (isIncompleteChatTask(restored)) {
+        if (isChatTaskActive(restored, false)) {
           setIsTyping(true);
           const persisted = loadTaskStart(persistAgentKey);
           const start = persisted ?? Date.now();
           setTaskStartedAt(start);
           if (persisted == null) saveTaskStart(persistAgentKey, start);
         } else {
+          setIsTyping(false);
           setTaskStartedAt(null);
           saveTaskStart(persistAgentKey, null);
         }
       });
-      if (isIncompleteChatTask(restored)) {
+      if (isChatTaskActive(restored, false)) {
         if (typingFallbackRef.current) clearTimeout(typingFallbackRef.current);
         typingFallbackRef.current = setTimeout(() => {
           typingFallbackRef.current = null;
