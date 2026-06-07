@@ -524,10 +524,16 @@ func (c *WeixinChannel) handleMessage(ctx context.Context, chatID, content strin
 		ChatID:     chatID,
 		Content:    content,
 		Media:      media,
-		Peer:       bus.Peer{Kind: "direct", ID: chatID},
 		MessageID:  inboundCtx.MessageID,
 		SessionKey: buildSessionKey(chatID),
-		Metadata:   inboundCtx.Raw,
+		Context: bus.InboundContext{
+			Channel:   "weixin",
+			ChatID:    chatID,
+			ChatType:  "direct",
+			SenderID:  sender.PlatformID,
+			MessageID: inboundCtx.MessageID,
+			Raw:       inboundCtx.Raw,
+		},
 	}
 
 	// 发送到消息总线
@@ -569,7 +575,7 @@ func (c *WeixinChannel) processOutboundLoop(ctx context.Context) {
 			logger.InfoCF("weixin", "Processing outbound message", map[string]any{
 				"channel":     outboundMsg.Channel,
 				"chat_id":     outboundMsg.ChatID,
-				"kind":        outboundMsg.Metadata["message_kind"],
+				"kind":        outboundMsg.Context.Raw["message_kind"],
 				"content_len": len(outboundMsg.Content),
 			})
 
@@ -589,7 +595,7 @@ func (c *WeixinChannel) processOutboundLoop(ctx context.Context) {
 			}
 
 			// 处理 typing 指示器
-			kind := outboundMsg.Metadata["message_kind"]
+			kind := outboundMsg.Context.Raw["message_kind"]
 			if kind == "typing_start" {
 				// 停止之前的 typing（如果有）
 				if stopFn, ok := c.typingStops.LoadAndDelete(outboundMsg.ChatID); ok {

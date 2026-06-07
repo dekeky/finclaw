@@ -24,16 +24,22 @@ func (h *weixinTypingHook) BeforeLLM(
 	if h == nil || h.msgBus == nil || req == nil {
 		return req, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
-	if req.Channel != "weixin" {
+	inbound := turnInboundContext(req.Context)
+	if inbound == nil || inbound.Channel != "weixin" {
 		return req, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
 
-	// Send typing start indicator via outbound message with special metadata
-	h.msgBus.PublishOutbound(ctx, bus.OutboundMessage{
-		Channel:  "weixin",
-		ChatID:   req.ChatID,
-		Content:  "", // Empty content means typing indicator
-		Metadata: map[string]string{"message_kind": "typing_start"},
+	_ = h.msgBus.PublishOutbound(ctx, bus.OutboundMessage{
+		Channel: "weixin",
+		ChatID:  inbound.ChatID,
+		Context: bus.InboundContext{
+			Channel: "weixin",
+			ChatID:  inbound.ChatID,
+			Raw: map[string]string{
+				"message_kind": "typing_start",
+			},
+		},
+		Content: "",
 	})
 
 	return req, agent.HookDecision{Action: agent.HookActionContinue}, nil
@@ -46,16 +52,22 @@ func (h *weixinTypingHook) AfterLLM(
 	if h == nil || h.msgBus == nil || resp == nil {
 		return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
-	if resp.Channel != "weixin" {
+	inbound := turnInboundContext(resp.Context)
+	if inbound == nil || inbound.Channel != "weixin" {
 		return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
 
-	// Send typing stop indicator
-	h.msgBus.PublishOutbound(ctx, bus.OutboundMessage{
-		Channel:  "weixin",
-		ChatID:   resp.ChatID,
-		Content:  "",
-		Metadata: map[string]string{"message_kind": "typing_stop"},
+	_ = h.msgBus.PublishOutbound(ctx, bus.OutboundMessage{
+		Channel: "weixin",
+		ChatID:  inbound.ChatID,
+		Context: bus.InboundContext{
+			Channel: "weixin",
+			ChatID:  inbound.ChatID,
+			Raw: map[string]string{
+				"message_kind": "typing_stop",
+			},
+		},
+		Content: "",
 	})
 
 	return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
