@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 
+	finclawconfig "github.com/finclaw/internal/config"
 	"github.com/finclaw/internal/rss"
 	"github.com/finclaw/internal/webui"
 	agentruntime "github.com/finclaw/pkg/agent"
@@ -15,12 +16,17 @@ import (
 type FinClawRouter struct {
 	r             *gin.Engine
 	agentManager  *agentruntime.AgentManager
+	finclawConf   *finclawconfig.FinclawConfig
 	rssServerAddr string
 }
 
 // NewFinClawRouter creates a new router instance
-func NewFinClawRouter(rssServerAddr string, agentManager *agentruntime.AgentManager) *FinClawRouter {
-	return &FinClawRouter{rssServerAddr: rssServerAddr, agentManager: agentManager}
+func NewFinClawRouter(rssServerAddr string, agentManager *agentruntime.AgentManager, finclawConf *finclawconfig.FinclawConfig) *FinClawRouter {
+	return &FinClawRouter{
+		rssServerAddr: rssServerAddr,
+		agentManager:  agentManager,
+		finclawConf:   finclawConf,
+	}
 }
 
 // RoutesInit configures all HTTP and WebSocket routes
@@ -37,6 +43,7 @@ func (fr *FinClawRouter) RoutesInit() error {
 	fr.webSocketRouter()
 	fr.rssRouter()
 	fr.agentManagerRouter()
+	fr.weixinRouter()
 
 	fr.r.NoRoute(webui.SPANoRoute(dist))
 

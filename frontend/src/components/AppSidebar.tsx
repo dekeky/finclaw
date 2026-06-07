@@ -6,6 +6,7 @@ import {
   IconPuzzle,
   IconRobot,
   IconStar,
+  IconBrandWechat,
 } from '@tabler/icons-react';
 import { Link, useLocation } from 'react-router-dom';
 import * as React from 'react';
@@ -50,6 +51,13 @@ const NAV_GROUPS: NavGroup[] = [
     defaultOpen: true,
     items: [
       { title: '对话', url: '/chat', icon: IconMessageCircle },
+    ],
+  },
+  {
+    label: '频道',
+    defaultOpen: true,
+    items: [
+      { title: '微信', url: '/weixin', icon: IconBrandWechat },
     ],
   },
   {

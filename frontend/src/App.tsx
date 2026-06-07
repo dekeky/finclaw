@@ -5,6 +5,7 @@ import BacktestPage from './pages/BacktestPage';
 import ChatPage from './pages/ChatPage';
 import RssReaderPage from './pages/RssReaderPage';
 import SkillPage from './pages/SkillPage';
+import WeixinPage from './pages/WeixinPage';
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
         <Route path="/agents" element={<AgentsPage />} />
         <Route path="/backtest" element={<BacktestPage />} />
         <Route path="/skill" element={<SkillPage />} />
+        <Route path="/weixin" element={<WeixinPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

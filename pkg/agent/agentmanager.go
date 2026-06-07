@@ -28,17 +28,24 @@ type AgentManager struct {
 	finclawChannel map[string]*finclaw.FinClawChannel
 	finclawConf    *config.FinclawConfig
 
+	// finclawOutboundChs stores per-agent channels for forwarding non-weixin
+	// outbound messages to the finclaw channel. This avoids two goroutines
+	// consuming from the same msgBus.OutboundChan(), which would cause
+	// messages to be randomly lost.
+	finclawOutboundChs map[string]chan bus.OutboundMessage
+
 	mu  sync.RWMutex
 	ctx context.Context
 }
 
 func NewAgentManager(ctx context.Context, finclawConf *config.FinclawConfig) *AgentManager {
 	return &AgentManager{
-		ctx:            ctx,
-		agents:         make(map[string]*agentEntry),
-		msgBusses:      make(map[string]*bus.MessageBus),
-		finclawChannel: make(map[string]*finclaw.FinClawChannel),
-		finclawConf:    finclawConf,
+		ctx:                ctx,
+		agents:             make(map[string]*agentEntry),
+		msgBusses:          make(map[string]*bus.MessageBus),
+		finclawChannel:     make(map[string]*finclaw.FinClawChannel),
+		finclawOutboundChs: make(map[string]chan bus.OutboundMessage),
+		finclawConf:        finclawConf,
 	}
 }
 
@@ -49,13 +56,26 @@ func (m *AgentManager) AddAgent(name string, agent Agent, msgBus *bus.MessageBus
 	defer m.mu.Unlock()
 
 	m.msgBusses[name] = msgBus
+
+	// Create a separate channel for finclaw outbound messages.
+	// Only one goroutine should consume from msgBus.OutboundChan() to avoid
+	// message loss (Go channels deliver each message to exactly one consumer).
+	finclawOutCh := make(chan bus.OutboundMessage, 64)
+	m.finclawOutboundChs[name] = finclawOutCh
+
 	finclawChannel := finclaw.NewFinChannel(m.ctx, msgBus, m.finclawConf.FinClawChannelConf)
-	go finclawChannel.ProcessAgentMessage(msgBus.OutboundChan())
+	go finclawChannel.ProcessAgentMessage(finclawOutCh)
 	m.finclawChannel[name] = finclawChannel
 
 	if loop, ok := agent.(*picoagent.AgentLoop); ok {
 		if err := loop.MountHook(newFinReasoningHook(msgBus)); err != nil {
 			logger.WarnCF("agent", "Failed to mount fin reasoning hook", map[string]any{
+				"name":  name,
+				"error": err.Error(),
+			})
+		}
+		if err := loop.MountHook(newWeixinTypingHook(msgBus)); err != nil {
+			logger.WarnCF("agent", "Failed to mount weixin typing hook", map[string]any{
 				"name":  name,
 				"error": err.Error(),
 			})
@@ -110,6 +130,24 @@ func (m *AgentManager) Names() []string {
 	return names
 }
 
+// GetMsgBus returns the message bus for the given agent name.
+func (m *AgentManager) GetMsgBus(name string) *bus.MessageBus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.msgBusses[name]
+}
+
+// GetFinclawOutboundCh returns the finclaw outbound channel for the given agent name.
+// Non-weixin outbound messages should be forwarded to this channel so the finclaw
+// channel can process them, avoiding fan-out consumption of msgBus.OutboundChan().
+func (m *AgentManager) GetFinclawOutboundCh(name string) chan bus.OutboundMessage {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.finclawOutboundChs[name]
+}
+
 // Remove stops and removes an agent from the manager.
 func (m *AgentManager) Remove(name string) error {
 	m.mu.Lock()
@@ -125,6 +163,10 @@ func (m *AgentManager) Remove(name string) error {
 	delete(m.agents, name)
 	delete(m.msgBusses, name)
 	delete(m.finclawChannel, name)
+	if ch, ok := m.finclawOutboundChs[name]; ok {
+		close(ch)
+		delete(m.finclawOutboundChs, name)
+	}
 	return nil
 }
 
