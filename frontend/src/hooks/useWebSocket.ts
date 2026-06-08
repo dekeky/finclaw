@@ -7,11 +7,14 @@ import { isPicoclawToolFeedbackContent } from '../utils/foldPicoclawToolFeedback
 import { isAssistantThoughtOnlyContent } from '../utils/splitAssistantContent';
 import { rehydrateChatMessages } from '../utils/rehydrateChatMessages';
 import {
+  loadSessionId,
+  loadSessionMap,
+  saveSessionId,
+} from '@/lib/agentSessions';
+import {
   clearDraft,
   loadDraft,
   saveDraft,
-  loadSessionId,
-  saveSessionId,
   loadTaskStart,
   saveTaskStart,
   loadLastTaskElapsed,
@@ -27,6 +30,17 @@ const TYPING_FALLBACK_MS = 120_000;
 
 function genId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+/** 从 connected 帧解析 session_id（前端持有并持久化，服务端仅回显握手时的值）。 */
+function extractConnectedSessionId(msg: WSMessage): string | null {
+  const rec = msg as WSMessage & { sessionId?: string };
+  const payload = msg.payload as Record<string, unknown> | undefined;
+  const candidates = [msg.session_id, rec.sessionId, payload?.session_id, payload?.client_id];
+  for (const raw of candidates) {
+    if (typeof raw === 'string' && raw.trim()) return raw.trim();
+  }
+  return null;
 }
 
 function inferMessageKind(content: string, messageKind?: string): MessageKind | undefined {
@@ -173,7 +187,8 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   const taskStartedAtRef = useRef<number | null>(null);
   taskStartedAtRef.current = taskStartedAt;
   const wsRef = useRef<WebSocket | null>(null);
-  const sessionIdRef = useRef<string | null>(null);
+  /** 多 Agent：agentId -> sessionId（内存 map，与 localStorage sessions map 同步） */
+  const sessionByAgentRef = useRef<Map<string, string>>(new Map(Object.entries(loadSessionMap())));
   const reconnectCountRef = useRef(0);
   const pingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const typingFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -189,6 +204,57 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   /** 始终指向最新 messages，供卸载 cleanup 同步落盘 */
   const messagesRef = useRef<ChatMessage[]>(messages);
   messagesRef.current = messages;
+
+  /** 读取指定 agent 的 sessionId（内存 map → localStorage sessions map）。 */
+  const getSessionForAgent = useCallback((agentId: string | null | undefined): string | null => {
+    if (!agentId) return null;
+    const cached = sessionByAgentRef.current.get(agentId);
+    if (cached) return cached;
+    const stored = loadSessionId(agentId);
+    if (stored) sessionByAgentRef.current.set(agentId, stored);
+    return stored;
+  }, []);
+
+  /** 写入指定 agent 的 sessionId 到内存 map 与 localStorage。 */
+  const setSessionForAgent = useCallback((agentId: string | null | undefined, sessionId: string | null) => {
+    if (!agentId) return;
+    const sid = sessionId?.trim() ?? '';
+    if (sid) {
+      sessionByAgentRef.current.set(agentId, sid);
+      saveSessionId(agentId, sid);
+    } else {
+      sessionByAgentRef.current.delete(agentId);
+      saveSessionId(agentId, null);
+    }
+  }, []);
+
+  const getCurrentSessionId = useCallback((): string | null => {
+    return getSessionForAgent(persistAgentKeyRef.current);
+  }, [getSessionForAgent]);
+
+  /** 将 connected 收到的 sessionId 写入当前 agent 的 map 条目。 */
+  const applySessionId = useCallback(
+    (incoming: string) => {
+      const agentId = persistAgentKeyRef.current;
+      const sid = incoming.trim();
+      if (!sid) return;
+      if (!agentId) {
+        console.warn('[Finclaw WS] sessionId received but persistAgentKey is null:', sid);
+        return;
+      }
+      setSessionForAgent(agentId, sid);
+      console.log('[Finclaw WS] sessionId persisted:', sid, 'agentId=', agentId);
+    },
+    [setSessionForAgent],
+  );
+
+  /** 将当前 agent 的 sessionId 刷入 localStorage。 */
+  const persistSessionId = useCallback(() => {
+    const agentId = persistAgentKeyRef.current;
+    if (!agentId) return;
+    const sid = sessionByAgentRef.current.get(agentId);
+    if (sid) saveSessionId(agentId, sid);
+  }, []);
 
   /** 开启一次思考任务：写入起始时间戳并持久化，刷新后可恢复。 */
   const beginTask = useCallback(() => {
@@ -268,13 +334,17 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
 
     console.log('[Finclaw WS] Received:', msg.type, msg.payload);
     switch (msg.type) {
-      case 'connected':
-        sessionIdRef.current = msg.session_id || msg.payload?.client_id || null;
-        if (sessionIdRef.current && persistAgentKeyRef.current) {
-          saveSessionId(persistAgentKeyRef.current, sessionIdRef.current);
+      case 'connected': {
+        const incoming = extractConnectedSessionId(msg);
+        if (incoming) {
+          applySessionId(incoming);
+        } else if (!getCurrentSessionId() && persistAgentKeyRef.current) {
+          const stored = loadSessionId(persistAgentKeyRef.current);
+          if (stored) applySessionId(stored);
         }
-        console.log('[Finclaw WS] SessionID set to:', sessionIdRef.current);
+        console.log('[Finclaw WS] SessionID set to:', getCurrentSessionId());
         break;
+      }
 
       case 'pong':
         // 服务端 JSON pong：更新活动时间，避免 visibility 探活误判为死连接
@@ -405,7 +475,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         break;
       }
     }
-  }, [beginTask, endTask]);
+  }, [beginTask, endTask, applySessionId, getCurrentSessionId]);
 
   const connect = useCallback(() => {
     const target = urlRef.current;
@@ -429,12 +499,10 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     try {
       // Carry sessionId on reconnect so the server can resume the existing session
       let wsUrl = target;
-      let sid = sessionIdRef.current;
-      if (!sid && persistAgentKeyRef.current) {
-        sid = loadSessionId(persistAgentKeyRef.current);
-        if (sid) sessionIdRef.current = sid;
-      }
-      if (sid) {
+      const agentId = persistAgentKeyRef.current;
+      let sid = agentId ? getSessionForAgent(agentId) : null;
+      if (sid && agentId) {
+        setSessionForAgent(agentId, sid);
         const sep = wsUrl.includes('?') ? '&' : '?';
         wsUrl = `${wsUrl}${sep}sessionId=${encodeURIComponent(sid)}`;
       }
@@ -445,9 +513,24 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       }
       // 诊断：dump localStorage 中的 agent bucket 内容
       try { console.log('[Finclaw WS] connect: bucket=', JSON.parse(localStorage.getItem('finclaw.chat.v1') || '{}').agents?.[persistAgentKeyRef.current || '']); } catch {}
-      console.log('[Finclaw WS] connect(): creating WebSocket, sid=', sid, 'persistAgentKey=', persistAgentKeyRef.current, 'urlHasSid=', wsUrl.includes('sessionId='));
+      console.log('[Finclaw WS] connect(): creating WebSocket, sid=', sid, 'agentId=', agentId, 'urlHasSid=', wsUrl.includes('sessionId='), 'sessions=', loadSessionMap());
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
+
+      // 必须最先注册 onmessage：connected 可能在 onopen 之前到达；sessionId 落盘不依赖 mountedRef
+      ws.onmessage = (ev) => {
+        try {
+          const msg: WSMessage = JSON.parse(ev.data as string);
+          if (msg.type === 'connected') {
+            const sidFromConnected = extractConnectedSessionId(msg);
+            if (sidFromConnected) applySessionId(sidFromConnected);
+          }
+          if (!mountedRef.current) return;
+          handleIncoming(msg);
+        } catch {
+          // ignore parse errors
+        }
+      };
 
       ws.onopen = () => {
         connectingRef.current = false;
@@ -516,16 +599,6 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         }
         setStatus('error');
       };
-
-      ws.onmessage = (ev) => {
-        if (!mountedRef.current) return;
-        try {
-          const msg: WSMessage = JSON.parse(ev.data);
-          handleIncoming(msg);
-        } catch {
-          // ignore parse errors
-        }
-      };
     } catch {
       connectingRef.current = false;
       // new WebSocket() threw - likely due to connection failure (e.g. HTTP 401 before upgrade)
@@ -550,7 +623,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       }
       setStatus('error');
     }
-  }, [startPing, handleIncoming]);
+  }, [startPing, handleIncoming, applySessionId, getSessionForAgent, setSessionForAgent]);
 
   const clearMessages = useCallback(() => {
     if (typingFallbackRef.current) {
@@ -559,15 +632,16 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     }
     setIsTyping(false);
     setMessages([]);
-    sessionIdRef.current = null;
+    if (persistAgentKey) {
+      setSessionForAgent(persistAgentKey, null);
+    }
     endTask();
     setCompletedTaskElapsedSec(null);
     if (persistAgentKey) {
       clearDraft(persistAgentKey);
-      saveSessionId(persistAgentKey, null);
       saveLastTaskElapsed(persistAgentKey, null);
     }
-  }, [persistAgentKey, endTask]);
+  }, [persistAgentKey, endTask, setSessionForAgent]);
 
   const restoreMessages = useCallback(
     (msgs: ChatMessage[]) => {
@@ -593,14 +667,12 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     setIsTyping(false);
     // Restore sessionId from localStorage so reconnect can pull cached messages
     if (persistAgentKey) {
-      const sid = loadSessionId(persistAgentKey);
-      if (sid) {
-        sessionIdRef.current = sid;
-      }
+      const sid = getSessionForAgent(persistAgentKey);
+      if (sid) setSessionForAgent(persistAgentKey, sid);
     }
     reset();
     connect();
-  }, [reset, connect, persistAgentKey]);
+  }, [reset, connect, persistAgentKey, getSessionForAgent, setSessionForAgent]);
 
   // 心跳守护：定期检查连接是否仍有活动。只在 JS 层长时间未收到任何消息
   // 且 ping 也未收到 pong 响应时才触发重连（注意 lastActivityRef 在发送 ping 时
@@ -647,16 +719,18 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         setIsTyping(false);
       }, TYPING_FALLBACK_MS);
 
+      persistSessionId();
+
       const msg = {
         type: 'message.send',
         id,
-        session_id: sessionIdRef.current || undefined,
+        session_id: getCurrentSessionId() || undefined,
         payload: { content },
       };
       console.log('[Finclaw WS] Sending:', JSON.stringify(msg));
       ws.send(JSON.stringify(msg));
     },
-    [beginTask]
+    [beginTask, applySessionId, getCurrentSessionId]
   );
 
   const stop = useCallback(() => {
@@ -672,12 +746,13 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   useEffect(() => {
     mountedRef.current = true;
     urlRef.current = url;
-    sessionIdRef.current = persistAgentKey ? loadSessionId(persistAgentKey) : null;
+    const agentId = persistAgentKey;
+    const restoredSid = agentId ? getSessionForAgent(agentId) : null;
     reconnectCountRef.current = 0;
     setSendError(null);
     setIsTyping(false);
     skipPersistRef.current = true;
-    console.log('[Finclaw WS] useEffect mount:', { url, persistAgentKey, sessionId: sessionIdRef.current });
+    console.log('[Finclaw WS] useEffect mount:', { url, agentId, sessionId: restoredSid, sessions: loadSessionMap() });
     if (persistAgentKey && url) {
       const restored = prepareStoredChatMessages(loadDraft(persistAgentKey));
       // 必须在 connect() 之前同步落盘到 state，否则本地/快速 WS 重连时
@@ -726,14 +801,12 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         if (messagesRef.current.length > 0) {
           saveDraft(persistAgentKey, messagesRef.current);
         }
-        if (sessionIdRef.current) {
-          saveSessionId(persistAgentKey, sessionIdRef.current);
-        }
+        persistSessionId();
       }
       mountedRef.current = false;
       reset();
     };
-  }, [url, persistAgentKey, reset, connect]);
+  }, [url, persistAgentKey, reset, connect, persistSessionId, getSessionForAgent]);
 
   useEffect(() => {
     if (!persistAgentKey) return;
@@ -787,9 +860,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     if (!persistAgentKey) return;
     const flush = () => {
       try {
-        if (sessionIdRef.current) {
-          saveSessionId(persistAgentKey, sessionIdRef.current);
-        }
+        persistSessionId();
         if (messagesRef.current.length > 0) {
           saveDraft(persistAgentKey, messagesRef.current);
         }
@@ -803,7 +874,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       window.removeEventListener('pagehide', flush);
       window.removeEventListener('beforeunload', flush);
     };
-  }, [persistAgentKey]);
+  }, [persistAgentKey, persistSessionId]);
 
   return {
     messages,

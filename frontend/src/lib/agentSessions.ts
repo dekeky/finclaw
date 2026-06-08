@@ -1,0 +1,136 @@
+/**
+ * 多 Agent 会话 ID 管理：agentId -> sessionId
+ * 独立存储，与 chat draft 解耦，避免 saveDraft 等操作误覆盖 session。
+ */
+
+const SESSIONS_KEY = 'finclaw.chat.sessions.v1';
+const LEGACY_CHAT_KEY = 'finclaw.chat.v1';
+const legacySidKey = (agentId: string) => `finclaw.chat.sid.${agentId}`;
+
+export type AgentSessionMap = Record<string, string>;
+
+function readSessionMapRaw(): AgentSessionMap {
+  if (typeof localStorage === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(SESSIONS_KEY);
+    if (!raw) return {};
+    const data = JSON.parse(raw) as AgentSessionMap;
+    if (!data || typeof data !== 'object') return {};
+    const map: AgentSessionMap = {};
+    for (const [agentId, sid] of Object.entries(data)) {
+      if (typeof sid === 'string' && sid.trim()) map[agentId] = sid.trim();
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+function writeSessionMap(map: AgentSessionMap): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(SESSIONS_KEY, JSON.stringify(map));
+  } catch {
+    // quota / private mode
+  }
+}
+
+/** 从旧版 bucket.sessionId / finclaw.chat.sid.* 迁移到 sessions map（一次性）。 */
+function migrateLegacySessions(into: AgentSessionMap): AgentSessionMap {
+  const next = { ...into };
+  let changed = false;
+
+  try {
+    const legacyChat = localStorage.getItem(LEGACY_CHAT_KEY);
+    if (legacyChat) {
+      const root = JSON.parse(legacyChat) as { agents?: Record<string, { sessionId?: string }> };
+      const agents = root?.agents;
+      if (agents && typeof agents === 'object') {
+        for (const [agentId, bucket] of Object.entries(agents)) {
+          const sid = bucket?.sessionId;
+          if (typeof sid === 'string' && sid.trim() && !next[agentId]) {
+            next[agentId] = sid.trim();
+            changed = true;
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore corrupt legacy root
+  }
+
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key?.startsWith('finclaw.chat.sid.')) continue;
+      const agentId = key.slice('finclaw.chat.sid.'.length);
+      if (!agentId || next[agentId]) continue;
+      const sid = localStorage.getItem(key);
+      if (sid?.trim()) {
+        next[agentId] = sid.trim();
+        changed = true;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  if (changed) writeSessionMap(next);
+  return next;
+}
+
+let migrated = false;
+
+function ensureSessionMap(): AgentSessionMap {
+  if (!migrated) {
+    migrated = true;
+    const current = readSessionMapRaw();
+    return migrateLegacySessions(current);
+  }
+  return readSessionMapRaw();
+}
+
+/** 读取全部 agent 的 sessionId map。 */
+export function loadSessionMap(): AgentSessionMap {
+  return { ...ensureSessionMap() };
+}
+
+/** 读取指定 agent 的 sessionId。 */
+export function loadSessionId(agentId: string): string | null {
+  if (!agentId) return null;
+  return ensureSessionMap()[agentId] ?? null;
+}
+
+/** 写入或清除指定 agent 的 sessionId。 */
+export function saveSessionId(agentId: string, sessionId: string | null): void {
+  if (!agentId) return;
+  const map = ensureSessionMap();
+  const sid = sessionId?.trim() ?? '';
+  if (sid) {
+    map[agentId] = sid;
+  } else {
+    delete map[agentId];
+  }
+  writeSessionMap(map);
+  try {
+    localStorage.removeItem(legacySidKey(agentId));
+  } catch {
+    // ignore
+  }
+}
+
+/** Agent 重命名时迁移 sessionId。 */
+export function migrateSessionId(oldAgentId: string, newAgentId: string): void {
+  if (!oldAgentId || !newAgentId || oldAgentId === newAgentId) return;
+  const map = ensureSessionMap();
+  const sid = map[oldAgentId];
+  if (!sid) return;
+  map[newAgentId] = sid;
+  delete map[oldAgentId];
+  writeSessionMap(map);
+  try {
+    localStorage.removeItem(legacySidKey(oldAgentId));
+  } catch {
+    // ignore
+  }
+}

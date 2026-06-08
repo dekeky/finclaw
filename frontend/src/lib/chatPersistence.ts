@@ -23,7 +23,6 @@ export interface ArchivedChat {
 interface AgentBucket {
   draft: PersistedMessage[];
   archived: ArchivedChat[];
-  sessionId?: string;
   /** 当前进行中思考任务的起始时间戳（ms）。任务结束后清空。 */
   taskStartMs?: number;
   /** 上一轮已完成任务的总耗时（秒），供刷新后在工作过程面板展示。 */
@@ -90,28 +89,28 @@ export function persistedToMessages(rows: PersistedMessage[]): ChatMessage[] {
   }));
 }
 
-export function loadDraft(agentName: string): ChatMessage[] {
+export function loadDraft(agentId: string): ChatMessage[] {
   const root = readRoot();
-  const bucket = root.agents[agentName];
+  const bucket = root.agents[agentId];
   if (!bucket?.draft?.length) return [];
   return persistedToMessages(bucket.draft);
 }
 
-export function saveDraft(agentName: string, messages: ChatMessage[]): void {
+export function saveDraft(agentId: string, messages: ChatMessage[]): void {
   const root = readRoot();
-  const prev = root.agents[agentName] ?? emptyBucket();
-  root.agents[agentName] = {
+  const prev = root.agents[agentId] ?? emptyBucket();
+  root.agents[agentId] = {
     ...prev,
     draft: messages.map(msgToPersisted),
   };
   writeRoot(root);
 }
 
-export function clearDraft(agentName: string): void {
+export function clearDraft(agentId: string): void {
   const root = readRoot();
-  const prev = root.agents[agentName];
+  const prev = root.agents[agentId];
   if (!prev) return;
-  root.agents[agentName] = { ...prev, draft: [] };
+  root.agents[agentId] = { ...prev, draft: [] };
   writeRoot(root);
 }
 
@@ -126,10 +125,10 @@ function inferTitle(messages: ChatMessage[]): string {
   return oneLine.length <= max ? oneLine : `${oneLine.slice(0, max).trimEnd()}…`;
 }
 
-export function archiveConversation(agentName: string, messages: ChatMessage[]): void {
+export function archiveConversation(agentId: string, messages: ChatMessage[]): void {
   if (messages.length === 0) return;
   const root = readRoot();
-  const prev = root.agents[agentName] ?? emptyBucket();
+  const prev = root.agents[agentId] ?? emptyBucket();
   const entry: ArchivedChat = {
     id: `arch-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
     title: inferTitle(messages),
@@ -137,70 +136,41 @@ export function archiveConversation(agentName: string, messages: ChatMessage[]):
     messages: messages.map(msgToPersisted),
   };
   const archived = [entry, ...prev.archived].slice(0, MAX_ARCHIVED_PER_AGENT);
-  root.agents[agentName] = {
+  root.agents[agentId] = {
     ...prev,
     archived,
   };
   writeRoot(root);
 }
 
-export function listArchived(agentName: string): ArchivedChat[] {
+export function listArchived(agentId: string): ArchivedChat[] {
   const root = readRoot();
-  return [...(root.agents[agentName]?.archived ?? [])];
+  return [...(root.agents[agentId]?.archived ?? [])];
 }
 
-export function deleteArchived(agentName: string, archiveId: string): boolean {
+export function deleteArchived(agentId: string, archiveId: string): boolean {
   const root = readRoot();
-  const prev = root.agents[agentName];
+  const prev = root.agents[agentId];
   if (!prev?.archived?.length) return false;
   const next = prev.archived.filter((a) => a.id !== archiveId);
   if (next.length === prev.archived.length) return false;
-  root.agents[agentName] = { ...prev, archived: next };
+  root.agents[agentId] = { ...prev, archived: next };
   writeRoot(root);
   return true;
 }
 
-export function loadSessionId(agentName: string): string | null {
-  const root = readRoot();
-  const fromRoot = root.agents[agentName]?.sessionId ?? null;
-  if (fromRoot) return fromRoot;
-  // 兜底：从独立 key 读取，避免上层 bucket 被意外覆盖时 sessionId 也跟着丢
-  try {
-    return localStorage.getItem(`finclaw.chat.sid.${agentName}`);
-  } catch {
-    return null;
-  }
-}
-
-export function saveSessionId(agentName: string, sessionId: string | null): void {
-  const root = readRoot();
-  const prev = root.agents[agentName] ?? emptyBucket();
-  root.agents[agentName] = { ...prev, sessionId: sessionId ?? undefined };
-  writeRoot(root);
-  // 同步写入独立 key 作为兜底，避免被其它 bucket 写操作误覆盖
-  try {
-    if (sessionId) {
-      localStorage.setItem(`finclaw.chat.sid.${agentName}`, sessionId);
-    } else {
-      localStorage.removeItem(`finclaw.chat.sid.${agentName}`);
-    }
-  } catch {
-    // ignore quota / privacy
-  }
-}
-
 /** 读取当前正在进行的思考任务起始时间（ms）；无任务时返回 null。 */
-export function loadTaskStart(agentName: string): number | null {
+export function loadTaskStart(agentId: string): number | null {
   const root = readRoot();
-  const v = root.agents[agentName]?.taskStartMs;
+  const v = root.agents[agentId]?.taskStartMs;
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
 /** 记录或清除当前思考任务的起始时间；传 null 表示任务结束。 */
-export function saveTaskStart(agentName: string, startedAtMs: number | null): void {
+export function saveTaskStart(agentId: string, startedAtMs: number | null): void {
   const root = readRoot();
-  const prev = root.agents[agentName] ?? emptyBucket();
-  root.agents[agentName] = {
+  const prev = root.agents[agentId] ?? emptyBucket();
+  root.agents[agentId] = {
     ...prev,
     taskStartMs: startedAtMs == null ? undefined : startedAtMs,
   };
@@ -208,17 +178,17 @@ export function saveTaskStart(agentName: string, startedAtMs: number | null): vo
 }
 
 /** 读取上一轮已完成任务的总耗时（秒）。 */
-export function loadLastTaskElapsed(agentName: string): number | null {
+export function loadLastTaskElapsed(agentId: string): number | null {
   const root = readRoot();
-  const v = root.agents[agentName]?.lastTaskElapsedSec;
+  const v = root.agents[agentId]?.lastTaskElapsedSec;
   return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 }
 
 /** 记录或清除上一轮已完成任务的总耗时（秒）。 */
-export function saveLastTaskElapsed(agentName: string, seconds: number | null): void {
+export function saveLastTaskElapsed(agentId: string, seconds: number | null): void {
   const root = readRoot();
-  const prev = root.agents[agentName] ?? emptyBucket();
-  root.agents[agentName] = {
+  const prev = root.agents[agentId] ?? emptyBucket();
+  root.agents[agentId] = {
     ...prev,
     lastTaskElapsedSec: seconds == null ? undefined : Math.max(0, Math.floor(seconds)),
   };

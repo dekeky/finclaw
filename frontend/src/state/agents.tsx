@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { migrateSessionId } from '@/lib/agentSessions';
 import {
   createAgent as apiCreateAgent,
   deleteAgent as apiDeleteAgent,
@@ -125,6 +126,7 @@ export function AgentsProvider({ children }: { children: React.ReactNode }) {
   const renameAgent = useCallback(
     async (oldName: string, newName: string) => {
       await apiRenameAgent(oldName, newName);
+      migrateSessionId(oldName, newName);
       await refresh();
       setCurrentAgentRaw((prev) => {
         if (prev !== oldName) return prev;
