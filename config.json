@@ -17,6 +17,18 @@
     }
   },
   "channels": {
+    "weixin": {
+      "enabled": false,
+      "allow_from": [],
+      "reasoning_channel_id": "",
+      "weixin": {
+        "token": "",
+        "account_id": "",
+        "base_url": "https://ilinkai.weixin.qq.com/",
+        "cdn_base_url": "",
+        "proxy": ""
+      }
+    },
     "whatsapp": {
       "enabled": false,
       "bridge_url": "ws://localhost:3001",

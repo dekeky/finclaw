@@ -51,6 +51,10 @@ export default defineConfig({
         ws: true,
         rewrite: (path) => path.replace(/^\/ws/, ''),
       },
+      '/api': {
+        target: 'http://127.0.0.1:8082',
+        changeOrigin: true,
+      },
       '/rss': {
         target: 'http://127.0.0.1:8082',
         changeOrigin: true,

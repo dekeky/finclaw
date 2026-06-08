@@ -1,0 +1,80 @@
+// Package main 频道初始化示例
+// 将此文件复制到目标项目的 cmd/yourapp/main.go 并根据实际情况修改
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+
+	"github.com/你的项目/pkg/bus"
+	"github.com/你的项目/pkg/channels"
+	"github.com/你的项目/pkg/channels/dingtalk"
+	"github.com/你的项目/pkg/channels/discord"
+	"github.com/你的项目/pkg/channels/feishu"
+	"github.com/你的项目/pkg/channels/irc"
+	"github.com/你的项目/pkg/channels/line"
+	"github.com/你的项目/pkg/channels/maixcam"
+	"github.com/你的项目/pkg/channels/matrix"
+	"github.com/你的项目/pkg/channels/mqtt"
+	"github.com/你的项目/pkg/channels/onebot"
+	"github.com/你的项目/pkg/channels/pico"
+	"github.com/你的项目/pkg/channels/qq"
+	"github.com/你的项目/pkg/channels/slack"
+	"github.com/你的项目/pkg/channels/teams_webhook"
+	"github.com/你的项目/pkg/channels/telegram"
+	"github.com/你的项目/pkg/channels/vk"
+	"github.com/你的项目/pkg/channels/wecom"
+	"github.com/你的项目/pkg/channels/weixin"
+	whatsapp "github.com/你的项目/pkg/channels/whatsapp"
+	whatsapp_native "github.com/你的项目/pkg/channels/whatsapp_native"
+	"github.com/你的项目/pkg/config"
+	"github.com/你的项目/pkg/media"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	ctx := context.Background()
+
+	// 1. 加载配置
+	cfg, err := config.Load("config.json")
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// 2. 创建 MessageBus
+	msgBus := bus.NewMessageBus()
+
+	// 3. 创建 MediaStore（媒体存储）
+	mediaStore := media.NewFileMediaStore()
+
+	// 4. 创建 ChannelManager
+	channelManager, err := channels.NewManager(
+		cfg,
+		msgBus,
+		mediaStore,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create channel manager: %w", err)
+	}
+
+	// 5. 启动所有频道
+	if err := channelManager.StartAll(ctx); err != nil {
+		return fmt.Errorf("failed to start channels: %w", err)
+	}
+
+	fmt.Println("All channels started successfully!")
+	fmt.Printf("Enabled channels: %v\n", channelManager.GetEnabledChannels())
+
+	// 6. 保持运行（等待 ctx 取消）
+	<-ctx.Done()
+
+	// 7. 停止所有频道
+	return channelManager.StopAll(ctx)
+}
