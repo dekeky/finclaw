@@ -238,7 +238,7 @@ export default function WeixinPage() {
         </div>
 
         {/* Enable Switch */}
-        <div className="flex items-center justify-between rounded-xl border border-border/60 bg-card px-6 py-4 shadow-sm shrink-0">
+        {/* <div className="flex items-center justify-between rounded-xl border border-border/60 bg-card px-6 py-4 shadow-sm shrink-0">
           <p className="text-sm font-medium">启用频道</p>
           <Switch
             checked={settings.enabled}
@@ -247,7 +247,7 @@ export default function WeixinPage() {
               setIsDirty(true);
             }}
           />
-        </div>
+        </div> */}
 
         {/* WeChat Account Binding Card */}
         <div className="rounded-xl bg-card py-6 text-sm text-card-foreground shadow-sm ring-1 ring-foreground/10 shrink-0">
@@ -261,9 +261,8 @@ export default function WeixinPage() {
         </div>
 
         {/* Settings Card */}
-        <div className="rounded-xl bg-card py-6 text-sm text-card-foreground shadow-sm ring-1 ring-foreground/10">
+        {/* <div className="rounded-xl bg-card py-6 text-sm text-card-foreground shadow-sm ring-1 ring-foreground/10">
           <div className="divide-y divide-border/60 px-6 py-0">
-            {/* Allow From */}
             <div className="py-5">
               <div className="space-y-1">
                 <label className="text-sm font-medium">允许来源</label>
@@ -286,7 +285,6 @@ export default function WeixinPage() {
               </div>
             </div>
 
-            {/* HTTP Proxy */}
             <div className="py-5">
               <div className="space-y-1">
                 <label className="text-sm font-medium">HTTP 代理</label>
@@ -303,17 +301,17 @@ export default function WeixinPage() {
               />
             </div>
           </div>
-        </div>
+        </div> */}
 
         {/* Footer Buttons */}
-        <div className="flex justify-end gap-2 border-t border-border/60 pt-4 shrink-0">
+        {/* <div className="flex justify-end gap-2 border-t border-border/60 pt-4 shrink-0">
           <Button variant="outline" onClick={handleReset} disabled={!isDirty}>
             重置
           </Button>
           <Button onClick={handleSave} disabled={!isDirty}>
             保存
           </Button>
-        </div>
+        </div> */}
       </div>
     </div>
   );
