@@ -9,6 +9,8 @@ import * as React from 'react';
 import { useNavigationGuard } from '../state/navigationGuard';
 
 import { FinclawMark } from '@/components/FinclawMark';
+import { PanelResizeHandle } from '@/components/PanelResizeHandle';
+import type { HorizontalResizeHandleProps } from '@/hooks/useHorizontalResize';
 import {
   Sidebar,
   SidebarContent,
@@ -43,11 +45,16 @@ function isNavActive(currentPath: string, url: string): boolean {
   return currentPath === url || currentPath.startsWith(`${url}/`);
 }
 
-export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+export function AppSidebar({
+  panelResize,
+  ...props
+}: React.ComponentProps<typeof Sidebar> & {
+  panelResize?: HorizontalResizeHandleProps;
+}) {
   const location = useLocation();
   const navigate = useNavigate();
   const currentPath = location.pathname;
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, open, setOpenMobile } = useSidebar();
   const { confirmNavigation } = useNavigationGuard();
 
   const closeMobile = React.useCallback(() => {
@@ -77,7 +84,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       className="border-r border-sidebar-border/70 bg-sidebar"
       collapsible="offcanvas"
     >
-      <div className="flex h-full min-h-0 flex-col">
+      <div className="relative flex h-full min-h-0 flex-col">
         <div className="flex shrink-0 items-center px-2 pt-3 pb-2">
           <SidebarTrigger className="size-8 text-muted-foreground" />
         </div>
@@ -156,6 +163,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <SidebarFooter className="shrink-0 border-t border-sidebar-border/60 p-1">
           <SidebarUserBlock />
         </SidebarFooter>
+        {!isMobile && open && panelResize ? <PanelResizeHandle {...panelResize} /> : null}
       </div>
       <SidebarRail />
     </Sidebar>

@@ -11,6 +11,9 @@ import (
 
 var ErrConnectionClosed = errors.New("connection closed")
 
+// DefaultSessionBufferMaxSize is the ring buffer capacity per session when reconnecting.
+const DefaultSessionBufferMaxSize = 2000
+
 type CachedMessage struct {
 	ID        string
 	Content   string
@@ -30,7 +33,7 @@ type SessionBuffer struct {
 
 func NewSessionBuffer(maxSize int) *SessionBuffer {
 	if maxSize <= 0 {
-		maxSize = 200
+		maxSize = DefaultSessionBufferMaxSize
 	}
 	return &SessionBuffer{
 		messages: make([]*CachedMessage, maxSize),

@@ -163,6 +163,12 @@
   height: 100svh;
 }
 
+/* 拖拽调宽时关闭侧栏 width 过渡，避免不跟手 */
+[data-sidebar-resizing] [data-slot="sidebar-gap"],
+[data-sidebar-resizing] [data-slot="sidebar-container"] {
+  transition: none !important;
+}
+
 @keyframes shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
@@ -215,4 +221,10 @@
 
 .fc-process-active {
   animation: fc-process-breathe 2.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fc-process-active {
+    animation: none;
+  }
 }

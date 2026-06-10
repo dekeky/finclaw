@@ -266,7 +266,6 @@ const DOC_DOCK_CSS = `
 /* ─── 目录侧边栏 ─── */
 .doc-dock-toc-sidebar {
   flex-shrink: 0;
-  width: 220px;
   border-right: 1px solid var(--border);
   background: color-mix(in oklch, var(--muted) 40%, var(--card));
   display: flex;
@@ -406,7 +405,6 @@ const DOC_DOCK_CSS = `
   top: 0;
   left: 0;
   bottom: 0;
-  width: min(280px, 86%);
   display: flex;
   flex-direction: column;
   overflow: hidden;

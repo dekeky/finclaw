@@ -106,7 +106,7 @@ func (fchannel *FinClawChannel) getSessionBuffer(sessionID string) *SessionBuffe
 	defer fchannel.bufMu.Unlock()
 	buf, ok := fchannel.sessionBufs[sessionID]
 	if !ok {
-		buf = NewSessionBuffer(200)
+		buf = NewSessionBuffer(DefaultSessionBufferMaxSize)
 		fchannel.sessionBufs[sessionID] = buf
 	}
 	return buf
