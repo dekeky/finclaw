@@ -1,4 +1,4 @@
-﻿import { useRef, useLayoutEffect, useState, type Ref } from 'react';
+﻿import { useRef, useLayoutEffect, useState, type ReactNode, type Ref } from 'react';
 import {
   IconBrowser,
   IconChevronRight,
@@ -8,26 +8,31 @@ import {
   IconSearch,
   IconSparkles,
   IconTerminal2,
+  IconTimeline,
   IconTool,
   IconWorld,
   IconWriting,
 } from '@tabler/icons-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { ChatMessage, ProcessSegment } from '../types';
-import { formatElapsedSeconds } from '../hooks/useElapsedSeconds';
 import { MarkdownContent } from './MarkdownContent';
 import { isPicoclawToolFeedbackContent } from '../utils/foldPicoclawToolFeedback';
 import { getProcessSegments, isProcessMessage } from '../utils/foldProcessMessages';
 import {
-  flattenProcessSteps,
   formatToolFeedback,
   groupProcessSegmentsIntoActions,
   splitProcessParts,
-  summarizeProcessSegments,
+  summarizeProcessPreview,
   type ProcessActionGroup,
   type ToolIconName,
 } from '../utils/formatProcessDisplay';
 import { splitAssistantContent } from '../utils/splitAssistantContent';
-import { ThinkingIndicator, ThinkingIndicatorShell, PROCESS_PANEL_SHELL_CLASS } from './ThinkingIndicator';
+import {
+  ElapsedTimeBadge,
+  ThinkingIndicator,
+  ThinkingIndicatorShell,
+  PROCESS_PANEL_SHELL_CLASS,
+} from './ThinkingIndicator';
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -128,6 +133,57 @@ function ToolItem({ content, bordered }: { content: string; bordered?: boolean }
   );
 }
 
+const PROCESS_STAT_ICON_CLASS = 'size-2.5 text-violet-600 dark:text-violet-400';
+
+function ProcessStatIconBadge({
+  tooltip,
+  icon,
+  count,
+  className = 'border-violet-500/20 bg-background',
+}: {
+  tooltip: string;
+  icon: ReactNode;
+  count: number;
+  className?: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={`inline-flex items-center gap-0.5 rounded-md border px-1.5 py-0.5 ${className}`}
+          tabIndex={0}
+        >
+          {icon}
+          <span className="text-[10px] font-medium text-foreground/80">{count}</span>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" sideOffset={4}>{tooltip}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function ProcessScrollContainer({
+  scrollRef,
+  onScroll,
+  className = '',
+  children,
+}: {
+  scrollRef?: Ref<HTMLDivElement>;
+  onScroll?: () => void;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      className={`fc-process-scroll max-h-[min(320px,50vh)] overflow-y-auto overflow-x-hidden scroll-smooth [scrollbar-gutter:stable] ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
 function ToolGroupBody({ items }: { items: string[] }) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -211,11 +267,7 @@ function ProcessStreamBody({
   const actions = groupProcessSegmentsIntoActions(segments);
 
   return (
-    <div
-      ref={scrollRef}
-      onScroll={onScroll}
-      className={`max-h-[min(320px,50vh)] overflow-y-auto overflow-x-hidden scroll-smooth [scrollbar-gutter:stable] ${className}`}
-    >
+    <ProcessScrollContainer scrollRef={scrollRef} onScroll={onScroll} className={className}>
       {actions.length === 0 ? null : (
         <div className="flex flex-col gap-3">
           {actions.map((action, idx) => (
@@ -229,7 +281,7 @@ function ProcessStreamBody({
           ))}
         </div>
       )}
-    </div>
+    </ProcessScrollContainer>
   );
 }
 
@@ -303,20 +355,21 @@ function AgentProcessPanel({
   segments,
   messageId,
   taskElapsedSeconds,
-  taskElapsedCompleted,
+  completed = false,
 }: {
   segments: ProcessSegment[];
   messageId: string;
   taskElapsedSeconds?: number;
-  taskElapsedCompleted?: boolean;
+  completed?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const userPinnedRef = useRef(false);
   const [open, setOpen] = useState(false);
   const contentKey = segments.map((s) => s.content).join('\u0000');
-  const steps = flattenProcessSteps(segments);
-  const thoughtCount = steps.filter((s) => s.type === 'thought').length;
-  const toolCount = steps.filter((s) => s.type === 'tool').length;
+  const actions = groupProcessSegmentsIntoActions(segments);
+  const actionCount = actions.length;
+  const thoughtCount = actions.reduce((n, a) => n + a.thoughts.length, 0);
+  const toolCount = actions.reduce((n, a) => n + a.tools.length, 0);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -351,25 +404,32 @@ function AgentProcessPanel({
           stroke={2}
         />
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-violet-700/90 dark:text-violet-300/90">
-          {summarizeProcessSegments(segments)}
+          {completed ? '工作过程' : summarizeProcessPreview(segments)}
         </span>
         <div className="flex shrink-0 items-center gap-1.5">
+          {actionCount > 0 && (
+            <ProcessStatIconBadge
+              tooltip={`行动轮次：${actionCount}`}
+              count={actionCount}
+              icon={<IconTimeline className={PROCESS_STAT_ICON_CLASS} stroke={1.75} aria-hidden />}
+            />
+          )}
           {thoughtCount > 0 && (
-            <span className="inline-flex items-center gap-0.5 rounded-md border border-violet-500/20 bg-background px-1.5 py-0.5 text-[10px] font-medium text-foreground/80">
-              <IconSparkles className="size-2.5 text-violet-600 dark:text-violet-400" stroke={1.75} aria-hidden />
-              {thoughtCount}
-            </span>
+            <ProcessStatIconBadge
+              tooltip={`思考步数：${thoughtCount}`}
+              count={thoughtCount}
+              icon={<IconSparkles className={PROCESS_STAT_ICON_CLASS} stroke={1.75} aria-hidden />}
+            />
           )}
           {toolCount > 0 && (
-            <span className="inline-flex items-center gap-0.5 rounded-md border border-violet-500/25 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-foreground/80">
-              <IconTool className="size-2.5 text-violet-600 dark:text-violet-400" stroke={1.75} aria-hidden />
-              {toolCount}
-            </span>
+            <ProcessStatIconBadge
+              tooltip={`工具调用：${toolCount}`}
+              count={toolCount}
+              icon={<IconTool className={PROCESS_STAT_ICON_CLASS} stroke={1.75} aria-hidden />}
+            />
           )}
-          {taskElapsedCompleted && taskElapsedSeconds !== undefined && (
-            <span className="text-xs font-medium text-violet-600/85 dark:text-violet-400/85">
-              {formatElapsedSeconds(taskElapsedSeconds)}
-            </span>
+          {taskElapsedSeconds !== undefined && (
+            <ElapsedTimeBadge seconds={taskElapsedSeconds} />
           )}
         </div>
       </button>
@@ -419,7 +479,7 @@ export function MessageBubble({
           segments={segments}
           messageId={`${message.id}-process`}
           taskElapsedSeconds={taskElapsedSeconds}
-          taskElapsedCompleted={taskElapsedCompleted}
+          completed={taskElapsedCompleted}
         />
         <span className="px-1 font-mono text-[10px] text-muted-foreground/60">{time}</span>
       </div>
@@ -437,14 +497,15 @@ export function MessageBubble({
           </div>
         ) : (
           <div className="flex w-full flex-col gap-2">
-            {thought && !processOutputActive && (
-              <AgentProcessPanel
-                segments={[{ type: 'thought', content: thought }]}
-                messageId={`${message.id}-thinking`}
-                taskElapsedSeconds={taskElapsedSeconds}
-                taskElapsedCompleted={taskElapsedCompleted}
-              />
-            )}
+            {!processOutputActive &&
+              (thought || (taskElapsedCompleted && taskElapsedSeconds !== undefined)) && (
+                <AgentProcessPanel
+                  segments={thought ? [{ type: 'thought', content: thought }] : []}
+                  messageId={`${message.id}-thinking`}
+                  taskElapsedSeconds={taskElapsedSeconds}
+                  completed={taskElapsedCompleted}
+                />
+              )}
             {body && (
               <div className="rounded-2xl rounded-tl-sm border border-border/60 bg-card px-4 py-3 text-[15px] leading-relaxed text-foreground">
                 {renderMarkdown(body, '-body')}

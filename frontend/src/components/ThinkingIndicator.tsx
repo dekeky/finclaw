@@ -1,6 +1,24 @@
-import { IconLoader2 } from '@tabler/icons-react';
+import { IconClock, IconLoader2 } from '@tabler/icons-react';
 
 import { formatElapsedSeconds } from '../hooks/useElapsedSeconds';
+
+/** 用时钟图标展示耗时（进行中 / 结束后共用） */
+export function ElapsedTimeBadge({
+  seconds,
+  className = '',
+}: {
+  seconds: number;
+  className?: string;
+}) {
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-0.5 rounded-md border border-violet-500/20 bg-background px-1.5 py-0.5 text-[10px] font-medium text-violet-600/85 dark:text-violet-400/85 ${className}`}
+    >
+      <IconClock className="size-2.5 shrink-0" stroke={1.75} aria-hidden />
+      {formatElapsedSeconds(seconds)}
+    </span>
+  );
+}
 
 interface ThinkingIndicatorProps {
   seconds?: number;
@@ -47,9 +65,7 @@ export function ThinkingIndicator({ seconds, statusLabel }: ThinkingIndicatorPro
         ))}
       </span>
       {seconds !== undefined && (
-        <span className="ml-auto shrink-0 text-xs font-medium text-violet-600/75 dark:text-violet-400/75">
-          {formatElapsedSeconds(seconds)}
-        </span>
+        <ElapsedTimeBadge seconds={seconds} className="ml-auto text-xs" />
       )}
     </div>
   );

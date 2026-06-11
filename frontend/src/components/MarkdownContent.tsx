@@ -91,28 +91,47 @@ export function MarkdownContent({
       code({ className: codeClassName, children, ...props }) {
         const match = /language-(\w+)/.exec(codeClassName || '');
         const code = String(children).replace(/\n$/, '');
-        const codeId = `${idPrefix}-${match ? match[1] : 'inline'}-${code.slice(0, 24)}`;
+        // react-markdown v10 移除了 inline 属性；无语言标记的围栏块需用换行判断
+        const isBlock = Boolean(match) || code.includes('\n');
+        const codeId = `${idPrefix}-${match ? match[1] : isBlock ? 'block' : 'inline'}-${code.slice(0, 24)}`;
 
-        if (match) {
-          const lang = match[1];
+        if (isBlock) {
+          const lang = match?.[1];
           return (
             <div className="not-prose my-3">
               <div className="group/code relative overflow-hidden rounded-lg border border-border/60 bg-muted/30 dark:bg-muted/50">
-                <div className="flex items-center justify-between border-b border-border/50 bg-muted/50 dark:bg-muted/70 px-3 py-1.5">
-                  <span className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground">{lang}</span>
+                <div
+                  className={cn(
+                    'flex items-center border-b border-border/50 bg-muted/50 px-3 py-1.5 dark:bg-muted/70',
+                    lang ? 'justify-between' : 'justify-end',
+                  )}
+                >
+                  {lang ? (
+                    <span className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground">
+                      {lang}
+                    </span>
+                  ) : null}
                   {copyableCode && (
                     <CopyCodeButton code={code} id={codeId} copied={copiedId === codeId} onCopy={handleCopy} />
                   )}
                 </div>
-                <Suspense
-                  fallback={
-                    <pre className="overflow-x-auto px-3.5 py-3 font-mono text-[13px] leading-relaxed">
-                      <code>{code}</code>
-                    </pre>
-                  }
-                >
-                  <CodeBlock code={code} lang={lang} dark={dark} />
-                </Suspense>
+                {lang ? (
+                  <Suspense
+                    fallback={
+                      <pre className="overflow-x-auto whitespace-pre px-3.5 py-3 font-mono text-[13px] leading-relaxed">
+                        <code>{code}</code>
+                      </pre>
+                    }
+                  >
+                    <CodeBlock code={code} lang={lang} dark={dark} />
+                  </Suspense>
+                ) : (
+                  <pre className="overflow-x-auto whitespace-pre px-3.5 py-3 font-mono text-[13px] leading-relaxed">
+                    <code className="bg-transparent p-0 font-normal text-foreground before:content-none after:content-none">
+                      {code}
+                    </code>
+                  </pre>
+                )}
               </div>
             </div>
           );

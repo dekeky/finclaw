@@ -391,6 +391,22 @@ export function flattenProcessSteps(segments: ProcessSegment[]): ProcessStep[] {
   return items;
 }
 
+/** 折叠标题：仅最新一步预览（统计数字由图标徽章展示） */
+export function summarizeProcessPreview(segments: ProcessSegment[]): string {
+  const actions = groupProcessSegmentsIntoActions(segments);
+  if (actions.length === 0) return '工作过程';
+
+  const lastAction = actions[actions.length - 1];
+  const latest =
+    lastAction.tools.length > 0
+      ? lastAction.tools[lastAction.tools.length - 1]
+      : lastAction.thoughts[lastAction.thoughts.length - 1];
+  if (!latest) return '工作过程';
+
+  const latestPrefix = latest.type === 'tool' ? '最新' : '当前';
+  return `${latestPrefix}：${latest.preview}`;
+}
+
 /** 生成折叠标题：统计 + 最新一步预览 */
 export function summarizeProcessSegments(segments: ProcessSegment[]): string {
   const actions = groupProcessSegmentsIntoActions(segments);
@@ -402,13 +418,8 @@ export function summarizeProcessSegments(segments: ProcessSegment[]): string {
   if (thoughtCount > 0) parts.push(`思考 ${thoughtCount} 步`);
   if (toolCount > 0) parts.push(`工具 ${toolCount} 次`);
 
-  const lastAction = actions[actions.length - 1];
-  const latest =
-    lastAction.tools.length > 0
-      ? lastAction.tools[lastAction.tools.length - 1]
-      : lastAction.thoughts[lastAction.thoughts.length - 1];
-  if (!latest) return parts.join(' · ');
+  const preview = summarizeProcessPreview(segments);
+  if (preview === '工作过程') return parts.join(' · ');
 
-  const latestPrefix = latest.type === 'tool' ? '最新' : '当前';
-  return `${parts.join(' · ')} — ${latestPrefix}：${latest.preview}`;
+  return `${parts.join(' · ')} — ${preview}`;
 }

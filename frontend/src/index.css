@@ -228,3 +228,27 @@
     animation: none;
   }
 }
+
+/* 思考过程滚动区：可见滚动条 */
+.fc-process-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(139 92 246 / 0.45) rgb(139 92 246 / 0.1);
+}
+
+.fc-process-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.fc-process-scroll::-webkit-scrollbar-track {
+  background: rgb(139 92 246 / 0.1);
+  border-radius: 4px;
+}
+
+.fc-process-scroll::-webkit-scrollbar-thumb {
+  background: rgb(139 92 246 / 0.45);
+  border-radius: 4px;
+}
+
+.fc-process-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(139 92 246 / 0.65);
+}

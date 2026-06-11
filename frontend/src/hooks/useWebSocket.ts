@@ -27,6 +27,8 @@ const MAX_RECONNECT = 5;
 const PING_INTERVAL = 30000;
 /** 长时间无助手回复时收起「正在思考」（避免一直转圈） */
 const TYPING_FALLBACK_MS = 120_000;
+/** 发送消息后等待服务端确认的超时时间；超时则判定连接已死并重连 */
+const SEND_CONFIRM_TIMEOUT = 10_000;
 
 function genId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
@@ -193,6 +195,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   const pingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const typingFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sendConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const urlRef = useRef<string | null>(url);
   /** 切换 Agent 后跳过首轮持久化，避免把上一 Agent 的消息写入新 Agent */
@@ -259,6 +262,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   /** 开启一次思考任务：写入起始时间戳并持久化，刷新后可恢复。 */
   const beginTask = useCallback(() => {
     const now = Date.now();
+    taskStartedAtRef.current = now;
     setTaskStartedAt(now);
     setCompletedTaskElapsedSec(null);
     if (persistAgentKeyRef.current) {
@@ -277,6 +281,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         saveLastTaskElapsed(persistAgentKeyRef.current, elapsed);
       }
     }
+    taskStartedAtRef.current = null;
     setTaskStartedAt(null);
     if (persistAgentKeyRef.current) {
       saveTaskStart(persistAgentKeyRef.current, null);
@@ -292,6 +297,10 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
+    if (sendConfirmTimerRef.current) {
+      clearTimeout(sendConfirmTimerRef.current);
+      sendConfirmTimerRef.current = null;
+    }
     if (pingTimerRef.current) clearInterval(pingTimerRef.current);
     pingTimerRef.current = null;
     connectingRef.current = false;
@@ -306,18 +315,29 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     }
   }, []);
 
+  const clearSendConfirm = useCallback(() => {
+    if (sendConfirmTimerRef.current) {
+      clearTimeout(sendConfirmTimerRef.current);
+      sendConfirmTimerRef.current = null;
+    }
+  }, []);
+
   const startPing = useCallback(() => {
     if (pingTimerRef.current) clearInterval(pingTimerRef.current);
     pingTimerRef.current = setInterval(() => {
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       ws.send(JSON.stringify({ type: 'ping', id: genId() }));
-      lastActivityRef.current = Date.now();
+      // 注意：不在发送 ping 时更新 lastActivityRef，否则活体检测失效。
+      // lastActivityRef 仅在收到服务端消息时更新（见 handleIncoming 入口），
+      // 确保"发得出但收不到"的幽灵连接能被正确识别。
     }, PING_INTERVAL);
   }, []);
 
   const handleIncoming = useCallback((msg: WSMessage) => {
     lastActivityRef.current = Date.now();
+    // 收到任何服务端消息 → 连接存活，清除发送确认超时
+    clearSendConfirm();
     const clearTypingFallback = () => {
       if (typingFallbackRef.current) {
         clearTimeout(typingFallbackRef.current);
@@ -475,7 +495,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         break;
       }
     }
-  }, [beginTask, endTask, applySessionId, getCurrentSessionId]);
+  }, [beginTask, endTask, applySessionId, getCurrentSessionId, clearSendConfirm]);
 
   const connect = useCallback(() => {
     const target = urlRef.current;
@@ -630,6 +650,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       clearTimeout(typingFallbackRef.current);
       typingFallbackRef.current = null;
     }
+    clearSendConfirm();
     setIsTyping(false);
     setMessages([]);
     if (persistAgentKey) {
@@ -641,7 +662,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       clearDraft(persistAgentKey);
       saveLastTaskElapsed(persistAgentKey, null);
     }
-  }, [persistAgentKey, endTask, setSessionForAgent]);
+  }, [persistAgentKey, endTask, setSessionForAgent, clearSendConfirm]);
 
   const restoreMessages = useCallback(
     (msgs: ChatMessage[]) => {
@@ -649,6 +670,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         clearTimeout(typingFallbackRef.current);
         typingFallbackRef.current = null;
       }
+      clearSendConfirm();
       setIsTyping(false);
       setSendError(null);
       endTask();
@@ -659,7 +681,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         skipPersistRef.current = true;
       }
     },
-    [persistAgentKey, endTask],
+    [persistAgentKey, endTask, clearSendConfirm],
   );
 
   const reconnect = useCallback(() => {
@@ -683,8 +705,9 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       if (lastActivityRef.current === 0) return;
       const silence = Date.now() - lastActivityRef.current;
-      // 阈值设为 ping 间隔的 4 倍（~120s），给 pong 响应足够余量
-      if (silence > PING_INTERVAL * 4) {
+      // 阈值设为 ping 间隔的 2 倍（~60s）：lastActivityRef 仅在收到消息时更新，
+      // 因此超过 60s 无响应即可确认连接已死
+      if (silence > PING_INTERVAL * 2) {
         console.warn('[Finclaw WS] No activity for', Math.round(silence / 1000), 's, reconnecting');
         reconnect();
       }
@@ -729,8 +752,17 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       };
       console.log('[Finclaw WS] Sending:', JSON.stringify(msg));
       ws.send(JSON.stringify(msg));
+
+      // 发送确认超时：如果在 SEND_CONFIRM_TIMEOUT 内没收到任何服务端响应，
+      // 判定连接已死（幽灵连接），主动重连。
+      clearSendConfirm();
+      sendConfirmTimerRef.current = setTimeout(() => {
+        sendConfirmTimerRef.current = null;
+        console.warn('[Finclaw WS] No server response after send within', SEND_CONFIRM_TIMEOUT / 1000, 's, reconnecting');
+        reconnect();
+      }, SEND_CONFIRM_TIMEOUT);
     },
-    [beginTask, applySessionId, getCurrentSessionId]
+    [beginTask, applySessionId, getCurrentSessionId, reconnect, clearSendConfirm]
   );
 
   const stop = useCallback(() => {
@@ -738,9 +770,10 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       clearTimeout(typingFallbackRef.current);
       typingFallbackRef.current = null;
     }
+    clearSendConfirm();
     setIsTyping(false);
     endTask();
-  }, [endTask]);
+  }, [endTask, clearSendConfirm]);
 
   // url 变更或挂载/卸载时：重置连接；若有 persistAgentKey 则从本地恢复该 Agent 草稿
   useEffect(() => {
@@ -819,11 +852,12 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   }, [messages, persistAgentKey]);
 
   // visibilitychange: when tab becomes visible again, reconnect if connection is dead.
-  // For phantom connections (WS appears OPEN but TCP is half-open), send a probe
-  // ping first and only reconnect if no pong arrives within a short timeout.
+  // 幽灵连接检测：移动端 OS 切后台时会杀死 TCP 但 WebSocket 对象仍显示 OPEN，
+  // 此时 lastActivityRef（仅在收到消息时更新）能正确反映真实连通性。
+  // 超过 10 秒没有收到服务端消息即判定为死连接，直接重连。
+  // 误判代价极低（一次不必要重连 ≈ 50ms 握手 + 缓存消息去重重放），
+  // 但漏判代价极高（用户消息静默丢失，对话续不上）。
   useEffect(() => {
-    let probeTimer: ReturnType<typeof setTimeout> | null = null;
-
     const handleVisibilityChange = () => {
       if (document.visibilityState !== 'visible') return;
       const ws = wsRef.current;
@@ -831,26 +865,48 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         reconnect();
         return;
       }
-      // WS appears OPEN but may be a phantom connection after network change.
-      // Send a JSON-level ping to verify liveness — if no activity within 5s, reconnect.
       const silence = Date.now() - lastActivityRef.current;
-      if (lastActivityRef.current > 0 && silence > PING_INTERVAL + 10_000) {
-        console.log('[Finclaw WS] Possible phantom connection (silent for', Math.round(silence / 1000), 's), probing...');
-        ws.send(JSON.stringify({ type: 'ping', id: genId() }));
-        probeTimer = setTimeout(() => {
-          // If lastActivityRef was not updated (no pong received), the connection is dead
-          if (Date.now() - lastActivityRef.current > PING_INTERVAL) {
-            console.log('[Finclaw WS] Probe failed, reconnecting');
-            reconnect();
-          }
-        }, 5000);
+      if (lastActivityRef.current > 0 && silence > 10_000) {
+        console.log('[Finclaw WS] No server activity for', Math.round(silence / 1000), 's on resume, reconnecting');
+        reconnect();
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      if (probeTimer) clearTimeout(probeTimer);
+    };
+  }, [reconnect]);
+
+  // 移动端生命周期事件：补充 visibilitychange 无法覆盖的场景。
+  // - resume: iOS Safari 冻结页面后恢复时触发，部分 iOS 版本上 visibilitychange 可能延迟
+  // - pageshow(persisted): 从 BFCache 恢复的页面，旧 WebSocket 对象必然已死
+  // - online: 网络从断开到恢复（电梯、飞行模式等）
+  useEffect(() => {
+    const handleResume = () => {
+      console.log('[Finclaw WS] Page resumed (lifecycle), reconnecting');
+      reconnect();
+    };
+
+    const handlePageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) {
+        console.log('[Finclaw WS] Page restored from BFCache, reconnecting');
+        reconnect();
+      }
+    };
+
+    const handleOnline = () => {
+      console.log('[Finclaw WS] Network back online, reconnecting');
+      reconnect();
+    };
+
+    document.addEventListener('resume', handleResume);
+    window.addEventListener('pageshow', handlePageShow);
+    window.addEventListener('online', handleOnline);
+    return () => {
+      document.removeEventListener('resume', handleResume);
+      window.removeEventListener('pageshow', handlePageShow);
+      window.removeEventListener('online', handleOnline);
     };
   }, [reconnect]);
 
