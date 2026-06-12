@@ -507,7 +507,7 @@ export function MessageBubble({
                 />
               )}
             {body && (
-              <div className="rounded-2xl rounded-tl-sm border border-border/60 bg-card px-4 py-3 text-[15px] leading-relaxed text-foreground">
+              <div className="min-w-0 max-w-full overflow-hidden rounded-2xl rounded-tl-sm border border-border/60 bg-card px-4 py-3 text-[15px] leading-relaxed text-foreground">
                 {renderMarkdown(body, '-body')}
               </div>
             )}

@@ -20,6 +20,8 @@ export default function CodeBlock({ code, lang, dark }: CodeBlockProps) {
         fontSize: '13px',
         lineHeight: 1.55,
         background: 'transparent',
+        overflowX: 'auto',
+        maxWidth: '100%',
       }}
       codeTagProps={{
         style: {

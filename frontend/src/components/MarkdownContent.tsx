@@ -98,8 +98,8 @@ export function MarkdownContent({
         if (isBlock) {
           const lang = match?.[1];
           return (
-            <div className="not-prose my-3">
-              <div className="group/code relative overflow-hidden rounded-lg border border-border/60 bg-muted/30 dark:bg-muted/50">
+            <div className="not-prose my-3 max-w-full min-w-0">
+              <div className="group/code relative max-w-full min-w-0 overflow-x-auto rounded-lg border border-border/60 bg-muted/30 dark:bg-muted/50">
                 <div
                   className={cn(
                     'flex items-center border-b border-border/50 bg-muted/50 px-3 py-1.5 dark:bg-muted/70',
@@ -160,8 +160,8 @@ export function MarkdownContent({
       },
       table({ children }) {
         return (
-          <div className="not-prose my-4 overflow-x-auto rounded-lg border border-border/60">
-            <table className="w-full border-collapse text-[13px]">{children}</table>
+          <div className="not-prose my-4 max-w-full min-w-0 overflow-x-auto rounded-lg border border-border/60">
+            <table className="w-max min-w-full border-collapse text-[13px]">{children}</table>
           </div>
         );
       },
@@ -243,7 +243,8 @@ export function MarkdownContent({
   return (
     <div
       className={cn(
-        'markdown-body prose max-w-none break-words dark:prose-invert',
+        'markdown-body prose max-w-none min-w-0 w-full break-words [overflow-wrap:anywhere] dark:prose-invert',
+        '[&_pre]:max-w-full [&_pre]:overflow-x-auto',
         'prose-headings:scroll-mt-20 prose-headings:font-semibold prose-headings:tracking-tight',
         compact ? 'prose-p:my-0.5 prose-p:leading-snug' : 'prose-p:my-2 prose-p:leading-relaxed',
         'prose-pre:bg-transparent prose-pre:p-0',

@@ -262,6 +262,13 @@ const DOC_DOCK_CSS = `
   min-width: 0;
   flex: 1;
 }
+.doc-dock-scroll [data-slot="scroll-area-viewport"] {
+  overflow-x: hidden !important;
+}
+.doc-dock-scroll [data-slot="scroll-area-viewport"] > div {
+  min-width: 0 !important;
+  max-width: 100%;
+}
 
 /* ─── 目录侧边栏 ─── */
 .doc-dock-toc-sidebar {
@@ -367,14 +374,21 @@ const DOC_DOCK_CSS = `
 /* ─── 阅读区：舒适行宽 + 长词换行 ─── */
 .doc-dock-article {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   margin-inline: auto;
   box-sizing: border-box;
 }
 .doc-reading-prose {
+  max-width: 100%;
+  min-width: 0;
   word-break: break-word;
   overflow-wrap: anywhere;
 }
 .doc-reading-prose :is(pre, table, img, video, iframe) {
+  max-width: 100%;
+}
+.doc-reading-prose :is(.group\\/code, pre, .markdown-body > div) {
   max-width: 100%;
 }
 
