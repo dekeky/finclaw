@@ -10,6 +10,8 @@ const BacktestPage = lazy(() => import('./pages/BacktestPage'));
 const ChatPage = lazy(() => import('./pages/ChatPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const NewsPage = lazy(() => import('./pages/NewsPage'));
+const WeixinPage = lazy(() => import('./pages/WeixinPage'));
+
 function AuthLoading() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
@@ -57,6 +59,7 @@ export default function App() {
             <Route path="/agents" element={<AgentsPage />} />
             <Route path="/agents/market" element={<AgentMarketPage />} />
             <Route path="/backtest" element={<BacktestPage />} />
+            <Route path="/weixin" element={<WeixinPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Routes>

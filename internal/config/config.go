@@ -12,8 +12,71 @@ import (
 
 var finclawConf *FinclawConfig
 
+// SecureString wraps a sensitive string value
+type SecureString struct {
+	value string
+}
+
+func (s *SecureString) String() string {
+	return s.value
+}
+
+func NewSecureString(value string) *SecureString {
+	return &SecureString{value: value}
+}
+
+// WeixinSettings 微信配置
+type WeixinSettings struct {
+	Token      string `toml:"token" json:"token"`
+	AccountID  string `toml:"account_id" json:"account_id"`
+	BaseURL    string `toml:"base_url" json:"base_url"`
+	CDNBaseURL string `toml:"cdn_base_url" json:"cdn_base_url"`
+	Proxy      string `toml:"proxy" json:"proxy"`
+}
+
+// GetToken returns token as SecureString
+func (c *WeixinSettings) GetToken() SecureString {
+	return SecureString{value: c.Token}
+}
+
+func (c *WeixinSettings) SetToken(token string) {
+	c.Token = token
+}
+
 type FinclawConfig struct {
 	*FinclawConfigServer
+}
+
+const (
+	ChannelWeixin = "weixin"
+)
+
+// ChannelConfig 渠道配置（用于工厂模式）
+type ChannelConfig struct {
+	ChannelName        string   `toml:"channel_name"`
+	Enabled           bool   `toml:"enabled"`
+	AllowFrom         []string `toml:"allow_from"`
+	ReasoningChannelID string   `toml:"reasoning_channel_id"`
+	Weixin            *WeixinSettings `toml:"weixin"`
+}
+
+// GetChannelName 返回渠道名称
+func (c *ChannelConfig) GetChannelName() string {
+	return c.ChannelName
+}
+
+// GetDecoded 返回解码后的配置
+func (c *ChannelConfig) GetDecoded() (any, error) {
+	if c.Weixin != nil {
+		return c.Weixin, nil
+	}
+	return nil, errors.New("channel config has no extended settings")
+}
+
+// Channel 渠道配置接口（用于工厂模式）
+type Channel interface {
+	Name() string
+	GetDecoded() (any, error)
 }
 
 type FinclawConfigServer struct {
@@ -21,6 +84,7 @@ type FinclawConfigServer struct {
 	RSSServerAddr       string                    `toml:"rssServerAddr"`
 	AgentHubAddr       string                    `toml:"agentHubAddr"`
 	FinClawChannelConf *finclaw.FinChannelConfig `toml:"finClawChannel"`
+	Channels           map[string]*ChannelConfig `toml:"channels"`
 }
 
 func (c *FinclawConfig) Save() error {
@@ -32,7 +96,8 @@ func (c *FinclawConfig) Save() error {
 	if !exists {
 		os.MkdirAll(filepath.Dir(configPath), 0755)
 	}
-	return tomlEncodeFile(configPath, c.FinclawConfigServer)
+	// Encode the entire FinclawConfig including channels
+	return tomlEncodeFile(configPath, c)
 }
 
 func init() {
@@ -42,8 +107,13 @@ func init() {
 		panic(err)
 	}
 
-	if err := finclawConf.Save(); err != nil {
-		panic(err)
+	// Only save if file doesn't exist
+	configPath := finConfigPath()
+	exists, _ := pathExists(configPath)
+	if !exists {
+		if err := finclawConf.Save(); err != nil {
+			panic(err)
+		}
 	}
 }
 
