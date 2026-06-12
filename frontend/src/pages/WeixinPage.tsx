@@ -2,8 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { fetchQrcode, fetchQrcodeStatus, saveQrcodeToLocal, getLocalQrcode, clearLocalQrcode, saveBoundBotId, getLocalBoundBotId, saveWeixinSettings } from '@/api/weixin';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
 
 type BindStatus = 'idle' | 'loading' | 'binding' | 'scaned' | 'bound' | 'expired' | 'error';
 
@@ -26,9 +24,6 @@ export default function WeixinPage() {
     proxy: '',
     boundBotId: '',
   });
-  const [allowFromInput, setAllowFromInput] = useState('');
-  const [isDirty, setIsDirty] = useState(false);
-
   // 初始化：检查本地存储的绑定状态
   useEffect(() => {
     const savedBoundBotId = getLocalBoundBotId();
@@ -114,21 +109,6 @@ export default function WeixinPage() {
     setSettings(prev => ({ ...prev, boundBotId: '' }));
     clearLocalQrcode();
     void loadQrcode();
-  };
-
-  const handleSave = () => {
-    setIsDirty(false);
-  };
-
-  const handleReset = () => {
-    setSettings({
-      enabled: true,
-      allowFrom: [],
-      proxy: '',
-      boundBotId: '',
-    });
-    setAllowFromInput('');
-    setIsDirty(false);
   };
 
   const renderBindContent = () => {

@@ -49,10 +49,8 @@ type WeixinChannel struct {
 	pendingRepliesMu sync.Mutex
 	pendingReplies   map[string][]OutboundMessage // key = userID
 
-	// finclawForwardCh forwards non-weixin outbound messages to the finclaw channel.
-	// This avoids two goroutines consuming from msgBus.OutboundChan() which would
-	// cause messages to be randomly lost.
-	finclawForwardCh chan bus.OutboundMessage
+	// outboundCh receives weixin-tagged replies from the agent outbound dispatcher.
+	outboundCh chan bus.OutboundMessage
 }
 
 // GetMediaStore 返回媒体存储
@@ -108,11 +106,9 @@ func (c *WeixinChannel) SetRunning(running bool) {
 	c.running.Store(running)
 }
 
-// SetFinclawForwardCh sets the channel for forwarding non-weixin outbound messages
-// to the finclaw channel. This is necessary to avoid two goroutines consuming from
-// msgBus.OutboundChan(), which would cause messages to be randomly lost.
-func (c *WeixinChannel) SetFinclawForwardCh(ch chan bus.OutboundMessage) {
-	c.finclawForwardCh = ch
+// SetOutboundCh wires the weixin delivery queue from AgentManager's outbound dispatcher.
+func (c *WeixinChannel) SetOutboundCh(ch chan bus.OutboundMessage) {
+	c.outboundCh = ch
 }
 
 // ============ 生命周期管理 ============
@@ -550,14 +546,11 @@ func buildSessionKey(chatID string) string {
 	return fmt.Sprintf("weixin:%s", chatID)
 }
 
-// processOutboundLoop 处理出站消息循环
-// 从消息总线读取出站消息并发送给微信用户
-// 注意: 这是 msgBus.OutboundChan() 的唯一消费者。
-// 非微信消息会被转发到 finclawForwardCh 供 finclaw 频道处理，
-// 以避免多个 goroutine 从同一个 channel 读取导致消息随机丢失。
+// processOutboundLoop delivers agent replies to WeChat users.
+// Messages arrive via outboundCh (routed by AgentManager's outbound dispatcher).
 func (c *WeixinChannel) processOutboundLoop(ctx context.Context) {
-	if c.msgBus == nil {
-		logger.WarnCF("weixin", "msgBus is nil, cannot process outbound messages", nil)
+	if c.outboundCh == nil {
+		logger.WarnCF("weixin", "outbound queue not configured, cannot deliver replies", nil)
 		return
 	}
 
@@ -567,89 +560,75 @@ func (c *WeixinChannel) processOutboundLoop(ctx context.Context) {
 		case <-ctx.Done():
 			logger.InfoCF("weixin", "Outbound message processor stopped", nil)
 			return
-		case outboundMsg, ok := <-c.msgBus.OutboundChan():
+		case outboundMsg, ok := <-c.outboundCh:
 			if !ok {
-				logger.InfoCF("weixin", "Outbound channel closed", nil)
+				logger.InfoCF("weixin", "Outbound queue closed", nil)
 				return
 			}
-			logger.InfoCF("weixin", "Processing outbound message", map[string]any{
-				"channel":     outboundMsg.Channel,
-				"chat_id":     outboundMsg.ChatID,
-				"kind":        outboundMsg.Context.Raw["message_kind"],
-				"content_len": len(outboundMsg.Content),
+			c.deliverOutbound(ctx, outboundMsg)
+		}
+	}
+}
+
+func (c *WeixinChannel) deliverOutbound(ctx context.Context, outboundMsg bus.OutboundMessage) {
+	logger.InfoCF("weixin", "Processing outbound message", map[string]any{
+		"channel":     outboundMsg.Channel,
+		"chat_id":     outboundMsg.ChatID,
+		"kind":        outboundMsg.Context.Raw["message_kind"],
+		"content_len": len(outboundMsg.Content),
+	})
+
+	kind := outboundMsg.Context.Raw["message_kind"]
+	if kind == "typing_start" {
+		if stopFn, ok := c.typingStops.LoadAndDelete(outboundMsg.ChatID); ok {
+			if cancel, ok := stopFn.(func()); ok {
+				cancel()
+			}
+		}
+		stopTyping, err := c.StartTyping(ctx, outboundMsg.ChatID)
+		if err != nil {
+			logger.WarnCF("weixin", "Failed to start typing (from hook)", map[string]any{
+				"chat_id": outboundMsg.ChatID,
+				"error":   err.Error(),
 			})
-
-			// 非微信消息转发给 finclaw 频道处理
-			if outboundMsg.Channel != "weixin" {
-				if c.finclawForwardCh != nil {
-					select {
-					case c.finclawForwardCh <- outboundMsg:
-					default:
-						logger.WarnCF("weixin", "Finclaw outbound channel full, dropping message", map[string]any{
-							"channel": outboundMsg.Channel,
-							"chat_id": outboundMsg.ChatID,
-						})
-					}
-				}
-				continue
-			}
-
-			// 处理 typing 指示器
-			kind := outboundMsg.Context.Raw["message_kind"]
-			if kind == "typing_start" {
-				// 停止之前的 typing（如果有）
-				if stopFn, ok := c.typingStops.LoadAndDelete(outboundMsg.ChatID); ok {
-					if cancel, ok := stopFn.(func()); ok {
-						cancel()
-					}
-				}
-				stopTyping, err := c.StartTyping(ctx, outboundMsg.ChatID)
-				if err != nil {
-					logger.WarnCF("weixin", "Failed to start typing (from hook)", map[string]any{
-						"chat_id": outboundMsg.ChatID,
-						"error":   err.Error(),
-					})
-				} else {
-					c.typingStops.Store(outboundMsg.ChatID, stopTyping)
-					logger.InfoCF("weixin", "Typing started (from hook)", map[string]any{
-						"chat_id": outboundMsg.ChatID,
-					})
-				}
-				continue
-			} else if kind == "typing_stop" {
-				if stopFn, ok := c.typingStops.LoadAndDelete(outboundMsg.ChatID); ok {
-					if cancel, ok := stopFn.(func()); ok {
-						cancel()
-						logger.InfoCF("weixin", "Typing stopped (from hook)", map[string]any{
-							"chat_id": outboundMsg.ChatID,
-						})
-					}
-				}
-				continue
-			}
-
-			// 有实际消息要发送时，先停止 typing 状态
-			if stopFn, ok := c.typingStops.LoadAndDelete(outboundMsg.ChatID); ok {
-				if cancel, ok := stopFn.(func()); ok {
-					cancel()
-					logger.InfoCF("weixin", "Typing stopped before sending message", map[string]any{
-						"chat_id": outboundMsg.ChatID,
-					})
-				}
-			}
-
-			// 发送消息给微信用户
-			if _, err := c.Send(ctx, OutboundMessage{
-				Channel: outboundMsg.Channel,
-				ChatID:  outboundMsg.ChatID,
-				Content: outboundMsg.Content,
-			}); err != nil {
-				logger.ErrorCF("weixin", "Failed to send outbound message", map[string]any{
+		} else {
+			c.typingStops.Store(outboundMsg.ChatID, stopTyping)
+			logger.InfoCF("weixin", "Typing started (from hook)", map[string]any{
+				"chat_id": outboundMsg.ChatID,
+			})
+		}
+		return
+	}
+	if kind == "typing_stop" {
+		if stopFn, ok := c.typingStops.LoadAndDelete(outboundMsg.ChatID); ok {
+			if cancel, ok := stopFn.(func()); ok {
+				cancel()
+				logger.InfoCF("weixin", "Typing stopped (from hook)", map[string]any{
 					"chat_id": outboundMsg.ChatID,
-					"error":   err.Error(),
 				})
 			}
 		}
+		return
+	}
+
+	if stopFn, ok := c.typingStops.LoadAndDelete(outboundMsg.ChatID); ok {
+		if cancel, ok := stopFn.(func()); ok {
+			cancel()
+			logger.InfoCF("weixin", "Typing stopped before sending message", map[string]any{
+				"chat_id": outboundMsg.ChatID,
+			})
+		}
+	}
+
+	if _, err := c.Send(ctx, OutboundMessage{
+		Channel: outboundMsg.Channel,
+		ChatID:  outboundMsg.ChatID,
+		Content: outboundMsg.Content,
+	}); err != nil {
+		logger.ErrorCF("weixin", "Failed to send outbound message", map[string]any{
+			"chat_id": outboundMsg.ChatID,
+			"error":   err.Error(),
+		})
 	}
 }
 

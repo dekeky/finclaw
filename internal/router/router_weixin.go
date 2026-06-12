@@ -38,11 +38,12 @@ var authManager = newWeixinAuthManager()
 
 // weixinRouter 配置微信相关路由
 func (fr *FinClawRouter) weixinRouter() {
-	// 获取配置中的 Weixin Settings（从 channels 配置中获取第一个已启用的微信配置）
 	weixinCfg := fr.getWeixinConfig()
 	if weixinCfg == nil {
-		log.Println("⚠️ No weixin config found, skipping weixin routes")
-		return
+		log.Println("⚠️ No weixin config found, using defaults for QR login routes")
+		weixinCfg = &finclawconfig.WeixinSettings{
+			BaseURL: "https://ilinkai.weixin.qq.com/",
+		}
 	}
 
 	// 创建临时的 ApiClient 用于获取二维码（不依赖 msgBus）
@@ -288,6 +289,11 @@ func (fr *FinClawRouter) makeSaveWeixinSettingsHandler() gin.HandlerFunc {
 
 		log.Printf("✅ Weixin settings saved: token=%s, account_id=%s, enabled=%v",
 			settings.Token, settings.AccountID, settings.Enabled)
+
+		// Restart polling so the new bot token takes effect without a full server restart.
+		if fr.agentManager != nil {
+			fr.agentManager.ReloadWeixinChannels(fr.finclawConf)
+		}
 
 		c.JSON(http.StatusOK, gin.H{"message": "settings saved"})
 	}

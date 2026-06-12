@@ -12,6 +12,7 @@ import (
 	"github.com/finclaw/internal/config"
 	"github.com/finclaw/pkg/agent/picoclaw"
 	"github.com/finclaw/pkg/channels/finclaw"
+	"github.com/finclaw/pkg/channels/weixin"
 	picoagent "github.com/sipeed/picoclaw/pkg/agent"
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/logger"
@@ -28,11 +29,14 @@ type AgentManager struct {
 	finclawChannel map[string]*finclaw.FinClawChannel
 	finclawConf    *config.FinclawConfig
 
-	// finclawOutboundChs stores per-agent channels for forwarding non-weixin
-	// outbound messages to the finclaw channel. This avoids two goroutines
-	// consuming from the same msgBus.OutboundChan(), which would cause
-	// messages to be randomly lost.
+	// Per-agent delivery queues fed by a single OutboundChan dispatcher per agent.
+	// Go channels allow only one reader on OutboundChan; the dispatcher routes by
+	// outbound channel name so web (fin) and weixin can run in parallel.
 	finclawOutboundChs map[string]chan bus.OutboundMessage
+	weixinOutboundChs  map[string]chan bus.OutboundMessage
+	outboundDispatcherCancels map[string]context.CancelFunc
+	weixinChannels            map[string]*weixin.WeixinChannel
+	weixinMu                  sync.Mutex
 
 	mu  sync.RWMutex
 	ctx context.Context
@@ -44,7 +48,9 @@ func NewAgentManager(ctx context.Context, finclawConf *config.FinclawConfig) *Ag
 		agents:             make(map[string]*agentEntry),
 		msgBusses:          make(map[string]*bus.MessageBus),
 		finclawChannel:     make(map[string]*finclaw.FinClawChannel),
-		finclawOutboundChs: make(map[string]chan bus.OutboundMessage),
+		finclawOutboundChs:        make(map[string]chan bus.OutboundMessage),
+		weixinOutboundChs:         make(map[string]chan bus.OutboundMessage),
+		outboundDispatcherCancels: make(map[string]context.CancelFunc),
 		finclawConf:        finclawConf,
 	}
 }
@@ -57,15 +63,15 @@ func (m *AgentManager) AddAgent(name string, agent Agent, msgBus *bus.MessageBus
 
 	m.msgBusses[name] = msgBus
 
-	// Create a separate channel for finclaw outbound messages.
-	// Only one goroutine should consume from msgBus.OutboundChan() to avoid
-	// message loss (Go channels deliver each message to exactly one consumer).
 	finclawOutCh := make(chan bus.OutboundMessage, 64)
+	weixinOutCh := make(chan bus.OutboundMessage, 64)
 	m.finclawOutboundChs[name] = finclawOutCh
+	m.weixinOutboundChs[name] = weixinOutCh
 
 	finclawChannel := finclaw.NewFinChannel(m.ctx, msgBus, m.finclawConf.FinClawChannelConf)
 	go finclawChannel.ProcessAgentMessage(finclawOutCh)
 	m.finclawChannel[name] = finclawChannel
+	m.startOutboundDispatcher(name, msgBus, finclawOutCh, weixinOutCh)
 
 	if loop, ok := agent.(*picoagent.AgentLoop); ok {
 		if err := loop.MountHook(newFinReasoningHook(msgBus)); err != nil {
@@ -127,6 +133,7 @@ func (m *AgentManager) Names() []string {
 	for name := range m.agents {
 		names = append(names, name)
 	}
+	sort.Strings(names)
 	return names
 }
 
@@ -138,14 +145,53 @@ func (m *AgentManager) GetMsgBus(name string) *bus.MessageBus {
 	return m.msgBusses[name]
 }
 
-// GetFinclawOutboundCh returns the finclaw outbound channel for the given agent name.
-// Non-weixin outbound messages should be forwarded to this channel so the finclaw
-// channel can process them, avoiding fan-out consumption of msgBus.OutboundChan().
-func (m *AgentManager) GetFinclawOutboundCh(name string) chan bus.OutboundMessage {
+// GetWeixinOutboundCh returns the weixin delivery queue for the given agent.
+// The outbound dispatcher routes channel=weixin messages here; WeixinChannel reads it.
+func (m *AgentManager) GetWeixinOutboundCh(name string) chan bus.OutboundMessage {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	return m.finclawOutboundChs[name]
+	return m.weixinOutboundChs[name]
+}
+
+// startOutboundDispatcher is the sole consumer of msgBus.OutboundChan() for an agent.
+// It demultiplexes replies so web (fin) and weixin channels operate in parallel.
+func (m *AgentManager) startOutboundDispatcher(
+	name string,
+	msgBus *bus.MessageBus,
+	finclawOutCh, weixinOutCh chan bus.OutboundMessage,
+) {
+	if msgBus == nil {
+		return
+	}
+	if cancel, ok := m.outboundDispatcherCancels[name]; ok {
+		cancel()
+	}
+	dispatchCtx, cancel := context.WithCancel(m.ctx)
+	m.outboundDispatcherCancels[name] = cancel
+
+	go func() {
+		logger.InfoCF("agent", "Outbound dispatcher started", map[string]any{"agent": name})
+		for {
+			select {
+			case <-dispatchCtx.Done():
+				return
+			case msg, ok := <-msgBus.OutboundChan():
+				if !ok {
+					return
+				}
+				target := finclawOutCh
+				if msg.Channel == "weixin" {
+					target = weixinOutCh
+				}
+				select {
+				case target <- msg:
+				case <-dispatchCtx.Done():
+					return
+				}
+			}
+		}
+	}()
 }
 
 // NamesByUser returns agent display names for a given userId.
@@ -220,9 +266,17 @@ func (m *AgentManager) Remove(name string) error {
 	delete(m.agents, name)
 	delete(m.msgBusses, name)
 	delete(m.finclawChannel, name)
+	if cancel, ok := m.outboundDispatcherCancels[name]; ok {
+		cancel()
+		delete(m.outboundDispatcherCancels, name)
+	}
 	if ch, ok := m.finclawOutboundChs[name]; ok {
 		close(ch)
 		delete(m.finclawOutboundChs, name)
+	}
+	if ch, ok := m.weixinOutboundChs[name]; ok {
+		close(ch)
+		delete(m.weixinOutboundChs, name)
 	}
 	return nil
 }

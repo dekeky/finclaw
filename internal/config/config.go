@@ -138,6 +138,7 @@ func loadFinclawConfig() (finServerConf *FinclawConfigServer, err error) {
 
 	finServerConf = new(FinclawConfigServer)
 	err = tomlDecodeFile(finConfigPath(), finServerConf)
+	ensureDefaultChannels(finServerConf)
 
 	return finServerConf, err
 }

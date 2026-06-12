@@ -58,5 +58,43 @@ func defaultFinclawConfig() *FinclawConfigServer {
 			WriteWait:    10,
 			MaxConn:      1000,
 		},
+		Channels: defaultChannelConfigs(),
+	}
+}
+
+func defaultWeixinSettings() *WeixinSettings {
+	return &WeixinSettings{
+		BaseURL: "https://ilinkai.weixin.qq.com/",
+	}
+}
+
+func defaultChannelConfigs() map[string]*ChannelConfig {
+	return map[string]*ChannelConfig{
+		ChannelWeixin: {
+			Enabled: false,
+			Weixin:  defaultWeixinSettings(),
+		},
+	}
+}
+
+// ensureDefaultChannels merges missing channel entries (e.g. weixin for QR login).
+func ensureDefaultChannels(cfg *FinclawConfigServer) {
+	if cfg == nil {
+		return
+	}
+	defaults := defaultChannelConfigs()
+	if cfg.Channels == nil {
+		cfg.Channels = defaults
+		return
+	}
+	for name, def := range defaults {
+		existing, ok := cfg.Channels[name]
+		if !ok || existing == nil {
+			cfg.Channels[name] = def
+			continue
+		}
+		if name == ChannelWeixin && existing.Weixin == nil {
+			existing.Weixin = defaultWeixinSettings()
+		}
 	}
 }

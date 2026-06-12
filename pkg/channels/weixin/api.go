@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"path"
 	"strconv"
-	"time"
 )
 
 // ============ 常量定义 ============
@@ -42,10 +41,8 @@ func NewApiClient(baseURL, token string, proxy string) (*ApiClient, error) {
 		baseURL = "https://ilinkai.weixin.qq.com/"
 	}
 
-	// 创建 HTTP 客户端（使用默认超时）
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
+	// No global timeout: getupdates long-polls up to ~35s; per-request ctx controls deadlines.
+	client := &http.Client{}
 
 	// 如果配置了代理，则设置代理
 	if proxy != "" {
