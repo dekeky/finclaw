@@ -23,6 +23,9 @@ export default defineConfig({
           ) {
             return 'syntax-highlighter'
           }
+          if (id.includes('mermaid')) {
+            return 'mermaid'
+          }
           if (
             id.includes('react-markdown') ||
             id.includes('remark-') ||

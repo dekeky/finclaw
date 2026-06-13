@@ -8,6 +8,7 @@ import { useTheme } from '../context/ThemeContext';
 import { cn } from '../lib/cn';
 
 const CodeBlock = lazy(() => import('./CodeBlock'));
+const MermaidDiagram = lazy(() => import('./MermaidDiagram'));
 
 export type MarkdownSize = 'sm' | 'md';
 
@@ -19,8 +20,13 @@ export interface MarkdownContentProps {
   className?: string;
   /** 是否显示代码块复制按钮 */
   copyableCode?: boolean;
-  /** 工具输出等密集文本：更紧的行距，且不将单换行转 <br> */
+  /** 工具输出等密集文本：更紧的行距 */
   compact?: boolean;
+  /**
+   * 是否将单个换行渲染为 <br>（remark-breaks）。
+   * 默认 true；仅极密集的工具日志可设为 false。
+   */
+  lineBreaks?: boolean;
   /** 额外的 rehype 插件（rehype-slug 已内置） */
   rehypePlugins?: PluggableList;
 }
@@ -70,6 +76,7 @@ export function MarkdownContent({
   className,
   copyableCode = true,
   compact = false,
+  lineBreaks = true,
   rehypePlugins,
 }: MarkdownContentProps) {
   const { scheme } = useTheme();
@@ -97,6 +104,32 @@ export function MarkdownContent({
 
         if (isBlock) {
           const lang = match?.[1];
+          const isMermaid = lang === 'mermaid';
+
+          if (isMermaid) {
+            return (
+              <div className="not-prose my-3 max-w-full min-w-0">
+                <div className="group/code relative max-w-full min-w-0 overflow-x-auto rounded-lg border border-border/60 bg-muted/30 dark:bg-muted/50">
+                  <div className="flex items-center justify-between border-b border-border/50 bg-muted/50 px-3 py-1.5 dark:bg-muted/70">
+                    <span className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground">
+                      mermaid
+                    </span>
+                    {copyableCode && (
+                      <CopyCodeButton code={code} id={codeId} copied={copiedId === codeId} onCopy={handleCopy} />
+                    )}
+                  </div>
+                  <Suspense
+                    fallback={
+                      <div className="px-3.5 py-6 text-center text-xs text-muted-foreground">加载图表…</div>
+                    }
+                  >
+                    <MermaidDiagram chart={code} dark={dark} className="px-3.5 py-3" />
+                  </Suspense>
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div className="not-prose my-3 max-w-full min-w-0">
               <div className="group/code relative max-w-full min-w-0 overflow-x-auto rounded-lg border border-border/60 bg-muted/30 dark:bg-muted/50">
@@ -183,10 +216,18 @@ export function MarkdownContent({
       },
       blockquote({ children }) {
         return (
-          <blockquote className="border-l-4 border-violet-500/35 pl-4 text-muted-foreground not-italic">
+          <blockquote
+            className={cn(
+              'my-2 border-l-4 border-violet-500/50 pl-4 text-muted-foreground not-italic',
+              compact ? 'py-0.5' : 'py-1',
+            )}
+          >
             {children}
           </blockquote>
         );
+      },
+      strong({ children }) {
+        return <strong className="font-semibold text-foreground">{children}</strong>;
       },
       img({ src, alt }) {
         return (
@@ -234,7 +275,7 @@ export function MarkdownContent({
     [compact, copiedId, copyableCode, dark, handleCopy, idPrefix],
   );
 
-  const remarkPlugins = compact ? [remarkGfm] : [remarkGfm, remarkBreaks];
+  const remarkPlugins = lineBreaks ? [remarkGfm, remarkBreaks] : [remarkGfm];
 
   if (!children?.trim()) {
     return null;
