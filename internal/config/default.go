@@ -52,6 +52,7 @@ func defaultFinclawConfig() *FinclawConfigServer {
 		ServerAddr:    ":8082",
 		RSSServerAddr: "http://159.75.51.78:6606",
 		AgentHubAddr:  DefaultAgentHubAddr,
+		SMTP:          defaultSMTPSettings(),
 		FinClawChannelConf: &finclaw.FinChannelConfig{
 			ReadTimeout:  60,
 			PingInterval: 30,
@@ -59,6 +60,12 @@ func defaultFinclawConfig() *FinclawConfigServer {
 			MaxConn:      1000,
 		},
 		Channels: defaultChannelConfigs(),
+	}
+}
+
+func defaultSMTPSettings() *SMTPSettings {
+	return &SMTPSettings{
+		Port: 465,
 	}
 }
 
