@@ -81,7 +81,7 @@ export function PersonaGenerateDialog({
 
           <div className="mt-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
             <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{subjectLabel}</p>
-            <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-foreground/90">{dialogSubject}</p>
+            <p className="mt-1 break-words whitespace-pre-wrap text-xs leading-relaxed text-foreground/90">{dialogSubject}</p>
           </div>
 
           <ol className="mt-4 space-y-2.5">

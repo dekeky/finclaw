@@ -15,17 +15,11 @@ import {
   setGenerateStepStatus,
   type GenerateStep,
 } from './PersonaGenerateDialog';
-import { IconSparkles } from '@tabler/icons-react';
+import { AiPolishPromptPopover } from './AiPolishPromptPopover';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { cn } from '@/lib/cn';
-import {
-  PRIMARY_AI_PANEL_CLASS,
-  PRIMARY_BUTTON_CLASS,
-  PRIMARY_ICON_GRADIENT_CLASS,
-} from '@/lib/primaryButton';
+import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 
 const PERSONA_TABS: PersonaFileName[] = ['AGENT.md', 'SOUL.md', 'USER.md'];
 
@@ -192,6 +186,7 @@ export function AgentPersonaEditor({ agentName, className, onDirtyChange }: Agen
     const prompt = aiPrompt.trim();
     if (!prompt || generating) return;
 
+    setAiPanelOpen(false);
     setGenerating(true);
     setGenerateError(null);
     setGenerateModalOpen(true);
@@ -275,67 +270,18 @@ export function AgentPersonaEditor({ agentName, className, onDirtyChange }: Agen
         </div>
 
         {!loading && !loadError && (
-          <div
-            className={cn(
-              'flex min-w-0 items-center justify-self-center gap-1.5',
-              aiPanelOpen && [
-                'w-full max-w-xl overflow-hidden rounded-lg p-0.5 pr-1.5',
-                PRIMARY_AI_PANEL_CLASS,
-              ],
-              generating && 'opacity-80',
-            )}
-          >
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className="flex shrink-0 items-center rounded-md border-none bg-transparent p-0 transition-opacity hover:opacity-90"
-                  onClick={() => setAiPanelOpen((open) => !open)}
-                  disabled={generating}
-                  aria-label={aiPanelOpen ? '收起润色输入' : 'AI 润色'}
-                  aria-expanded={aiPanelOpen}
-                >
-                  <span
-                    className={cn(
-                      'flex size-6 items-center justify-center rounded-md',
-                      PRIMARY_ICON_GRADIENT_CLASS,
-                    )}
-                  >
-                    <IconSparkles className="size-3.5" stroke={1.75} aria-hidden />
-                  </span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={6}>
-                {aiPanelOpen ? '收起润色输入' : 'AI 润色'}
-              </TooltipContent>
-            </Tooltip>
-            {aiPanelOpen && (
-              <>
-                <Input
-                  value={aiPrompt}
-                  onChange={(e) => setAiPrompt(e.target.value)}
-                  placeholder="翻译为中文"
-                  disabled={generating || saving}
-                  className="h-7 min-w-0 flex-1 border-violet-500/20 bg-background/80 text-xs focus-visible:ring-violet-500/30"
-                  autoFocus
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      void onGenerate();
-                    }
-                  }}
-                />
-                <Button
-                  type="button"
-                  size="sm"
-                  className={cn('h-7 shrink-0 px-2 text-xs', PRIMARY_BUTTON_CLASS)}
-                  disabled={!aiPrompt.trim() || generating || saving}
-                  onClick={() => void onGenerate()}
-                >
-                  {generating ? '润色中…' : '开始润色'}
-                </Button>
-              </>
-            )}
+          <div className="justify-self-center">
+            <AiPolishPromptPopover
+              open={aiPanelOpen}
+              onOpenChange={setAiPanelOpen}
+              prompt={aiPrompt}
+              onPromptChange={setAiPrompt}
+              onSubmit={() => void onGenerate()}
+              submitting={generating}
+              disabled={saving}
+              side="bottom"
+              align="center"
+            />
           </div>
         )}
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { IconX, IconFileDescription, IconRefresh, IconLoader2, IconPencil, IconDeviceFloppy, IconList, IconSparkles, IconDownload } from '@tabler/icons-react';
+import { IconX, IconFileDescription, IconRefresh, IconLoader2, IconPencil, IconDeviceFloppy, IconList, IconDownload } from '@tabler/icons-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { DocTocSidebar, DocTocOverlay } from '@/components/DocTocSidebar';
@@ -7,8 +7,7 @@ import { useTocHeadings } from '@/hooks/useTocHeadings';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { getAgentDocFile, polishAgentDoc } from '@/api/agentDocs';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { AiPolishPromptPopover } from '@/components/AiPolishPromptPopover';
 import {
   initialGenerateSteps,
   PersonaGenerateDialog,
@@ -16,11 +15,7 @@ import {
   type GenerateStep,
 } from '@/components/PersonaGenerateDialog';
 import { cn } from '@/lib/cn';
-import {
-  PRIMARY_AI_PANEL_CLASS,
-  PRIMARY_BUTTON_CLASS,
-  PRIMARY_ICON_GRADIENT_CLASS,
-} from '@/lib/primaryButton';
+import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 
 /* ─── 浮窗布局工具 ─── */
 
@@ -152,6 +147,8 @@ const DOC_DOCK_CSS = `
   color: var(--card-foreground);
   box-shadow: 0 8px 32px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
   overflow: hidden;
+  min-width: 0;
+  max-width: 100vw;
   animation: docDockIn 0.2s ease-out;
 }
 .doc-dock-head {
@@ -179,28 +176,6 @@ const DOC_DOCK_CSS = `
   display: flex;
   align-items: center;
   gap: 4px;
-}
-.doc-dock-ai-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 4px 2px 2px;
-  max-width: min(32rem, 52vw);
-  transition: max-width 0.2s ease;
-}
-.doc-dock-ai-bar--open {
-  width: min(32rem, 52vw);
-  padding-right: 6px;
-}
-.doc-dock-ai-trigger {
-  display: flex;
-  align-items: center;
-  border: none;
-  background: transparent;
-  border-radius: 6px;
-  padding: 2px;
-  cursor: pointer;
-  flex-shrink: 0;
 }
 .doc-dock-drag {
   cursor: grab;
@@ -256,18 +231,25 @@ const DOC_DOCK_CSS = `
   display: flex;
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
 }
 .doc-dock-scroll {
   min-width: 0;
   flex: 1;
+  overflow: hidden;
 }
 .doc-dock-scroll [data-slot="scroll-area-viewport"] {
   overflow-x: hidden !important;
+  max-width: 100%;
 }
 .doc-dock-scroll [data-slot="scroll-area-viewport"] > div {
+  display: block !important;
+  width: 100% !important;
   min-width: 0 !important;
-  max-width: 100%;
+  max-width: 100% !important;
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
 
 /* ─── 目录侧边栏 ─── */
@@ -391,6 +373,14 @@ const DOC_DOCK_CSS = `
 .doc-reading-prose :is(.group\\/code, pre, .markdown-body > div) {
   max-width: 100%;
 }
+.doc-reading-prose .markdown-body {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+}
+.doc-reading-prose :is(.group\\/code, table) {
+  -webkit-overflow-scrolling: touch;
+}
 
 /* ─── 浮层目录：覆盖在正文上方，不占横向空间 ─── */
 .doc-dock-toc-overlay {
@@ -459,6 +449,7 @@ const DOC_DOCK_CSS = `
   .doc-dock--mobile {
     border-radius: 0;
     box-shadow: none;
+    max-width: 100dvw;
   }
   .doc-dock--mobile .doc-dock-resize {
     display: none;
@@ -467,9 +458,24 @@ const DOC_DOCK_CSS = `
     cursor: default;
   }
   .doc-dock--mobile .doc-dock-article {
-    padding-inline: 16px;
+    width: 100%;
+    max-width: 100%;
+    padding-inline: 12px;
     padding-block: 16px;
-    max-width: none;
+    overflow-x: hidden;
+    box-sizing: border-box;
+  }
+  .doc-dock--mobile .doc-reading-prose {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+  .doc-dock--mobile .doc-reading-prose :is(th, td) {
+    padding-inline: 8px;
+    padding-block: 6px;
+  }
+  .doc-dock--mobile .doc-reading-prose :is(.group\\/code pre, pre) {
+    font-size: 12px;
   }
 }
 
@@ -596,24 +602,30 @@ export function DocReadingPanel({
     return () => { cancelled = true; };
   }, [agentName, filePath, runLoad]);
 
-  // Escape 关闭
+  // Escape：先关闭润色弹窗，再关闭文档浮窗
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Escape') return;
+      if (aiPanelOpen) {
+        setAiPanelOpen(false);
+        return;
+      }
+      onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, aiPanelOpen]);
 
   // 手机/桌面切换或视口变化时修正布局
   useEffect(() => {
-    if (isMobile) {
-      setDockLayout(fullscreenDockLayout());
-      return;
-    }
     const onResize = () => {
+      if (isMobileViewport()) {
+        setDockLayout(fullscreenDockLayout());
+        return;
+      }
       setDockLayout((d) => fitDockRect(d));
     };
+    onResize();
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, [isMobile]);
@@ -687,6 +699,7 @@ export function DocReadingPanel({
     const prompt = aiPrompt.trim();
     if (!prompt || generating) return;
 
+    setAiPanelOpen(false);
     setGenerating(true);
     setGenerateError(null);
     setGenerateModalOpen(true);
@@ -797,7 +810,7 @@ export function DocReadingPanel({
             onPointerDown={(e) => {
               if (isMobile) return;
               if (e.button !== 0) return;
-              if ((e.target as HTMLElement).closest('button, input, .doc-dock-ai-bar')) return;
+              if ((e.target as HTMLElement).closest('button, input')) return;
               (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
               dockMovedRef.current = false;
               dockDragRef.current = {
@@ -848,68 +861,17 @@ export function DocReadingPanel({
 
           <div className="doc-dock-head-center">
             {showAiPolish && (
-              <div
-                className={cn(
-                  'flex items-center gap-1.5',
-                  aiPanelOpen && [
-                    'doc-dock-ai-bar doc-dock-ai-bar--open overflow-hidden rounded-lg',
-                    PRIMARY_AI_PANEL_CLASS,
-                  ],
-                  generating && 'opacity-80',
-                )}
-              >
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      className="doc-dock-ai-trigger transition-opacity hover:opacity-90"
-                      onClick={() => setAiPanelOpen((open) => !open)}
-                      disabled={generating}
-                      aria-label={aiPanelOpen ? '收起润色输入' : 'AI 润色'}
-                      aria-expanded={aiPanelOpen}
-                    >
-                      <span
-                        className={cn(
-                          'flex size-6 shrink-0 items-center justify-center rounded-md',
-                          PRIMARY_ICON_GRADIENT_CLASS,
-                        )}
-                      >
-                        <IconSparkles className="size-3.5" stroke={1.75} aria-hidden />
-                      </span>
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" sideOffset={6} className="z-[1220]">
-                    {aiPanelOpen ? '收起润色输入' : 'AI 润色'}
-                  </TooltipContent>
-                </Tooltip>
-                {aiPanelOpen && (
-                  <>
-                    <Input
-                      value={aiPrompt}
-                      onChange={(e) => setAiPrompt(e.target.value)}
-                      placeholder="翻译为中文"
-                      disabled={generating || saving}
-                      className="h-7 min-w-0 flex-1 border-violet-500/20 bg-background/80 text-xs focus-visible:ring-violet-500/30"
-                      autoFocus
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          void handlePolish();
-                        }
-                      }}
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      className={cn('h-7 shrink-0 px-2 text-xs', PRIMARY_BUTTON_CLASS)}
-                      disabled={!aiPrompt.trim() || generating || saving}
-                      onClick={() => void handlePolish()}
-                    >
-                      {generating ? '润色中…' : '开始润色'}
-                    </Button>
-                  </>
-                )}
-              </div>
+              <AiPolishPromptPopover
+                open={aiPanelOpen}
+                onOpenChange={setAiPanelOpen}
+                prompt={aiPrompt}
+                onPromptChange={setAiPrompt}
+                onSubmit={() => void handlePolish()}
+                submitting={generating}
+                disabled={saving}
+                side="bottom"
+                align="center"
+              />
             )}
           </div>
 
@@ -929,13 +891,12 @@ export function DocReadingPanel({
             {!loading && !error && savedContent !== null && (
               <button
                 type="button"
-                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 onClick={handleDownload}
                 title="下载"
                 aria-label="下载文档"
               >
                 <IconDownload className="size-3.5" />
-                下载
               </button>
             )}
             {onSave && !loading && !error && savedContent !== null && (
@@ -951,13 +912,13 @@ export function DocReadingPanel({
               ) : (
                 <button
                   type="button"
-                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
                   onClick={startEdit}
                   title="编辑"
+                  aria-label="编辑文档"
                   disabled={generating}
                 >
                   <IconPencil className="size-3.5" />
-                  编辑
                 </button>
               )
             )}
@@ -968,7 +929,7 @@ export function DocReadingPanel({
         </div>
 
         {/* 内容区 */}
-        <div className="doc-dock-body flex min-h-0 flex-col">
+        <div className="doc-dock-body flex min-h-0 min-w-0 flex-col">
           {editing ? (
             <div className="flex min-h-0 flex-1 flex-col p-3">
               <textarea
@@ -981,7 +942,7 @@ export function DocReadingPanel({
               />
             </div>
           ) : (
-          <div className="flex min-h-0 flex-1">
+          <div className="flex min-h-0 min-w-0 flex-1">
           {showToc && !useOverlayToc && (
             <DocTocSidebar
               headings={headings}
@@ -1000,7 +961,7 @@ export function DocReadingPanel({
               onHeadingClick={scrollToHeading}
             />
           )}
-          <ScrollArea ref={scrollAreaRef} className="doc-dock-scroll min-h-0 flex-1">
+          <ScrollArea ref={scrollAreaRef} className="doc-dock-scroll min-h-0 min-w-0 flex-1">
             {loading ? (
               <div className="flex flex-col items-center gap-2 px-8 py-16 text-center">
                 <IconLoader2 className="size-5 animate-spin text-muted-foreground/50" />
