@@ -74,12 +74,6 @@ func (m *AgentManager) AddAgent(name string, agent Agent, msgBus *bus.MessageBus
 				"error": err.Error(),
 			})
 		}
-		if err := loop.MountHook(newWeixinTypingHook(msgBus)); err != nil {
-			logger.WarnCF("agent", "Failed to mount weixin typing hook", map[string]any{
-				"name":  name,
-				"error": err.Error(),
-			})
-		}
 	}
 
 	if entry, ok := m.agents[name]; ok {

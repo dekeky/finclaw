@@ -16,6 +16,16 @@ export interface WeixinSettings {
   allowFrom: string[];
   proxy: string;
   boundBotId: string;
+  boundAgent: string;
+}
+
+/** GET /api/weixin/auth/settings 后端响应字段。 */
+export interface WeixinSettingsResponse {
+  account_id: string;
+  base_url: string;
+  proxy: string;
+  enabled: boolean;
+  bound_agent: string;
 }
 
 export async function fetchQrcode(): Promise<QrcodeResponse> {
@@ -36,11 +46,12 @@ export async function fetchQrcodeStatus(qrcode: string): Promise<QrcodeStatusRes
 
 // 保存微信设置到后端
 export interface WeixinBackendSettings {
-  token: string;
-  account_id: string;
-  base_url: string;
-  proxy: string;
-  enabled: boolean;
+  token?: string;
+  account_id?: string;
+  base_url?: string;
+  proxy?: string;
+  enabled?: boolean;
+  bound_agent?: string;
 }
 
 export async function saveWeixinSettings(settings: WeixinBackendSettings): Promise<void> {
@@ -53,7 +64,7 @@ export async function saveWeixinSettings(settings: WeixinBackendSettings): Promi
 }
 
 // 从后端获取微信设置
-export async function fetchWeixinSettings(): Promise<WeixinSettings> {
+export async function fetchWeixinSettings(): Promise<WeixinSettingsResponse> {
   const res = await fetch(`${BASE_URL}/api/weixin/auth/settings`);
   if (!res.ok) throw new Error(`获取设置失败: ${res.status}`);
   return res.json();
@@ -65,6 +76,7 @@ const STORAGE_KEYS = {
   QRCODE_CONTENT: 'weixin_qrcode_content',
   BOUND_BOT_ID: 'weixin_bound_bot_id',
   SETTINGS: 'weixin_settings',
+  BOUND_AGENT: 'weixin_bound_agent',
 };
 
 // 本地保存二维码信息
@@ -97,4 +109,15 @@ export function saveBoundBotId(botId: string): void {
 // 获取本地绑定信息
 export function getLocalBoundBotId(): string | null {
   return localStorage.getItem(STORAGE_KEYS.BOUND_BOT_ID);
+}
+
+// 保存绑定 Agent
+export function saveBoundAgent(name: string): void {
+  if (name) localStorage.setItem(STORAGE_KEYS.BOUND_AGENT, name);
+  else localStorage.removeItem(STORAGE_KEYS.BOUND_AGENT);
+}
+
+// 获取本地绑定的 Agent 名
+export function getLocalBoundAgent(): string | null {
+  return localStorage.getItem(STORAGE_KEYS.BOUND_AGENT);
 }

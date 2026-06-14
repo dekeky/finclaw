@@ -1,9 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { fetchQrcode, fetchQrcodeStatus, saveQrcodeToLocal, getLocalQrcode, clearLocalQrcode, saveBoundBotId, getLocalBoundBotId, saveWeixinSettings } from '@/api/weixin';
+import {
+  fetchQrcode,
+  fetchQrcodeStatus,
+  saveQrcodeToLocal,
+  getLocalQrcode,
+  clearLocalQrcode,
+  saveBoundBotId,
+  getLocalBoundBotId,
+  saveWeixinSettings,
+  saveBoundAgent,
+  getLocalBoundAgent,
+  fetchWeixinSettings,
+} from '@/api/weixin';
+import { listAgents, type AgentSummary } from '@/api/agents';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
+import { AgentSwitcher } from '@/components/AgentSwitcher';
+// import { Input } from '@/components/ui/input';
+// import { Switch } from '@/components/ui/switch';
 
 type BindStatus = 'idle' | 'loading' | 'binding' | 'scaned' | 'bound' | 'expired' | 'error';
 
@@ -12,6 +26,7 @@ interface WeixinSettings {
   allowFrom: string[];
   proxy: string;
   boundBotId: string;
+  boundAgent: string;
 }
 
 export default function WeixinPage() {
@@ -25,12 +40,21 @@ export default function WeixinPage() {
     allowFrom: [],
     proxy: '',
     boundBotId: '',
+    boundAgent: '',
   });
-  const [allowFromInput, setAllowFromInput] = useState('');
-  const [isDirty, setIsDirty] = useState(false);
+  const [agents, setAgents] = useState<AgentSummary[]>([]);
+  const [agentsLoading, setAgentsLoading] = useState(false);
+  const [agentsError, setAgentsError] = useState<string>('');
+  // const [allowFromInput, setAllowFromInput] = useState('');
+  // const [isDirty, setIsDirty] = useState(false);
 
   // 初始化：检查本地存储的绑定状态
   useEffect(() => {
+    const savedAgent = getLocalBoundAgent();
+    if (savedAgent) {
+      setSettings(prev => ({ ...prev, boundAgent: savedAgent }));
+    }
+
     const savedBoundBotId = getLocalBoundBotId();
     if (savedBoundBotId) {
       setSettings(prev => ({ ...prev, boundBotId: savedBoundBotId }));
@@ -47,6 +71,66 @@ export default function WeixinPage() {
       startPolling(savedQrcode.qrcode);
     }
   }, []);
+
+  // 加载 Agent 列表 + 后端绑定状态
+  useEffect(() => {
+    let cancelled = false;
+    setAgentsLoading(true);
+    setAgentsError('');
+    Promise.all([
+      listAgents(),
+      fetchWeixinSettings().catch(() => null),
+    ])
+      .then(([list, remote]) => {
+        if (cancelled) return;
+        setAgents(list);
+
+        const remoteAgent = remote?.bound_agent ?? '';
+        setSettings(prev => {
+          // 后端值最权威：优先使用后端 bound_agent，其次本地，最后回退到第一个 agent
+          let next = prev.boundAgent;
+          if (remoteAgent && list.some(a => a.name === remoteAgent)) {
+            next = remoteAgent;
+          } else if (next && list.some(a => a.name === next)) {
+            // 保持 next
+          } else {
+            next = list[0]?.name ?? '';
+          }
+          if (next !== prev.boundAgent) {
+            saveBoundAgent(next);
+          }
+          return { ...prev, boundAgent: next };
+        });
+
+        // 若后端尚未保存且本地有值，回写一次后端
+        if (!remoteAgent) {
+          const local = getLocalBoundAgent();
+          if (local && list.some(a => a.name === local)) {
+            void saveWeixinSettings({ bound_agent: local }).catch(err => {
+              console.error('回写 bound_agent 失败:', err);
+            });
+          }
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setAgentsError(err instanceof Error ? err.message : '加载 Agent 失败');
+      })
+      .finally(() => {
+        if (!cancelled) setAgentsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleAgentChange = (name: string) => {
+    setSettings(prev => ({ ...prev, boundAgent: name }));
+    saveBoundAgent(name);
+    void saveWeixinSettings({ bound_agent: name }).catch(err => {
+      console.error('保存 bound_agent 到后端失败:', err);
+    });
+  };
 
   const loadQrcode = async () => {
     setBindStatus('loading');
@@ -116,20 +200,20 @@ export default function WeixinPage() {
     void loadQrcode();
   };
 
-  const handleSave = () => {
-    setIsDirty(false);
-  };
+  // const handleSave = () => {
+  //   setIsDirty(false);
+  // };
 
-  const handleReset = () => {
-    setSettings({
-      enabled: true,
-      allowFrom: [],
-      proxy: '',
-      boundBotId: '',
-    });
-    setAllowFromInput('');
-    setIsDirty(false);
-  };
+  // const handleReset = () => {
+  //   setSettings({
+  //     enabled: true,
+  //     allowFrom: [],
+  //     proxy: '',
+  //     boundBotId: '',
+  //   });
+  //   setAllowFromInput('');
+  //   setIsDirty(false);
+  // };
 
   const renderBindContent = () => {
     // 已绑定状态
@@ -249,6 +333,44 @@ export default function WeixinPage() {
           />
         </div> */}
 
+        {/* Bound Agent Card */}
+        <div className="rounded-xl bg-card py-6 text-sm text-card-foreground shadow-sm ring-1 ring-foreground/10 shrink-0">
+          <div className="px-6 pb-4 border-b border-border/60">
+            <div className="text-sm font-medium">绑定 Agent</div>
+            <div className="text-sm text-muted-foreground">
+              选择一个 Agent 用于响应来自此微信账号的消息。
+            </div>
+          </div>
+          <div className="px-6 pt-5">
+            {agentsLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                加载 Agent 列表…
+              </div>
+            ) : agentsError ? (
+              <p className="text-sm text-red-500">{agentsError}</p>
+            ) : agents.length === 0 ? (
+              <p className="text-sm text-muted-foreground">尚未创建任何 Agent，请先在 Agent 管理页创建。</p>
+            ) : (
+              <div className="flex items-center gap-3">
+                <AgentSwitcher
+                  agents={agents}
+                  value={settings.boundAgent || null}
+                  onChange={handleAgentChange}
+                  size="default"
+                  triggerClassName="min-w-[14rem]"
+                  aria-label="为微信频道选择 Agent"
+                />
+                {/* {settings.boundAgent && (
+                  <span className="text-xs text-muted-foreground">
+                    当前：{settings.boundAgent}
+                  </span>
+                )} */}
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* WeChat Account Binding Card */}
         <div className="rounded-xl bg-card py-6 text-sm text-card-foreground shadow-sm ring-1 ring-foreground/10 shrink-0">
           <div className="px-6 pb-4 border-b border-border/60">
@@ -259,6 +381,7 @@ export default function WeixinPage() {
             {renderBindContent()}
           </div>
         </div>
+
 
         {/* Settings Card */}
         {/* <div className="rounded-xl bg-card py-6 text-sm text-card-foreground shadow-sm ring-1 ring-foreground/10">

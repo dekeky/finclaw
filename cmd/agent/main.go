@@ -15,6 +15,7 @@ package main
 import (
 	"context"
 	"log"
+	"strings"
 
 	"github.com/finclaw/internal/auth"
 	finclawconfig "github.com/finclaw/internal/config"
@@ -36,9 +37,6 @@ func main() {
 		log.Fatalf("❌ Failed to init agent manager: %v", err)
 	}
 
-	// 3. Init weixin channels for enabled configs
-	initWeixinChannels(ctx, agentManager, finclawConf)
-
 	authStore, err := auth.NewStore()
 	if err != nil {
 		log.Fatalf("❌ Failed to init auth store: %v", err)
@@ -51,6 +49,9 @@ func main() {
 	}
 	frouter := router.NewFinClawRouter(finclawConf.RSSServerAddr, agentHubAddr, agentManager, authStore, finclawConf)
 
+	// 3. Init weixin channels for enabled configs (router needs to register them for rebind)
+	initWeixinChannels(ctx, agentManager, finclawConf, frouter)
+
 	if err := frouter.RoutesInit(); err != nil {
 		log.Fatalf("❌ Failed to init routes: %v", err)
 	}
@@ -60,7 +61,7 @@ func main() {
 }
 
 // initWeixinChannels 根据配置初始化微信频道
-func initWeixinChannels(ctx context.Context, agentManager *agentruntime.AgentManager, conf *finclawconfig.FinclawConfig) {
+func initWeixinChannels(ctx context.Context, agentManager *agentruntime.AgentManager, conf *finclawconfig.FinclawConfig, frouter *router.FinClawRouter) {
 	if conf.Channels == nil {
 		return
 	}
@@ -72,33 +73,29 @@ func initWeixinChannels(ctx context.Context, agentManager *agentruntime.AgentMan
 		return
 	}
 
-	// 默认使用第一个 agent 的 msgBus
+	// 默认 agent：列表中的第一个（没有 bound_agent 配置时使用）
 	defaultAgentName := agentNames[0]
-	msgBus := agentManager.GetMsgBus(defaultAgentName)
-	if msgBus == nil {
-		log.Printf("⚠️ Failed to get msgBus for agent %s, skipping weixin channel init", defaultAgentName)
-		return
-	}
 
-	// 遍历所有渠道配置，初始化已启用的微信频道
+	// 遍历所有渠道配置，初始化已绑定的微信频道
+	// 判定标准：有 Token（扫码绑定后由前端写入），不再依赖 enabled 字段
 	for name, chConfig := range conf.Channels {
-		if chConfig == nil || !chConfig.Enabled {
+		if chConfig == nil || chConfig.Weixin == nil {
 			continue
 		}
-		if chConfig.Weixin == nil {
+		if chConfig.Weixin.Token == "" {
+			log.Printf("ℹ️ Weixin channel %s has no token (not bound), skipping", name)
 			continue
 		}
 
-		weixinCh, err := weixin.NewWeixinChannel(chConfig.Weixin, msgBus)
+		// 解析 bound_agent，匹配 agentManager 中的内部 key（格式 userID:agentName）。
+		// 配置里通常只填 agentName，所以做后缀匹配。找不到则回退到默认 agent。
+		targetAgent := resolveBoundAgent(agentNames, chConfig.Weixin.BoundAgent, defaultAgentName)
+
+		// 通过 AgentManager 作为 resolver，支持运行时通过 Rebind 切换绑定 agent。
+		weixinCh, err := weixin.NewWeixinChannel(chConfig.Weixin, agentManager, targetAgent)
 		if err != nil {
 			log.Printf("⚠️ Failed to create weixin channel %s: %v", name, err)
 			continue
-		}
-
-		// 设置 finclaw 转发通道，避免两个 goroutine 同时消费
-		// msgBus.OutboundChan() 导致消息随机丢失
-		if finclawCh := agentManager.GetFinclawOutboundCh(defaultAgentName); finclawCh != nil {
-			weixinCh.SetFinclawForwardCh(finclawCh)
 		}
 
 		if err := weixinCh.Start(ctx); err != nil {
@@ -106,6 +103,34 @@ func initWeixinChannels(ctx context.Context, agentManager *agentruntime.AgentMan
 			continue
 		}
 
-		log.Printf("✅ Weixin channel %s started (base_url: %s)", name, chConfig.Weixin.BaseURL)
+		// 注册到 router 以支持热切换 bound_agent。
+		frouter.RegisterWeixinChannel(name, weixinCh)
+
+		log.Printf("✅ Weixin channel %s started (base_url: %s, bound_agent: %s)",
+			name, chConfig.Weixin.BaseURL, targetAgent)
 	}
+}
+
+// resolveBoundAgent 在 agentManager 的内部 key 中查找最匹配 boundAgent 的项。
+//
+//   - 若 boundAgent 直接存在于 agentNames 中，按精确匹配返回；
+//   - 否则匹配后缀 ":boundAgent"（兼容 userID:agentName 格式）；
+//   - 都失败时回退到 defaultAgent。
+func resolveBoundAgent(agentNames []string, boundAgent, defaultAgent string) string {
+	if boundAgent == "" {
+		return defaultAgent
+	}
+	for _, key := range agentNames {
+		if key == boundAgent {
+			return key
+		}
+	}
+	suffix := ":" + boundAgent
+	for _, key := range agentNames {
+		if strings.HasSuffix(key, suffix) {
+			return key
+		}
+	}
+	log.Printf("⚠️ bound_agent %q not found, fallback to %q", boundAgent, defaultAgent)
+	return defaultAgent
 }

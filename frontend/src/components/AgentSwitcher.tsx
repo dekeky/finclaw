@@ -68,7 +68,7 @@ export function AgentSwitcher({
               isInline && 'gap-1',
             )}
           >
-            {showAvatar && selected && !isInline && (
+            {/* {showAvatar && selected && !isInline && (
               <AgentAvatar
                 name={selected.name}
                 hasAvatar={selected.has_avatar}
@@ -79,7 +79,7 @@ export function AgentSwitcher({
                   isSidebar ? '!h-7 !w-7 !text-[11px]' : '!h-6 !w-6 !text-[10px]',
                 )}
               />
-            )}
+            )} */}
             <SelectValue
               placeholder={placeholder}
               className={cn('truncate', (isSidebar || isInline) && 'text-[15px]')}
