@@ -16,6 +16,7 @@ import (
 	picoagent "github.com/sipeed/picoclaw/pkg/agent"
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/media"
 )
 
 type agentEntry struct {
@@ -38,6 +39,11 @@ type AgentManager struct {
 	weixinChannels            map[string]*weixin.WeixinChannel
 	weixinMu                  sync.Mutex
 
+	// mediaStore is shared by every agent loop and web channel. Refs are random
+	// UUIDs (globally unique), so a single store serves all agents and lets the
+	// media download route resolve refs without knowing which agent produced them.
+	mediaStore media.MediaStore
+
 	mu  sync.RWMutex
 	ctx context.Context
 }
@@ -52,7 +58,14 @@ func NewAgentManager(ctx context.Context, finclawConf *config.FinclawConfig) *Ag
 		weixinOutboundChs:         make(map[string]chan bus.OutboundMessage),
 		outboundDispatcherCancels: make(map[string]context.CancelFunc),
 		finclawConf:        finclawConf,
+		mediaStore:         media.NewFileMediaStore(),
 	}
+}
+
+// GetMediaStore returns the shared media store used to resolve outbound media
+// refs (e.g. when serving the /fin/media download route).
+func (m *AgentManager) GetMediaStore() media.MediaStore {
+	return m.mediaStore
 }
 
 // Register adds an agent under the given name. If an agent with the same name
@@ -69,13 +82,27 @@ func (m *AgentManager) AddAgent(name string, agent Agent, msgBus *bus.MessageBus
 	m.weixinOutboundChs[name] = weixinOutCh
 
 	finclawChannel := finclaw.NewFinChannel(m.ctx, msgBus, m.finclawConf.FinClawChannelConf)
+	finclawChannel.SetMediaStore(m.mediaStore)
 	go finclawChannel.ProcessAgentMessage(finclawOutCh)
 	m.finclawChannel[name] = finclawChannel
-	m.startOutboundDispatcher(name, msgBus, finclawOutCh, weixinOutCh)
+	m.startOutboundDispatcher(name, msgBus, finclawChannel, finclawOutCh, weixinOutCh)
 
+	var agentLoop *picoagent.AgentLoop
 	if loop, ok := agent.(*picoagent.AgentLoop); ok {
+		// Reuse PicoClaw's media handling: the loop resolves inbound media and
+		// emits OutboundMediaMessage for tool-generated files. Without a channel
+		// manager wired, the loop falls back to bus.PublishOutboundMedia, which
+		// the outbound dispatcher routes to the web channel's SendMedia.
+		agentLoop = loop
+		loop.SetMediaStore(m.mediaStore)
 		if err := loop.MountHook(newFinReasoningHook(msgBus)); err != nil {
 			logger.WarnCF("agent", "Failed to mount fin reasoning hook", map[string]any{
+				"name":  name,
+				"error": err.Error(),
+			})
+		}
+		if err := loop.MountHook(newFinTypingHook(msgBus)); err != nil {
+			logger.WarnCF("agent", "Failed to mount fin typing hook", map[string]any{
 				"name":  name,
 				"error": err.Error(),
 			})
@@ -93,6 +120,12 @@ func (m *AgentManager) AddAgent(name string, agent Agent, msgBus *bus.MessageBus
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.agents[name] = &agentEntry{agent: agent, cancel: cancel}
+
+	// Surface vision-unsupported retries to the web UI so users learn their
+	// model can't process images instead of watching an endless spinner.
+	if agentLoop != nil {
+		watchVisionUnsupported(ctx, agentLoop, msgBus)
+	}
 	go func() {
 		if err := agent.Run(ctx); err != nil {
 			logger.ErrorCF("agent", "Failed to run agent", map[string]any{
@@ -159,6 +192,7 @@ func (m *AgentManager) GetWeixinOutboundCh(name string) chan bus.OutboundMessage
 func (m *AgentManager) startOutboundDispatcher(
 	name string,
 	msgBus *bus.MessageBus,
+	finclawChannel *finclaw.FinClawChannel,
 	finclawOutCh, weixinOutCh chan bus.OutboundMessage,
 ) {
 	if msgBus == nil {
@@ -188,6 +222,29 @@ func (m *AgentManager) startOutboundDispatcher(
 				case target <- msg:
 				case <-dispatchCtx.Done():
 					return
+				}
+			case mediaMsg, ok := <-msgBus.OutboundMediaChan():
+				if !ok {
+					return
+				}
+				// Web channel is the only media-capable target today; WeChat has
+				// no SendMedia, so non-web media is dropped (logged) for now.
+				if mediaMsg.Channel != "" && mediaMsg.Channel != "fin" {
+					logger.DebugCF("agent", "Dropping media for non-web channel", map[string]any{
+						"agent":   name,
+						"channel": mediaMsg.Channel,
+					})
+					continue
+				}
+				if finclawChannel == nil {
+					continue
+				}
+				if _, err := finclawChannel.SendMedia(dispatchCtx, mediaMsg); err != nil {
+					logger.WarnCF("agent", "Failed to deliver outbound media", map[string]any{
+						"agent":   name,
+						"chat_id": mediaMsg.ChatID,
+						"error":   err.Error(),
+					})
 				}
 			}
 		}

@@ -16,6 +16,7 @@ import {
 } from '@/components/PersonaGenerateDialog';
 import { cn } from '@/lib/cn';
 import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
+import { toast } from 'sonner';
 
 /* ─── 浮窗布局工具 ─── */
 
@@ -681,6 +682,7 @@ export function DocReadingPanel({
       await onSave(draft);
       setSavedContent(draft);
       setEditing(false);
+      toast.success('保存成功');
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : '保存失败');
     } finally {

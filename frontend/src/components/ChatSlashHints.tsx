@@ -3,6 +3,7 @@ import type { KeyboardEvent } from 'react';
 
 export const CHAT_SLASH_COMMANDS = [
   { command: '/stop', description: '中止当前回复' },
+  { command: '/clear', description: '清空对话历史' },
 ] as const;
 
 export type SlashCommand = (typeof CHAT_SLASH_COMMANDS)[number];
@@ -79,7 +80,7 @@ export function ChatSlashHints({ value, onPick, className }: Props) {
       role="listbox"
       aria-label="命令提示"
       className={cn(
-        'absolute left-0 right-0 top-full z-[100] mt-1.5 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-md',
+        'absolute bottom-full left-0 right-0 z-[100] mb-1.5 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-md',
         className,
       )}
     >

@@ -44,6 +44,7 @@ func (fr *FinClawRouter) RoutesInit() error {
 		return fmt.Errorf("webui: %w", err)
 	}
 	fr.webSocketRouter()
+	fr.mediaRouter()
 	fr.rssRouter()
 	fr.authRouter()
 	fr.agentManagerRouter()

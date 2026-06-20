@@ -9,6 +9,21 @@ const legacySidKey = (agentId: string) => `finclaw.chat.sid.${agentId}`;
 
 export type AgentSessionMap = Record<string, string>;
 
+/**
+ * 生成新的会话 ID。会话 ID 由前端创建并持有，后端不再自动生成，
+ * 这样每次（重）连接都能稳定带上同一个 sessionId。
+ */
+export function genSessionId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch {
+    // fall through to manual generation
+  }
+  return `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
 function readSessionMapRaw(): AgentSessionMap {
   if (typeof localStorage === 'undefined') return {};
   try {

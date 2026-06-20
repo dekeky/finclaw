@@ -163,22 +163,19 @@ export function AgentProfileSection({ agentName, hasAvatar, className, onRenamed
             {renameError && <p className="mt-1 text-xs text-destructive">{renameError}</p>}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-[11px] text-muted-foreground">支持 JPEG / PNG / GIF，最大 512 KB，边长不超过 512 px。</p>
-            {hasAvatar && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
-                disabled={avatarBusy}
-                onClick={() => void onRemoveAvatar()}
-              >
-                <IconTrash className="mr-1 h-3 w-3" stroke={1.75} />
-                移除头像
-              </Button>
-            )}
-          </div>
+          {hasAvatar && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+              disabled={avatarBusy}
+              onClick={() => void onRemoveAvatar()}
+            >
+              <IconTrash className="mr-1 h-3 w-3" stroke={1.75} />
+              移除头像
+            </Button>
+          )}
           {avatarError && <p className="text-xs text-destructive">{avatarError}</p>}
         </div>
       </div>

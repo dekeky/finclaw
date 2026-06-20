@@ -33,6 +33,7 @@ func (ar *AgentManagerRouter) ConfigRouter() {
 	group.GET("/:name/skills", ar.getAgentSkills)
 	group.DELETE("/:name/skills", ar.deleteSkill)
 	group.GET("/:name/skills/dir", ar.listSkillDir)
+	group.GET("/:name/skills/download", ar.downloadSkillPath)
 	group.DELETE("/:name/skills/path", ar.deleteSkillPath)
 	group.GET("/:name/skills/file", ar.getSkillFile)
 	group.PUT("/:name/skills/file", ar.putSkillFile)
@@ -803,6 +804,37 @@ func (ar *AgentManagerRouter) listSkillDir(c *gin.Context) {
 	ginx.NewRender(c).Data(gin.H{"files": entries})
 }
 
+// GET /api/v1/agents/:name/skills/download?source=&skill=&path= — download a skill folder as ZIP.
+func (ar *AgentManagerRouter) downloadSkillPath(c *gin.Context) {
+	userID := getUserID(c)
+	name := c.Param("name")
+	source := strings.TrimSpace(c.Query("source"))
+	skill := strings.TrimSpace(c.Query("skill"))
+	relPath := strings.TrimSpace(c.Query("path"))
+	workspace, err := ar.resolveAgentWorkspace(userID, name)
+	if err != nil {
+		ginx.NewRender(c, http.StatusNotFound).Err(err)
+		return
+	}
+	dir, err := picoclaw.ResolveSkillDownloadPath(workspace, source, skill, relPath)
+	if err != nil {
+		renderSkillErr(c, err)
+		return
+	}
+	data, err := ZipDirectoryToBytes(dir)
+	if err != nil {
+		renderSkillErr(c, err)
+		return
+	}
+	baseName := skill
+	if relPath != "" {
+		baseName = filepath.Base(relPath)
+	}
+	safeName := zipDownloadFilename(baseName)
+	c.Header("Content-Disposition", attachmentContentDisposition(safeName))
+	c.Data(http.StatusOK, "application/zip", data)
+}
+
 // DELETE /api/v1/agents/:name/skills/path?source=&skill=&path= — delete one file or folder inside a skill package.
 func (ar *AgentManagerRouter) deleteSkillPath(c *gin.Context) {
 	userID := getUserID(c)
@@ -1068,6 +1100,31 @@ func (ar *AgentManagerRouter) getDocFile(c *gin.Context) {
 }
 
 func (ar *AgentManagerRouter) serveDocFileDownload(c *gin.Context, workspace, filename string) {
+	path, err := resolveDocLocation(workspace, filename)
+	if err != nil {
+		renderDocErr(c, err)
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		renderDocErr(c, err)
+		return
+	}
+	if info.IsDir() {
+		data, err := ZipDirectoryToBytes(path)
+		if err != nil {
+			renderDocErr(c, err)
+			return
+		}
+		baseName := filepath.Base(filename)
+		if baseName == "." || baseName == string(filepath.Separator) {
+			baseName = "folder"
+		}
+		safeName := zipDownloadFilename(baseName)
+		c.Header("Content-Disposition", attachmentContentDisposition(safeName))
+		c.Data(http.StatusOK, "application/zip", data)
+		return
+	}
 	data, _, err := readDocFileBytes(workspace, filename)
 	if err != nil {
 		renderDocErr(c, err)
@@ -1075,7 +1132,7 @@ func (ar *AgentManagerRouter) serveDocFileDownload(c *gin.Context, workspace, fi
 	}
 	baseName := filepath.Base(filename)
 	safeName := strings.ReplaceAll(baseName, `"`, `_`)
-	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, safeName))
+	c.Header("Content-Disposition", attachmentContentDisposition(safeName))
 	c.Data(http.StatusOK, docDownloadContentType(filename), data)
 }
 

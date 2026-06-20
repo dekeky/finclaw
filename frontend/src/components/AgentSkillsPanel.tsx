@@ -81,6 +81,7 @@ interface AgentSkillsPanelProps {
     isDir: boolean,
     skillName: string,
   ) => void;
+  onDownloadSkillPath?: (source: string, skill: string, relPath: string) => void;
   refreshRev?: number;
 }
 
@@ -96,13 +97,33 @@ interface OpenCtx {
     isDir: boolean,
     skillName: string,
   ) => void;
+  onDownloadSkillPath?: (source: string, skill: string, relPath: string) => void;
   refreshRev?: number;
 }
 
-function makeDeleteSkillHandler(ctx: OpenCtx, skill: AgentSkillItem): (() => void) | undefined {
+function makeDeleteSkillHandler(
+  ctx: OpenCtx,
+  skill: AgentSkillItem,
+  onAfterDelete?: () => void | Promise<void>,
+): (() => void) | undefined {
   if (skill.source !== 'workspace' || !ctx.onDeleteSkill) return undefined;
   const dir = skill.dir || skill.name;
-  return () => ctx.onDeleteSkill!(skill.source, dir, skill.name);
+  return () => {
+    void (async () => {
+      await ctx.onDeleteSkill!(skill.source, dir, skill.name);
+      await onAfterDelete?.();
+    })();
+  };
+}
+
+function makeDownloadPathHandler(
+  ctx: OpenCtx,
+  skill: AgentSkillItem,
+  relPath: string,
+): (() => void) | undefined {
+  if (!ctx.onDownloadSkillPath) return undefined;
+  const dir = skill.dir || skill.name;
+  return () => ctx.onDownloadSkillPath!(skill.source, dir, relPath);
 }
 
 function makeDeletePathHandler(
@@ -110,10 +131,16 @@ function makeDeletePathHandler(
   skill: AgentSkillItem,
   relPath: string,
   isDir: boolean,
+  onAfterDelete?: () => void | Promise<void>,
 ): (() => void) | undefined {
   if (skill.source !== 'workspace' || !ctx.onDeleteSkillPath) return undefined;
   const dir = skill.dir || skill.name;
-  return () => ctx.onDeleteSkillPath!(skill.source, dir, relPath, isDir, skill.name);
+  return () => {
+    void (async () => {
+      await ctx.onDeleteSkillPath!(skill.source, dir, relPath, isDir, skill.name);
+      await onAfterDelete?.();
+    })();
+  };
 }
 
 function makeOpen(
@@ -150,8 +177,9 @@ function SkillDirNode({
   treeCache,
   expandedDirs,
   loadingDirs,
-  onToggleDir,
+  onSetDirExpanded,
   onRetryDir,
+  onRefetchTree,
 }: {
   skill: AgentSkillItem;
   dirPath: string;
@@ -161,8 +189,9 @@ function SkillDirNode({
   treeCache: Map<string, SkillDirEntry[]>;
   expandedDirs: Set<string>;
   loadingDirs: Set<string>;
-  onToggleDir: (cacheKey: string) => void;
+  onSetDirExpanded: (cacheKey: string, open: boolean) => void;
   onRetryDir: (cacheKey: string, subpath: string) => void;
+  onRefetchTree: () => Promise<void>;
 }) {
   const sorted = sortEntries(entries);
   const skillDir = skill.dir || skill.name;
@@ -186,13 +215,14 @@ function SkillDirNode({
               expanded={expandedDirs.has(cacheKey)}
               loading={loadingDirs.has(cacheKey)}
               childrenEntries={treeCache.get(cacheKey) ?? null}
-              onToggle={() => onToggleDir(cacheKey)}
+              onOpenChange={(open) => onSetDirExpanded(cacheKey, open)}
               onRetry={() => onRetryDir(cacheKey, fullPath)}
               treeCache={treeCache}
               expandedDirs={expandedDirs}
               loadingDirs={loadingDirs}
-              onToggleDir={onToggleDir}
+              onSetDirExpanded={onSetDirExpanded}
               onRetryDir={onRetryDir}
+              onRefetchTree={onRefetchTree}
             />
           );
         }
@@ -205,7 +235,7 @@ function SkillDirNode({
             selected={isSelected(ctx, skill, fullPath)}
             title={`${skill.name}/${fullPath}`}
             onClick={makeOpen(ctx, skill, fullPath)}
-            onDelete={makeDeletePathHandler(ctx, skill, fullPath, false)}
+            onDelete={makeDeletePathHandler(ctx, skill, fullPath, false, onRefetchTree)}
           />
         );
       })}
@@ -222,13 +252,14 @@ function SkillSubDirItem({
   expanded,
   loading,
   childrenEntries,
-  onToggle,
+  onOpenChange,
   onRetry,
   treeCache,
   expandedDirs,
   loadingDirs,
-  onToggleDir,
+  onSetDirExpanded,
   onRetryDir,
+  onRefetchTree,
 }: {
   name: string;
   dirPath: string;
@@ -238,19 +269,28 @@ function SkillSubDirItem({
   expanded: boolean;
   loading: boolean;
   childrenEntries: SkillDirEntry[] | null;
-  onToggle: () => void;
+  onOpenChange: (open: boolean) => void;
   onRetry: () => void;
   treeCache: Map<string, SkillDirEntry[]>;
   expandedDirs: Set<string>;
   loadingDirs: Set<string>;
-  onToggleDir: (cacheKey: string) => void;
+  onSetDirExpanded: (cacheKey: string, open: boolean) => void;
   onRetryDir: (cacheKey: string, subpath: string) => void;
+  onRefetchTree: () => Promise<void>;
 }) {
+  const skillDir = skill.dir || skill.name;
+  const cacheKey = `${skill.source}::${skillDir}::${dirPath}`;
+
   return (
-    <Collapsible open={expanded} onOpenChange={onToggle}>
+    <Collapsible open={expanded} onOpenChange={onOpenChange}>
       <AssetTreeDirRow
-        onDelete={makeDeletePathHandler(ctx, skill, dirPath, true)}
+        onDelete={makeDeletePathHandler(ctx, skill, dirPath, true, async () => {
+          onSetDirExpanded(cacheKey, false);
+          await onRefetchTree();
+        })}
+        onDownload={makeDownloadPathHandler(ctx, skill, dirPath)}
         deleteTitle="删除文件夹"
+        downloadTitle="下载文件夹"
         trigger={
           <CollapsibleTrigger asChild>
             <AssetTreeDirButton name={name} depth={depth} expanded={expanded} loading={loading} />
@@ -282,8 +322,9 @@ function SkillSubDirItem({
             treeCache={treeCache}
             expandedDirs={expandedDirs}
             loadingDirs={loadingDirs}
-            onToggleDir={onToggleDir}
+            onSetDirExpanded={onSetDirExpanded}
             onRetryDir={onRetryDir}
+            onRefetchTree={onRefetchTree}
           />
         ) : null}
       </CollapsibleContent>
@@ -306,35 +347,44 @@ function SkillFolderNode({
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
   const [rootError, setRootError] = useState<string | null>(null);
-  const loadGen = useRef(0);
+  const loadGenByKey = useRef<Map<string, number>>(new Map());
+  const expandedDirsRef = useRef(expandedDirs);
+  expandedDirsRef.current = expandedDirs;
+  const openRef = useRef(open);
+  const skipRefreshOnMount = useRef(true);
+  expandedDirsRef.current = expandedDirs;
+  openRef.current = open;
 
   const skillDir = skill.dir || skill.name;
   const rootCacheKey = `${skill.source}::${skillDir}::`;
 
   useEffect(() => {
+    loadGenByKey.current = new Map();
     setTreeCache(new Map());
     setExpandedDirs(new Set());
     setLoadingDirs(new Set());
     setRootError(null);
     setOpen(false);
-  }, [ctx.agentName, skill.source, skillDir, ctx.refreshRev]);
+    skipRefreshOnMount.current = true;
+  }, [ctx.agentName, skill.source, skillDir]);
 
   const fetchDir = useCallback(
     async (cacheKey: string, subpath: string) => {
-      const gen = ++loadGen.current;
+      const nextGen = (loadGenByKey.current.get(cacheKey) ?? 0) + 1;
+      loadGenByKey.current.set(cacheKey, nextGen);
       setLoadingDirs((prev) => new Set(prev).add(cacheKey));
       try {
         const body = await listAgentSkillDir(ctx.agentName, skill.source, skillDir, subpath || undefined);
-        if (gen !== loadGen.current) return;
+        if (loadGenByKey.current.get(cacheKey) !== nextGen) return;
         setTreeCache((prev) => new Map(prev).set(cacheKey, body.files ?? []));
         if (cacheKey === rootCacheKey) setRootError(null);
       } catch (err: unknown) {
-        if (gen !== loadGen.current) return;
+        if (loadGenByKey.current.get(cacheKey) !== nextGen) return;
         if (cacheKey === rootCacheKey) {
           setRootError(err instanceof Error ? err.message : '加载失败');
         }
       } finally {
-        if (gen === loadGen.current) {
+        if (loadGenByKey.current.get(cacheKey) === nextGen) {
           setLoadingDirs((prev) => {
             const next = new Set(prev);
             next.delete(cacheKey);
@@ -346,6 +396,22 @@ function SkillFolderNode({
     [ctx.agentName, skill.source, skillDir, rootCacheKey],
   );
 
+  const refetchVisibleDirs = useCallback(async () => {
+    if (!openRef.current) return;
+    const keys = [rootCacheKey, ...Array.from(expandedDirsRef.current)];
+    await Promise.all(
+      keys.map((cacheKey) => fetchDir(cacheKey, cacheKey.slice(rootCacheKey.length))),
+    );
+  }, [fetchDir, rootCacheKey]);
+
+  useEffect(() => {
+    if (skipRefreshOnMount.current) {
+      skipRefreshOnMount.current = false;
+      return;
+    }
+    void refetchVisibleDirs();
+  }, [ctx.refreshRev, refetchVisibleDirs]);
+
   const handleOpenChange = useCallback(
     (next: boolean) => {
       setOpen(next);
@@ -356,32 +422,34 @@ function SkillFolderNode({
     [treeCache, rootCacheKey, fetchDir],
   );
 
-  const toggleDir = useCallback(
-    (cacheKey: string) => {
+  const setDirExpanded = useCallback(
+    (cacheKey: string, open: boolean) => {
       setExpandedDirs((prev) => {
+        const has = prev.has(cacheKey);
+        if (open === has) return prev;
         const next = new Set(prev);
-        if (next.has(cacheKey)) {
-          next.delete(cacheKey);
-        } else {
-          next.add(cacheKey);
-          if (!treeCache.has(cacheKey)) {
-            const rel = cacheKey.slice(rootCacheKey.length);
-            void fetchDir(cacheKey, rel);
-          }
-        }
+        if (open) next.add(cacheKey);
+        else next.delete(cacheKey);
         return next;
       });
+      if (open && !treeCache.has(cacheKey)) {
+        const rel = cacheKey.slice(rootCacheKey.length);
+        void fetchDir(cacheKey, rel);
+      }
     },
     [treeCache, rootCacheKey, fetchDir],
   );
 
-  const onDelete = makeDeleteSkillHandler(ctx, skill);
+  const onDelete = makeDeleteSkillHandler(ctx, skill, refetchVisibleDirs);
+  const onDownload = makeDownloadPathHandler(ctx, skill, '');
 
   return (
     <Collapsible open={open} onOpenChange={handleOpenChange}>
       <AssetTreeDirRow
         onDelete={onDelete}
+        onDownload={onDownload}
         deleteTitle="删除该 Skill 包"
+        downloadTitle="下载 Skill 包"
         trigger={
           <CollapsibleTrigger asChild>
             <AssetTreeDirButton name={skill.name} depth={depth} expanded={open} />
@@ -391,7 +459,7 @@ function SkillFolderNode({
       <CollapsibleContent>
         {rootError ? (
           <p className="px-3 py-2 text-[11px] text-destructive">{rootError}</p>
-        ) : open && !treeCache.has(rootCacheKey) ? (
+        ) : open && !treeCache.has(rootCacheKey) && loadingDirs.has(rootCacheKey) ? (
           <div className="flex items-center gap-1 py-1" style={{ paddingLeft: rowPaddingLeft(depth + 1) }}>
             <TreeChevronSlot />
             <IconLoader2 className="size-3 animate-spin text-muted-foreground/50" />
@@ -406,8 +474,9 @@ function SkillFolderNode({
             treeCache={treeCache}
             expandedDirs={expandedDirs}
             loadingDirs={loadingDirs}
-            onToggleDir={toggleDir}
+            onSetDirExpanded={setDirExpanded}
             onRetryDir={(cacheKey, subpath) => void fetchDir(cacheKey, subpath)}
+            onRefetchTree={refetchVisibleDirs}
           />
         ) : null}
       </CollapsibleContent>
@@ -475,6 +544,7 @@ export function AgentSkillsPanel({
   activeFileKey,
   onDeleteSkill,
   onDeleteSkillPath,
+  onDownloadSkillPath,
   refreshRev,
 }: AgentSkillsPanelProps) {
   const [loading, setLoading] = useState(false);
@@ -511,9 +581,10 @@ export function AgentSkillsPanel({
       activeFileKey,
       onDeleteSkill,
       onDeleteSkillPath,
+      onDownloadSkillPath,
       refreshRev,
     }),
-    [agentName, onOpenFile, activeFileKey, onDeleteSkill, onDeleteSkillPath, refreshRev],
+    [agentName, onOpenFile, activeFileKey, onDeleteSkill, onDeleteSkillPath, onDownloadSkillPath, refreshRev],
   );
 
   return (

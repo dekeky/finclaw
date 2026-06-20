@@ -53,7 +53,14 @@ func main() {
 		agentName = os.Args[2]
 	}
 
-	u := url.URL{Scheme: "ws", Host: serverAddr, Path: "/ws/chat/" + agentName}
+	// sessionId 现由客户端生成并携带（服务端不再兜底生成）。
+	sessionID = fmt.Sprintf("testclient-%d", time.Now().UnixNano())
+	u := url.URL{
+		Scheme:   "ws",
+		Host:     serverAddr,
+		Path:     "/ws/chat/" + agentName,
+		RawQuery: "sessionId=" + url.QueryEscape(sessionID),
+	}
 	fmt.Printf("=== Finclaw WebSocket Test Client ===\n")
 	fmt.Printf("Server: %s\n", u.String())
 	fmt.Printf("Usage: go run main.go [server_addr] [agent_name]\n")

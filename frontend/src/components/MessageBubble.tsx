@@ -16,6 +16,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { ChatMessage, ProcessSegment } from '../types';
 import { MarkdownContent } from './MarkdownContent';
+import { MessageAttachments } from './MessageAttachments';
 import { isPicoclawToolFeedbackContent } from '../utils/foldPicoclawToolFeedback';
 import { getProcessSegments, isProcessMessage } from '../utils/foldProcessMessages';
 import {
@@ -492,8 +493,15 @@ export function MessageBubble({
     >
       <div className={`flex flex-col gap-1.5 ${isUser ? 'max-w-[85%] items-end' : 'min-w-0 w-full items-start'}`}>
         {isUser ? (
-          <div className="rounded-2xl rounded-tr-sm bg-violet-500 px-4 py-3 text-[15px] leading-relaxed text-white">
-            <span>{message.content}</span>
+          <div className="flex flex-col items-end gap-1.5">
+            {message.attachments && message.attachments.length > 0 && (
+              <MessageAttachments attachments={message.attachments} />
+            )}
+            {message.content && (
+              <div className="rounded-2xl rounded-tr-sm bg-violet-500 px-4 py-3 text-[15px] leading-relaxed text-white">
+                <span>{message.content}</span>
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex w-full flex-col gap-2">
@@ -510,6 +518,9 @@ export function MessageBubble({
               <div className="min-w-0 max-w-full overflow-hidden rounded-2xl rounded-tl-sm border border-border/60 bg-card px-4 py-3 text-[15px] leading-relaxed text-foreground">
                 {renderMarkdown(body, '-body')}
               </div>
+            )}
+            {message.attachments && message.attachments.length > 0 && (
+              <MessageAttachments attachments={message.attachments} />
             )}
           </div>
         )}

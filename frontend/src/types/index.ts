@@ -10,6 +10,18 @@ export interface ProcessSegment {
   sourceIds?: string[];
 }
 
+/** 媒体附件类型 */
+export type AttachmentType = 'image' | 'audio' | 'video' | 'file';
+
+export interface Attachment {
+  type: AttachmentType;
+  /** 同源下载路径 /fin/media/<id>（需附带 token），或本地上传时的 data: URL */
+  url: string;
+  filename?: string;
+  content_type?: string;
+  caption?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
@@ -18,6 +30,8 @@ export interface ChatMessage {
   kind?: MessageKind;
   /** 合并后的思考 + 工具步骤（kind === 'process'） */
   processSegments?: ProcessSegment[];
+  /** 媒体附件（图片 / 音频 / 视频 / 文件） */
+  attachments?: Attachment[];
 }
 
 export interface WSMessage {
@@ -30,6 +44,7 @@ export interface WSMessage {
     role?: MessageRole;
     message_kind?: string;
     client_id?: string;
+    attachments?: Attachment[];
     messages?: Array<{
       id: string;
       role: MessageRole;

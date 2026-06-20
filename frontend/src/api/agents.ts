@@ -1,5 +1,6 @@
 import type { GinxResponse } from '../types/rss';
 import { getToken } from './auth';
+import { saveResponseAsDownload } from '@/lib/downloadResponse';
 
 const AGENTS_API = '/api/v1/agents';
 
@@ -445,6 +446,23 @@ export async function deleteAgentSkillPath(
     { method: 'DELETE', headers: authHeaders() },
   );
   await parseGinx<unknown>(res);
+}
+
+/** GET /agents/:name/skills/download —— 下载 skill 包或子文件夹（ZIP）。 */
+export async function downloadAgentSkillPath(
+  name: string,
+  source: string,
+  skill: string,
+  path = '',
+): Promise<void> {
+  const params = new URLSearchParams({ source, skill });
+  if (path) params.set('path', path);
+  const res = await fetch(
+    `${AGENTS_API}/${encodeURIComponent(name)}/skills/download?${params.toString()}`,
+    { headers: authHeaders() },
+  );
+  const baseName = path ? path.split('/').pop() ?? path : skill;
+  await saveResponseAsDownload(res, `${baseName}.zip`);
 }
 
 /** GET /agents/:name/workspace-files —— 读取人设 Markdown 文件。 */

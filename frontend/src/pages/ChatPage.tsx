@@ -1,4 +1,4 @@
-import { IconAlertTriangle, IconBuildingStore, IconFolder, IconHistory, IconMessagePlus, IconTrash } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBuildingStore, IconFolder, IconHistory, IconMessagePlus, IconPhoto, IconTrash, IconX } from '@tabler/icons-react';
 import { Link } from 'react-router-dom';
 import { ChatMainToolbar } from '@/components/chrome/ChatMainToolbar';
 import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
@@ -18,6 +18,7 @@ import {
   writeAgentSkillFile,
   deleteAgentSkill,
   deleteAgentSkillPath,
+  downloadAgentSkillPath,
 } from '../api/agents';
 import { writeAgentDocFile, deleteAgentDocPath, downloadAgentDocFile } from '../api/agentDocs';
 import { messageTouchesDocScanRoot } from '../lib/agentDocRoots';
@@ -41,7 +42,8 @@ import {
   persistedToMessages,
   type ArchivedChat,
 } from '@/lib/chatPersistence';
-import { useState, useRef, useMemo, useEffect, useCallback, type MouseEvent } from 'react';
+import { useState, useRef, useMemo, useEffect, useCallback, type ChangeEvent, type MouseEvent } from 'react';
+import { filesToPendingImages, type PendingImage } from '@/lib/imageAttach';
 import { cn } from '@/lib/cn';
 import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 import { TOOLBAR_ICON_BUTTON_CLASS } from '@/lib/toolbarButton';
@@ -49,6 +51,8 @@ import { TOOLBAR_ICON_BUTTON_CLASS } from '@/lib/toolbarButton';
 export default function ChatPage() {
   const { agents, currentAgent, refresh, status: agentsLoadStatus, error: agentsLoadError } = useAgents();
   const [value, setValue] = useState('');
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const dock = useAiDock();
 
@@ -122,17 +126,17 @@ export default function ChatPage() {
   }, [currentAgent, skillFile]);
 
   // ── 删除 ──
-  const handleDownloadDoc = useCallback(async (fullPath: string) => {
+  const handleDownloadDoc = useCallback(async (fullPath: string, isDir: boolean) => {
     if (!currentAgent) return;
     try {
-      await downloadAgentDocFile(currentAgent, fullPath);
+      await downloadAgentDocFile(currentAgent, fullPath, isDir);
     } catch (err) {
       window.alert(err instanceof Error ? err.message : '下载失败');
     }
   }, [currentAgent]);
 
   const handleDeleteDoc = useCallback(async (fullPath: string, isDir: boolean) => {
-    if (!currentAgent) return;
+    if (!currentAgent) return false;
     const name = fullPath.split('/').pop() ?? fullPath;
     const ok = await confirm({
       title: isDir ? `删除文件夹「${name}」` : `删除文件「${name}」`,
@@ -142,17 +146,30 @@ export default function ChatPage() {
       confirmText: '删除',
       danger: true,
     });
-    if (!ok) return;
+    if (!ok) return false;
     try {
       await deleteAgentDocPath(currentAgent, fullPath);
       if (selectedDocPath && (selectedDocPath === fullPath || selectedDocPath.startsWith(`${fullPath}/`))) {
         setSelectedDocPath(null);
       }
-      bumpDocsRefresh();
+      return true;
     } catch (err) {
       window.alert(err instanceof Error ? err.message : '删除失败');
+      return false;
     }
-  }, [currentAgent, selectedDocPath, setSelectedDocPath, bumpDocsRefresh, confirm]);
+  }, [currentAgent, selectedDocPath, setSelectedDocPath, confirm]);
+
+  const handleDownloadSkillPath = useCallback(
+    async (source: string, skill: string, relPath: string) => {
+      if (!currentAgent) return;
+      try {
+        await downloadAgentSkillPath(currentAgent, source, skill, relPath);
+      } catch (err) {
+        window.alert(err instanceof Error ? err.message : '下载失败');
+      }
+    },
+    [currentAgent],
+  );
 
   const handleDeleteSkill = useCallback(async (source: string, skill: string, name: string) => {
     if (!currentAgent) return;
@@ -197,7 +214,6 @@ export default function ChatPage() {
         ) {
           setSkillFile(null);
         }
-        setSkillsRefreshRev((n) => n + 1);
       } catch (err) {
         window.alert(err instanceof Error ? err.message : '删除失败');
       }
@@ -217,7 +233,7 @@ export default function ChatPage() {
       archiveConversation(currentAgent, messages);
       bumpHistory();
     }
-    clearMessages();
+    clearMessages({ startNewSession: true });
   }, [currentAgent, messages, clearMessages, bumpHistory]);
 
   const handleRestoreArchive = useCallback(
@@ -239,7 +255,7 @@ export default function ChatPage() {
 
   const handleNewChat = useCallback(() => {
     if (messages.length > 0) handleArchiveAndClear();
-    else clearMessages();
+    else clearMessages({ startNewSession: true });
   }, [messages.length, handleArchiveAndClear, clearMessages]);
 
   const noAgents = agents.length === 0 && agentsLoadStatus === 'ready';
@@ -253,12 +269,28 @@ export default function ChatPage() {
   }, [messages, bumpDocsRefresh]);
 
   const handleSend = (text: string) => {
-    if (!text.trim() || status !== 'connected') return;
+    if (status !== 'connected') return;
+    if (!text.trim() && pendingImages.length === 0) return;
     const content = dock.selectedKeys.size > 0
       ? buildAnalysisUserMessage(text, dock.listEntries.filter(e => dock.selectedKeys.has(rssScopedItemKey(e.sourceName, e.sector, e.item))))
       : text;
-    send(content);
+    const media = pendingImages.map((img) => img.dataUrl);
+    send(content, media.length > 0 ? media : undefined);
     setValue('');
+    setPendingImages([]);
+  };
+
+  const handlePickImages = async (e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const { images } = await filesToPendingImages(files);
+    if (images.length > 0) setPendingImages((prev) => [...prev, ...images]);
+    // reset so the same file can be re-selected
+    e.target.value = '';
+  };
+
+  const removePendingImage = (index: number) => {
+    setPendingImages((prev) => prev.filter((_, i) => i !== index));
   };
 
   return (
@@ -409,13 +441,14 @@ export default function ChatPage() {
                   }
                   onDeleteSkill={handleDeleteSkill}
                   onDeleteSkillPath={handleDeleteSkillPath}
+                  onDownloadSkillPath={handleDownloadSkillPath}
                   refreshRev={skillsRefreshRev}
                 />
               )}
             </AgentAssetsSidebar>
           )}
 
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div className={cn('min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]', CHAT_SCROLL_GUTTER)}>
               <div className={cn('flex flex-col gap-8', CHAT_MAIN_COLUMN)}>
                 <ErrorBoundary>
@@ -431,14 +464,61 @@ export default function ChatPage() {
               </div>
             </div>
 
-            <div className={cn('shrink-0 border-t border-border/40', CHAT_INPUT_GUTTER)}>
+            <div className={cn('relative shrink-0 overflow-visible border-t border-border/40', CHAT_INPUT_GUTTER)}>
               <div className={CHAT_MAIN_COLUMN}>
                 <form ref={formRef} onSubmit={(e) => { e.preventDefault(); handleSend(value); }}>
                   <div className="relative overflow-visible rounded-2xl border border-border/60 bg-card p-1.5 pr-1 shadow-sm">
-                    <div className="flex items-end gap-2">
+                    <ChatSlashHints
+                      value={value}
+                      onPick={(command) => setValue(command)}
+                    />
+                    {pendingImages.length > 0 && (
+                      <div className="flex flex-wrap gap-2 px-2 pb-1.5 pt-1">
+                        {pendingImages.map((img, i) => (
+                          <div key={`${img.name}-${i}`} className="relative">
+                            <img
+                              src={img.dataUrl}
+                              alt={img.name}
+                              className="h-16 w-16 rounded-lg border border-border/60 object-cover"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removePendingImage(i)}
+                              className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-foreground/80 text-background transition-colors hover:bg-foreground"
+                              aria-label="移除图片"
+                            >
+                              <IconX className="size-3" stroke={2.5} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/gif,image/webp,image/bmp"
+                        multiple
+                        className="hidden"
+                        onChange={handlePickImages}
+                      />
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            className="flex size-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                            disabled={status !== 'connected'}
+                            onClick={() => fileInputRef.current?.click()}
+                            aria-label="添加图片"
+                          >
+                            <IconPhoto className="size-[18px]" stroke={1.75} />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">添加图片</TooltipContent>
+                      </Tooltip>
                       <textarea
-                        className="min-h-[44px] w-full resize-none bg-transparent px-3 py-2.5 text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
-                        placeholder={dock.selectedKeys.size > 0 ? '已选文章将自动附带到对话中...' : '输入你的问题...'}
+                        className="min-h-9 w-full resize-none bg-transparent px-3 py-1.5 text-[15px] leading-normal text-foreground outline-none placeholder:text-muted-foreground"
+                        placeholder={dock.selectedKeys.size > 0 ? '已选文章将自动附带到对话中...' : "输入您的问题...。输入'/'可使用系统命令，如'/stop'可中止当前回复"}
                         rows={1}
                         value={value}
                         onChange={(e) => setValue(e.target.value)}
@@ -452,8 +532,8 @@ export default function ChatPage() {
                       />
                       <button
                         type="submit"
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-500 text-white transition-all hover:bg-violet-600 active:scale-95 disabled:opacity-50"
-                        disabled={status !== 'connected' || !value.trim()}
+                        className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-violet-500 text-white transition-all hover:bg-violet-600 active:scale-95 disabled:opacity-50"
+                        disabled={status !== 'connected' || (!value.trim() && pendingImages.length === 0)}
                         aria-label="发送"
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -462,20 +542,8 @@ export default function ChatPage() {
                         </svg>
                       </button>
                     </div>
-                    <ChatSlashHints
-                      value={value}
-                      onPick={(command) => setValue(command)}
-                    />
                   </div>
                 </form>
-                <p className="mt-2 text-center text-[11px] text-muted-foreground">
-                  <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">Enter</kbd> 发送 ·
-                  <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">Shift</kbd>+<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">Enter</kbd> 换行 ·
-                  输入 <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">/</kbd> 查看命令（如 <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono">/stop</kbd> 中止生成）
-                </p>
-                <p className="mt-1 text-center text-[10px] text-muted-foreground/80">
-                  对话内容会缓存在本浏览器（localStorage），刷新后仍可从当前 Agent 恢复。
-                </p>
               </div>
             </div>
           </div>

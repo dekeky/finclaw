@@ -15,11 +15,12 @@ var ErrConnectionClosed = errors.New("connection closed")
 const DefaultSessionBufferMaxSize = 2000
 
 type CachedMessage struct {
-	ID        string
-	Content   string
-	Role      string
-	Kind      string
-	Timestamp time.Time
+	ID          string
+	Content     string
+	Role        string
+	Kind        string
+	Attachments []Attachment
+	Timestamp   time.Time
 }
 
 // SessionBuffer is a ring buffer that stores recent messages for a session.

@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { cn } from '@/lib/cn';
 import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
+import { toast } from 'sonner';
 
 const PERSONA_TABS: PersonaFileName[] = ['AGENT.md', 'SOUL.md', 'USER.md'];
 
@@ -153,6 +154,7 @@ export function AgentPersonaEditor({ agentName, className, onDirtyChange }: Agen
       const updated = await putAgentWorkspaceFile(agentName, activeTab, activeDraft);
       setFiles((prev) => (prev ? { ...prev, [activeTab]: updated } : prev));
       setSavedDrafts((prev) => ({ ...prev, [activeTab]: activeDraft }));
+      toast.success('保存成功');
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
     } finally {

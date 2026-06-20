@@ -74,16 +74,6 @@ export function InputArea({ onSend, disabled, placeholder, compact }: InputAreaP
           </svg>
         </button>
       </div>
-      {!compact ? (
-        <div style={styles.hint}>
-          <kbd style={styles.kbd}>Enter</kbd> to send · <kbd style={styles.kbd}>Shift</kbd>+<kbd style={styles.kbd}>Enter</kbd> for new line ·{' '}
-          <kbd style={styles.kbd}>/</kbd> commands
-        </div>
-      ) : (
-        <div style={styles.hintCompact}>
-          <kbd style={styles.kbd}>/</kbd> 命令 · <kbd style={styles.kbd}>/stop</kbd> 中止
-        </div>
-      )}
     </form>
   );
 }
@@ -148,28 +138,5 @@ const styles: Record<string, React.CSSProperties> = {
     width: 40,
     height: 40,
     borderRadius: 11,
-  },
-  hint: {
-    display: 'flex',
-    justifyContent: 'center',
-    marginTop: 12,
-    fontSize: 11,
-    color: 'var(--fc-text-muted)',
-    fontFamily: 'JetBrains Mono, monospace',
-  },
-  hintCompact: {
-    display: 'flex',
-    justifyContent: 'center',
-    marginTop: 8,
-    fontSize: 10,
-    color: 'var(--fc-text-muted)',
-    fontFamily: 'JetBrains Mono, monospace',
-  },
-  kbd: {
-    background: 'var(--fc-bg-muted)',
-    padding: '2px 6px',
-    borderRadius: 4,
-    border: '1px solid var(--fc-border-strong)',
-    margin: '0 2px',
   },
 };

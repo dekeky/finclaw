@@ -444,7 +444,7 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
                   <button
                     type="button"
                     className="rss-ai-dock-newchat"
-                    onClick={clearMessages}
+                    onClick={() => clearMessages({ startNewSession: true })}
                     title="清空当前会话（元宝式新对话）"
                   >
                     新对话
@@ -526,7 +526,7 @@ export function RssAiChatDock({ listEntries, selectedKeys, onToggleSelectKey, on
                 <ChatContainer
                   messages={messages}
                   isTyping={isTyping}
-                  onClear={clearMessages}
+                  onClear={() => clearMessages({ startNewSession: true })}
                   agentName={currentAgent}
                   variant="dock"
                   onQuickPrompt={handleSend}

@@ -120,18 +120,28 @@ export function AssetTreeFileRow({
 export function AssetTreeDirRow({
   trigger,
   meta,
+  onDownload,
   onDelete,
   deleteTitle = '删除文件夹',
+  downloadTitle = '下载文件夹',
 }: {
   trigger: React.ReactNode;
   meta?: string;
+  onDownload?: () => void;
   onDelete?: () => void;
   deleteTitle?: string;
+  downloadTitle?: string;
 }) {
   return (
     <RowShell
       actions={
-        <TreeRowActions meta={meta} onDelete={onDelete} deleteTitle={deleteTitle} />
+        <TreeRowActions
+          meta={meta}
+          onDownload={onDownload}
+          onDelete={onDelete}
+          deleteTitle={deleteTitle}
+          downloadTitle={downloadTitle}
+        />
       }
     >
       {trigger}

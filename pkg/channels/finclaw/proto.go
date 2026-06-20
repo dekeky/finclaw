@@ -11,7 +11,22 @@ const (
 	TypeConnected   FinMessageType = "connected"
 	TypeError       FinMessageType = "error"
 	TypeMessageSend FinMessageType = "message.send"
+	// Transient indicators the web client understands directly (see useWebSocket).
+	// They carry no content and are never cached; their sole job is to tell the
+	// client the agent is working so its send-confirm watchdog does not reconnect.
+	TypeTypingStart FinMessageType = "typing_start"
+	TypeTypingStop  FinMessageType = "typing_stop"
 )
+
+// Attachment is a single media file delivered to the web client. The URL is a
+// same-origin download path; the client appends its auth token when fetching.
+type Attachment struct {
+	Type        string `json:"type"` // "image" | "audio" | "video" | "file"
+	URL         string `json:"url"`
+	Filename    string `json:"filename,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+	Caption     string `json:"caption,omitempty"`
+}
 
 type FinMessage struct {
 	Type      FinMessageType `json:"type"`

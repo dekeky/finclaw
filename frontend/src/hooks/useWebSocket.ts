@@ -7,6 +7,7 @@ import { isPicoclawToolFeedbackContent } from '../utils/foldPicoclawToolFeedback
 import { isAssistantThoughtOnlyContent } from '../utils/splitAssistantContent';
 import { rehydrateChatMessages } from '../utils/rehydrateChatMessages';
 import {
+  genSessionId,
   loadSessionId,
   loadSessionMap,
   saveSessionId,
@@ -21,6 +22,7 @@ import {
   saveLastTaskElapsed,
 } from '@/lib/chatPersistence';
 import { getToken, clearToken } from '../api/auth';
+import { normalizeSlashInput } from '@/components/ChatSlashHints';
 
 const RECONNECT_DELAY = 2000;
 const MAX_RECONNECT = 5;
@@ -55,12 +57,16 @@ function inferMessageKind(content: string, messageKind?: string): MessageKind | 
 function parseWsChatMessage(msg: WSMessage, content: string, role: 'user' | 'assistant'): ChatMessage {
   const messageKind =
     typeof msg.payload?.message_kind === 'string' ? msg.payload.message_kind : undefined;
+  const attachments = Array.isArray(msg.payload?.attachments)
+    ? msg.payload!.attachments!.filter((a) => a && typeof a.url === 'string')
+    : undefined;
   return {
     id: msg.id || genId(),
     role,
     content,
     timestamp: new Date(),
     kind: role === 'assistant' ? inferMessageKind(content, messageKind) : undefined,
+    attachments: attachments && attachments.length > 0 ? attachments : undefined,
   };
 }
 
@@ -137,10 +143,10 @@ export interface UseWebSocketReturn {
   status: ConnectionStatus;
   isTyping: boolean;
   sendError: string | null;
-  send: (content: string) => void;
+  send: (content: string, media?: string[]) => void;
   /** 收起「正在思考」指示（仅本地 UI，不中断服务端生成） */
   stop: () => void;
-  clearMessages: () => void;
+  clearMessages: (opts?: { startNewSession?: boolean }) => void;
   /** 将归档/历史消息载入当前会话并写入本地草稿 */
   restoreMessages: (messages: ChatMessage[]) => void;
   reconnect: () => void;
@@ -234,6 +240,22 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   const getCurrentSessionId = useCallback((): string | null => {
     return getSessionForAgent(persistAgentKeyRef.current);
   }, [getSessionForAgent]);
+
+  /**
+   * 读取指定 agent 的 sessionId；不存在则现场生成并持久化。
+   * 后端已不再生成 sessionId，因此（重）连接前必须保证本地已有一个。
+   */
+  const ensureSessionForAgent = useCallback(
+    (agentId: string | null | undefined): string | null => {
+      if (!agentId) return null;
+      const existing = getSessionForAgent(agentId);
+      if (existing) return existing;
+      const sid = genSessionId();
+      setSessionForAgent(agentId, sid);
+      return sid;
+    },
+    [getSessionForAgent, setSessionForAgent],
+  );
 
   /** 将 connected 收到的 sessionId 写入当前 agent 的 map 条目。 */
   const applySessionId = useCallback(
@@ -385,7 +407,8 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       case 'message_create': {
         const content = typeof msg.payload?.content === 'string' ? msg.payload.content : msg.content ?? '';
         const role = msg.payload?.role || 'assistant';
-        if (!content) {
+        const hasAttachments = Array.isArray(msg.payload?.attachments) && msg.payload!.attachments!.length > 0;
+        if (!content && !hasAttachments) {
           console.warn('[Finclaw WS] Empty content in message.send:', msg);
           break;
         }
@@ -517,12 +540,12 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     setStatus('connecting');
 
     try {
-      // Carry sessionId on reconnect so the server can resume the existing session
+      // sessionId 由前端持有：不存在则现场生成。后端不再兜底生成，
+      // 因此每次（重）连接都必须带上 sessionId，保证会话连续性。
       let wsUrl = target;
       const agentId = persistAgentKeyRef.current;
-      let sid = agentId ? getSessionForAgent(agentId) : null;
+      const sid = ensureSessionForAgent(agentId);
       if (sid && agentId) {
-        setSessionForAgent(agentId, sid);
         const sep = wsUrl.includes('?') ? '&' : '?';
         wsUrl = `${wsUrl}${sep}sessionId=${encodeURIComponent(sid)}`;
       }
@@ -643,9 +666,9 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       }
       setStatus('error');
     }
-  }, [startPing, handleIncoming, applySessionId, getSessionForAgent, setSessionForAgent]);
+  }, [startPing, handleIncoming, applySessionId, ensureSessionForAgent]);
 
-  const clearMessages = useCallback(() => {
+  const clearMessages = useCallback((opts?: { startNewSession?: boolean }) => {
     if (typingFallbackRef.current) {
       clearTimeout(typingFallbackRef.current);
       typingFallbackRef.current = null;
@@ -654,7 +677,13 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     setIsTyping(false);
     setMessages([]);
     if (persistAgentKey) {
-      setSessionForAgent(persistAgentKey, null);
+      if (opts?.startNewSession) {
+        // 新对话：立即生成一个新的 sessionId 并重连，让后端绑定到全新会话
+        // （后端按连接绑定 session，必须重连新会话才会生效）。
+        setSessionForAgent(persistAgentKey, genSessionId());
+      } else {
+        setSessionForAgent(persistAgentKey, null);
+      }
     }
     endTask();
     setCompletedTaskElapsedSec(null);
@@ -662,7 +691,12 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       clearDraft(persistAgentKey);
       saveLastTaskElapsed(persistAgentKey, null);
     }
-  }, [persistAgentKey, endTask, setSessionForAgent, clearSendConfirm]);
+    if (opts?.startNewSession) {
+      reconnectCountRef.current = 0;
+      reset();
+      connect();
+    }
+  }, [persistAgentKey, endTask, setSessionForAgent, clearSendConfirm, reset, connect]);
 
   const restoreMessages = useCallback(
     (msgs: ChatMessage[]) => {
@@ -716,7 +750,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   }, [reconnect]);
 
   const send = useCallback(
-    (content: string) => {
+    (content: string, media?: string[]) => {
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         setSendError('Connection lost. Please reconnect.');
@@ -725,11 +759,27 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
 
       setSendError(null);
 
-      // 即时添加到本地消息列表，保证用户看到自己的消息
-      const id = genId();
-      setMessages((prev) =>
-        foldChatMessages([...prev, { id, role: 'user', content, timestamp: new Date() }]),
-      );
+      const mediaList = (media ?? []).filter((m) => typeof m === 'string' && m.trim());
+      const slashCommand = normalizeSlashInput(content).trim();
+      const isClearCommand = slashCommand === '/clear';
+
+      if (isClearCommand) {
+        clearMessages();
+      } else {
+        // 即时添加到本地消息列表，保证用户看到自己的消息（含本地图片预览）
+        const id = genId();
+        const attachments =
+          mediaList.length > 0
+            ? mediaList.map((dataUrl, i) => ({
+                type: 'image' as const,
+                url: dataUrl,
+                filename: `image-${i + 1}`,
+              }))
+            : undefined;
+        setMessages((prev) =>
+          foldChatMessages([...prev, { id, role: 'user', content, timestamp: new Date(), attachments }]),
+        );
+      }
       // 元宝式：发出后即显示「正在思考」，不依赖服务端 typing_start
       setIsTyping(true);
       // 用户发送即视为新任务开始，记录起点并持久化（覆盖之前可能残留的值）
@@ -746,9 +796,9 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
 
       const msg = {
         type: 'message.send',
-        id,
+        id: genId(),
         session_id: getCurrentSessionId() || undefined,
-        payload: { content },
+        payload: mediaList.length > 0 ? { content, media: mediaList } : { content },
       };
       console.log('[Finclaw WS] Sending:', JSON.stringify(msg));
       ws.send(JSON.stringify(msg));
@@ -762,7 +812,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         reconnect();
       }, SEND_CONFIRM_TIMEOUT);
     },
-    [beginTask, applySessionId, getCurrentSessionId, reconnect, clearSendConfirm]
+    [beginTask, applySessionId, getCurrentSessionId, reconnect, clearSendConfirm, clearMessages],
   );
 
   const stop = useCallback(() => {

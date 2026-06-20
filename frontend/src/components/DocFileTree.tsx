@@ -3,6 +3,7 @@ import { IconFileDescription, IconLoader2, IconRefresh } from '@tabler/icons-rea
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { listAgentDocs, type DocFileEntry } from '@/api/agentDocs';
+import { loadExpandedDirs, saveExpandedDirs } from '@/lib/assetTreeStorage';
 import { rowPaddingLeft, TreeChevronSlot } from '@/components/asset-tree-layout';
 import {
   AssetTreeDirButton,
@@ -17,10 +18,10 @@ interface DocFileTreeProps {
   selectedDocPath: string | null;
   /** 隐藏内部标题（在共享「Agent 资产」标题下使用时）。 */
   hideHeader?: boolean;
-  /** 提供则在每行显示删除按钮。 */
-  onDelete?: (fullPath: string, isDir: boolean) => void;
+  /** 提供则在每行显示删除按钮；返回 false 表示取消/失败，树内不刷新。 */
+  onDelete?: (fullPath: string, isDir: boolean) => boolean | void | Promise<boolean | void>;
   /** 提供则在文件行显示下载按钮。 */
-  onDownload?: (fullPath: string) => void;
+  onDownload?: (fullPath: string, isDir: boolean) => void;
 }
 
 function sortFiles(files: DocFileEntry[]): DocFileEntry[] {
@@ -32,33 +33,52 @@ function sortFiles(files: DocFileEntry[]): DocFileEntry[] {
 
 export function DocFileTree({ agentName, refreshRev, onFileSelect, selectedDocPath, hideHeader, onDelete, onDownload }: DocFileTreeProps) {
   const [treeCache, setTreeCache] = useState<Map<string, DocFileEntry[]>>(new Map());
-  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
+  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => loadExpandedDirs(agentName));
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
   const [rootError, setRootError] = useState<string | null>(null);
-  const loadGen = useRef(0);
+  const loadGenByDir = useRef<Map<string, number>>(new Map());
+  const expandedDirsRef = useRef(expandedDirs);
+  const skipRefreshOnMount = useRef(true);
+  const skipExpandedSave = useRef(true);
+  expandedDirsRef.current = expandedDirs;
 
   useEffect(() => {
+    const nextExpanded = loadExpandedDirs(agentName);
+    loadGenByDir.current = new Map();
+    expandedDirsRef.current = nextExpanded;
     setTreeCache(new Map());
-    setExpandedDirs(new Set());
+    setExpandedDirs(nextExpanded);
     setLoadingDirs(new Set());
     setRootError(null);
+    skipRefreshOnMount.current = true;
+    skipExpandedSave.current = true;
   }, [agentName]);
+
+  useEffect(() => {
+    if (!agentName) return;
+    if (skipExpandedSave.current) {
+      skipExpandedSave.current = false;
+      return;
+    }
+    saveExpandedDirs(agentName, expandedDirs);
+  }, [agentName, expandedDirs]);
 
   const fetchDir = useCallback(
     async (subpath: string) => {
       if (!agentName) return;
-      const gen = ++loadGen.current;
+      const nextGen = (loadGenByDir.current.get(subpath) ?? 0) + 1;
+      loadGenByDir.current.set(subpath, nextGen);
       setLoadingDirs((prev) => new Set(prev).add(subpath));
       try {
         const body = await listAgentDocs(agentName, subpath || undefined);
-        if (gen !== loadGen.current) return;
+        if (loadGenByDir.current.get(subpath) !== nextGen) return;
         setTreeCache((prev) => new Map(prev).set(subpath, body.files ?? []));
         if (subpath === '') setRootError(null);
       } catch (err: any) {
-        if (gen !== loadGen.current) return;
+        if (loadGenByDir.current.get(subpath) !== nextGen) return;
         if (subpath === '') setRootError(err.message || '加载失败');
       } finally {
-        if (gen === loadGen.current) {
+        if (loadGenByDir.current.get(subpath) === nextGen) {
           setLoadingDirs((prev) => {
             const next = new Set(prev);
             next.delete(subpath);
@@ -70,28 +90,74 @@ export function DocFileTree({ agentName, refreshRev, onFileSelect, selectedDocPa
     [agentName],
   );
 
-  useEffect(() => {
-    setTreeCache(new Map());
-    setRootError(null);
-    void fetchDir('');
-  }, [fetchDir, refreshRev]);
+  const refetchVisibleDirs = useCallback(async () => {
+    const dirs = ['', ...Array.from(expandedDirsRef.current)];
+    await Promise.all(dirs.map((subpath) => fetchDir(subpath)));
+  }, [fetchDir]);
 
-  const toggleDir = useCallback(
-    (dirPath: string) => {
+  useEffect(() => {
+    if (!agentName) return;
+    void fetchDir('');
+    const expanded = Array.from(expandedDirsRef.current);
+    if (expanded.length > 0) {
+      void Promise.all(expanded.map((subpath) => fetchDir(subpath)));
+    }
+  }, [agentName, fetchDir]);
+
+  useEffect(() => {
+    if (!agentName) return;
+    if (skipRefreshOnMount.current) {
+      skipRefreshOnMount.current = false;
+      return;
+    }
+    void refetchVisibleDirs();
+  }, [agentName, refreshRev, refetchVisibleDirs]);
+
+  const setDirExpanded = useCallback(
+    (dirPath: string, open: boolean) => {
       setExpandedDirs((prev) => {
+        const has = prev.has(dirPath);
+        if (open === has) return prev;
         const next = new Set(prev);
-        if (next.has(dirPath)) {
-          next.delete(dirPath);
-        } else {
-          next.add(dirPath);
-          if (!treeCache.has(dirPath)) {
-            void fetchDir(dirPath);
-          }
-        }
+        if (open) next.add(dirPath);
+        else next.delete(dirPath);
         return next;
       });
+      if (open && !treeCache.has(dirPath)) {
+        void fetchDir(dirPath);
+      }
     },
     [treeCache, fetchDir],
+  );
+
+  const handleDelete = useCallback(
+    async (fullPath: string, isDir: boolean) => {
+      const deleted = await onDelete?.(fullPath, isDir);
+      if (deleted === false) return;
+
+      if (isDir) {
+        setExpandedDirs((prev) => {
+          const next = new Set(prev);
+          for (const path of prev) {
+            if (path === fullPath || path.startsWith(`${fullPath}/`)) {
+              next.delete(path);
+            }
+          }
+          return next;
+        });
+        setTreeCache((prev) => {
+          const next = new Map(prev);
+          for (const key of prev.keys()) {
+            if (key === fullPath || key.startsWith(`${fullPath}/`)) {
+              next.delete(key);
+            }
+          }
+          return next;
+        });
+      }
+      await refetchVisibleDirs();
+    },
+    [onDelete, refetchVisibleDirs],
   );
 
   return (
@@ -116,7 +182,7 @@ export function DocFileTree({ agentName, refreshRev, onFileSelect, selectedDocPa
               重试
             </button>
           </div>
-        ) : !treeCache.has('') ? (
+        ) : !treeCache.has('') && loadingDirs.has('') ? (
           <div className="px-3 py-6 text-center text-[11px] text-muted-foreground">
             <IconLoader2 className="mx-auto mb-1.5 size-4 animate-spin text-muted-foreground/50" />
             加载中...
@@ -136,9 +202,9 @@ export function DocFileTree({ agentName, refreshRev, onFileSelect, selectedDocPa
               treeCache={treeCache}
               expandedDirs={expandedDirs}
               loadingDirs={loadingDirs}
-              onToggleDir={toggleDir}
+              onSetDirExpanded={setDirExpanded}
               onRetryDir={fetchDir}
-              onDelete={onDelete}
+              onDelete={handleDelete}
               onDownload={onDownload}
             />
           </div>
@@ -157,10 +223,10 @@ interface DirectoryNodeProps {
   treeCache: Map<string, DocFileEntry[]>;
   expandedDirs: Set<string>;
   loadingDirs: Set<string>;
-  onToggleDir: (dirPath: string) => void;
+  onSetDirExpanded: (dirPath: string, open: boolean) => void;
   onRetryDir: (dirPath: string) => void;
-  onDelete?: (fullPath: string, isDir: boolean) => void;
-  onDownload?: (fullPath: string) => void;
+  onDelete?: (fullPath: string, isDir: boolean) => boolean | void | Promise<boolean | void>;
+  onDownload?: (fullPath: string, isDir: boolean) => void;
 }
 
 function DirectoryNode({
@@ -172,7 +238,7 @@ function DirectoryNode({
   treeCache,
   expandedDirs,
   loadingDirs,
-  onToggleDir,
+  onSetDirExpanded,
   onRetryDir,
   onDelete,
   onDownload,
@@ -194,14 +260,14 @@ function DirectoryNode({
               expanded={expandedDirs.has(fullPath)}
               loading={loadingDirs.has(fullPath)}
               childrenEntries={treeCache.get(fullPath) ?? null}
-              onToggle={() => onToggleDir(fullPath)}
+              onOpenChange={(open) => onSetDirExpanded(fullPath, open)}
               onRetry={() => onRetryDir(fullPath)}
               onFileSelect={onFileSelect}
               selectedDocPath={selectedDocPath}
               treeCache={treeCache}
               expandedDirs={expandedDirs}
               loadingDirs={loadingDirs}
-              onToggleDir={onToggleDir}
+              onSetDirExpanded={onSetDirExpanded}
               onRetryDir={onRetryDir}
               onDelete={onDelete}
               onDownload={onDownload}
@@ -217,7 +283,7 @@ function DirectoryNode({
             selected={selectedDocPath === fullPath}
             title={fullPath}
             onClick={() => onFileSelect(fullPath)}
-            onDownload={onDownload ? () => onDownload(fullPath) : undefined}
+            onDownload={onDownload ? () => onDownload(fullPath, false) : undefined}
             onDelete={onDelete ? () => onDelete(fullPath, false) : undefined}
           />
         );
@@ -233,17 +299,17 @@ interface DirItemProps {
   expanded: boolean;
   loading: boolean;
   childrenEntries: DocFileEntry[] | null;
-  onToggle: () => void;
+  onOpenChange: (open: boolean) => void;
   onRetry: () => void;
   onFileSelect: (fullPath: string) => void;
   selectedDocPath: string | null;
   treeCache: Map<string, DocFileEntry[]>;
   expandedDirs: Set<string>;
   loadingDirs: Set<string>;
-  onToggleDir: (dirPath: string) => void;
+  onSetDirExpanded: (dirPath: string, open: boolean) => void;
   onRetryDir: (dirPath: string) => void;
-  onDelete?: (fullPath: string, isDir: boolean) => void;
-  onDownload?: (fullPath: string) => void;
+  onDelete?: (fullPath: string, isDir: boolean) => boolean | void | Promise<boolean | void>;
+  onDownload?: (fullPath: string, isDir: boolean) => void;
 }
 
 function DirItem({
@@ -253,23 +319,25 @@ function DirItem({
   expanded,
   loading,
   childrenEntries,
-  onToggle,
+  onOpenChange,
   onRetry,
   onFileSelect,
   selectedDocPath,
   treeCache,
   expandedDirs,
   loadingDirs,
-  onToggleDir,
+  onSetDirExpanded,
   onRetryDir,
   onDelete,
   onDownload,
 }: DirItemProps) {
   return (
-    <Collapsible open={expanded} onOpenChange={onToggle}>
+    <Collapsible open={expanded} onOpenChange={onOpenChange}>
       <AssetTreeDirRow
         onDelete={onDelete ? () => onDelete(dirPath, true) : undefined}
+        onDownload={onDownload ? () => onDownload(dirPath, true) : undefined}
         deleteTitle="删除文件夹"
+        downloadTitle="下载文件夹"
         trigger={
           <CollapsibleTrigger asChild>
             <AssetTreeDirButton name={name} depth={depth} expanded={expanded} loading={loading} />
@@ -301,7 +369,7 @@ function DirItem({
             treeCache={treeCache}
             expandedDirs={expandedDirs}
             loadingDirs={loadingDirs}
-            onToggleDir={onToggleDir}
+            onSetDirExpanded={onSetDirExpanded}
             onRetryDir={onRetryDir}
             onDelete={onDelete}
             onDownload={onDownload}

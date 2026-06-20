@@ -12,6 +12,7 @@ import (
 	picoagent "github.com/sipeed/picoclaw/pkg/agent"
 	picoclawconfig "github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/skills"
+	"gopkg.in/yaml.v3"
 )
 
 const maxSkillFileSize = 5 << 20 // 5MB
@@ -133,6 +134,130 @@ func countSkills(items []AgentSkillItem) int {
 	return n
 }
 
+type skillPackageMeta struct {
+	Name        string
+	Description string
+	Source      string
+	Dir         string
+	SkillFile   string
+}
+
+func sourceForSkillRoot(workspace, root string) string {
+	root = filepath.Clean(root)
+	if root == filepath.Clean(filepath.Join(workspace, "skills")) {
+		return "workspace"
+	}
+	if root == filepath.Clean(filepath.Join(picoclawconfig.GetHome(), "skills")) {
+		return "global"
+	}
+	return "builtin"
+}
+
+func splitSkillFrontmatter(content string) (frontmatter, body string) {
+	content = strings.TrimPrefix(content, "\uFEFF")
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return "", content
+	}
+	end := -1
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			end = i
+			break
+		}
+	}
+	if end == -1 {
+		return "", content
+	}
+	frontmatter = strings.Join(lines[1:end], "\n")
+	body = strings.Join(lines[end+1:], "\n")
+	return frontmatter, strings.TrimLeft(body, "\n")
+}
+
+func firstMarkdownParagraph(content string) string {
+	_, body := splitSkillFrontmatter(content)
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		return line
+	}
+	return ""
+}
+
+func parseSkillPackageMetadata(skillFile, dirName string) (skillPackageMeta, bool) {
+	data, err := os.ReadFile(skillFile)
+	if err != nil {
+		return skillPackageMeta{}, false
+	}
+	content := string(data)
+	frontmatter, _ := splitSkillFrontmatter(content)
+
+	name := strings.TrimSpace(dirName)
+	description := ""
+	if frontmatter != "" {
+		var meta struct {
+			Name        string `yaml:"name"`
+			Description string `yaml:"description"`
+		}
+		if err := yaml.Unmarshal([]byte(frontmatter), &meta); err == nil {
+			if strings.TrimSpace(meta.Name) != "" {
+				name = strings.TrimSpace(meta.Name)
+			}
+			description = strings.TrimSpace(meta.Description)
+		}
+	}
+	if description == "" {
+		description = firstMarkdownParagraph(content)
+	}
+	description = strings.TrimSpace(description)
+	if description == "" {
+		return skillPackageMeta{}, false
+	}
+	if err := skills.ValidateSkillName(name); err != nil {
+		return skillPackageMeta{}, false
+	}
+	return skillPackageMeta{
+		Name:        name,
+		Description: description,
+		Dir:         dirName,
+		SkillFile:   skillFile,
+	}, true
+}
+
+// listAllSkillPackages scans skill roots (workspace > global > builtin).
+// Unlike picoclaw's ListSkills, description length is not capped.
+func listAllSkillPackages(workspace string) []skillPackageMeta {
+	loader := newSkillsLoaderForWorkspace(workspace)
+	seen := make(map[string]bool)
+	out := make([]skillPackageMeta, 0)
+	for _, root := range loader.SkillRoots() {
+		source := sourceForSkillRoot(workspace, root)
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+				continue
+			}
+			skillFile := filepath.Join(root, entry.Name(), "SKILL.md")
+			if _, err := os.Stat(skillFile); err != nil {
+				continue
+			}
+			meta, ok := parseSkillPackageMetadata(skillFile, entry.Name())
+			if !ok || seen[meta.Name] {
+				continue
+			}
+			seen[meta.Name] = true
+			meta.Source = source
+			out = append(out, meta)
+		}
+	}
+	return out
+}
+
 // ListAgentSkills returns all skills visible to the agent and whether each is active per AGENT.md.
 func ListAgentSkills(workspace string) (AgentSkillsSummary, error) {
 	workspace = strings.TrimSpace(workspace)
@@ -140,16 +265,15 @@ func ListAgentSkills(workspace string) (AgentSkillsSummary, error) {
 		return AgentSkillsSummary{}, errWorkspaceRequired()
 	}
 	configured := configuredSkillsFromWorkspace(workspace)
-	raw := newSkillsLoaderForWorkspace(workspace).ListSkills()
-	items := make([]AgentSkillItem, 0, len(raw))
-	for _, s := range raw {
+	items := make([]AgentSkillItem, 0)
+	for _, pkg := range listAllSkillPackages(workspace) {
 		items = append(items, AgentSkillItem{
-			Name:        s.Name,
-			Description: s.Description,
-			Source:      s.Source,
-			Dir:         filepath.Base(filepath.Dir(s.Path)),
-			Active:      skillIsActive(s.Name, configured),
-			SubSkills:   listSubSkills(s.Path),
+			Name:        pkg.Name,
+			Description: pkg.Description,
+			Source:      pkg.Source,
+			Dir:         pkg.Dir,
+			Active:      skillIsActive(pkg.Name, configured),
+			SubSkills:   listSubSkills(pkg.SkillFile),
 		})
 	}
 	return AgentSkillsSummary{
@@ -404,6 +528,46 @@ func DeleteSkillPath(workspace, source, skillDir, relPath string) error {
 		return os.RemoveAll(path)
 	}
 	return os.Remove(path)
+}
+
+// ResolveSkillDownloadPath returns the absolute directory path for a skill folder download.
+// subpath empty means the entire skill package root.
+func ResolveSkillDownloadPath(workspace, source, skillDir, subpath string) (string, error) {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return "", errWorkspaceRequired()
+	}
+	if err := validateSkillSegment(skillDir); err != nil {
+		return "", err
+	}
+	subpath = strings.TrimSpace(subpath)
+	if subpath != "" {
+		if err := validateSkillRelPath(subpath); err != nil {
+			return "", err
+		}
+	}
+	dir, err := skillRelPathWithinRoot(workspace, source, skillDir, subpath)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if subpath == "" {
+				return "", fmt.Errorf("skill %q not found", skillDir)
+			}
+			return "", fmt.Errorf("%q not found", subpath)
+		}
+		return "", fmt.Errorf("stat path: %w", err)
+	}
+	if !info.IsDir() {
+		name := subpath
+		if name == "" {
+			name = skillDir
+		}
+		return "", fmt.Errorf("%q is not a directory", name)
+	}
+	return dir, nil
 }
 
 // DeleteSkill removes an entire skill package directory and all its files.

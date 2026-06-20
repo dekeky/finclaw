@@ -16,6 +16,7 @@ import {
   writeAgentSkillFile,
   deleteAgentSkill,
   deleteAgentSkillPath,
+  downloadAgentSkillPath,
   type AgentDetailBody,
 } from '../api/agents';
 import { AgentAvatar } from '../components/AgentAvatar';
@@ -39,6 +40,7 @@ import { ThemeToggle } from '@/components/chrome/ThemeToggle';
 import { AGENT_MODEL_PRESETS } from '@/lib/agentModelPresets';
 import { cn } from '@/lib/cn';
 import { PRIMARY_BUTTON_CLASS, PRIMARY_LIST_ITEM_SELECTED_CLASS, PRIMARY_TAB_ACTIVE_CLASS, PRIMARY_TAB_INACTIVE_HOVER_CLASS, PRIMARY_AI_PANEL_CLASS, PRIMARY_AI_PANEL_HOVER_CLASS, PRIMARY_ICON_GRADIENT_CLASS } from '@/lib/primaryButton';
+import { toast } from 'sonner';
 
 type FormState = { name: string; model: string; apiBase: string; apiKey: string };
 type EditFormState = { model: string; apiBase: string; apiKey: string };
@@ -298,6 +300,18 @@ export default function AgentsPage() {
     [detailName, skillFile, confirm],
   );
 
+  const handleDownloadSkillPath = useCallback(
+    async (source: string, skill: string, relPath: string) => {
+      if (!detailName) return;
+      try {
+        await downloadAgentSkillPath(detailName, source, skill, relPath);
+      } catch (err) {
+        window.alert(err instanceof Error ? err.message : '下载失败');
+      }
+    },
+    [detailName],
+  );
+
   const handleDeleteSkillPath = useCallback(
     async (source: string, skill: string, relPath: string, isDir: boolean, skillName: string) => {
       if (!detailName) return;
@@ -321,7 +335,6 @@ export default function AgentsPage() {
         ) {
           setSkillFile(null);
         }
-        setSkillsRefreshRev((n) => n + 1);
       } catch (err) {
         window.alert(err instanceof Error ? err.message : '删除失败');
       }
@@ -526,6 +539,7 @@ export default function AgentsPage() {
       }
       setEditForm(EMPTY_EDIT_FORM);
       setEditConfigOpen(false);
+      toast.success('保存成功');
     } catch (err) {
       setEditSubmitError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -595,30 +609,49 @@ export default function AgentsPage() {
                   const { name } = agent;
                   const chatting = name === currentAgent;
                   const selected = name === selectedName;
+                  const deleting = pendingDelete === name;
                   return (
-                    <button
+                    <div
                       key={name}
-                      type="button"
-                      onClick={() => void handleSelectAgent(name)}
                       className={cn(
-                        'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors',
+                        'flex w-full items-center gap-0.5 rounded-lg pr-1 transition-colors',
                         selected
                           ? PRIMARY_LIST_ITEM_SELECTED_CLASS
                           : cn('text-foreground', PRIMARY_TAB_INACTIVE_HOVER_CLASS),
                       )}
                     >
-                      <AgentAvatar
-                        name={name}
-                        hasAvatar={agent.has_avatar}
-                        avatarRevision={avatarRevision}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-sm text-foreground">{name}</span>
-                          {chatting && <Badge variant="secondary" className="text-[10px]">当前</Badge>}
+                      <button
+                        type="button"
+                        onClick={() => void handleSelectAgent(name)}
+                        className="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2.5 text-left"
+                      >
+                        <AgentAvatar
+                          name={name}
+                          hasAvatar={agent.has_avatar}
+                          avatarRevision={avatarRevision}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate text-sm text-foreground">{name}</span>
+                            {chatting && <Badge variant="secondary" className="text-[10px]">当前</Badge>}
+                          </div>
                         </div>
-                      </div>
-                    </button>
+                      </button>
+                      <button
+                        type="button"
+                        className={cn(
+                          'flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 transition-colors',
+                          'hover:bg-destructive/10 hover:text-destructive',
+                          deleting && 'pointer-events-none opacity-50',
+                        )}
+                        onClick={() => void onDelete(name)}
+                        disabled={deleting}
+                        title="删除 Agent"
+                        aria-label="删除 Agent"
+                      >
+                        <IconTrash className="size-3.5" stroke={1.75} />
+                      </button>
+                    </div>
                   );
                 })}
               </div>
@@ -677,16 +710,6 @@ export default function AgentsPage() {
                     <IconUpload className="mr-1.5 h-3.5 w-3.5" stroke={1.75} />
                     发布到市场
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() => void onDelete(detailName)}
-                    disabled={pendingDelete === detailName}
-                  >
-                    <IconTrash className="mr-1.5 h-3.5 w-3.5" stroke={1.75} />
-                    {pendingDelete === detailName ? '删除中…' : '删除 Agent'}
-                  </Button>
                 </div>
               </div>
 
@@ -722,6 +745,7 @@ export default function AgentsPage() {
                   }
                   onDeleteSkill={handleDeleteSkill}
                   onDeleteSkillPath={handleDeleteSkillPath}
+                  onDownloadSkillPath={handleDownloadSkillPath}
                   refreshRev={skillsRefreshRev}
                 />
               ) : (
