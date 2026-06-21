@@ -103,8 +103,12 @@ function SelectLabel({
 function SelectItem({
   className,
   children,
+  trailing,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Item>) {
+}: React.ComponentProps<typeof SelectPrimitive.Item> & {
+  /** 行尾附加内容（如操作图标），渲染在选中勾选标记左侧。 */
+  trailing?: React.ReactNode
+}) {
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
@@ -120,6 +124,7 @@ function SelectItem({
         </SelectPrimitive.ItemIndicator>
       </span>
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      {trailing}
     </SelectPrimitive.Item>
   )
 }

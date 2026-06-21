@@ -17,6 +17,12 @@ export interface ArchivedChat {
   id: string;
   title: string;
   updatedAt: string;
+  /**
+   * 归档时所属的会话 sessionId。恢复历史对话时据此把活动会话切回该 session，
+   * 避免复用「最新会话」的 sessionId 导致后端缓存（from_cache）串台到历史窗口。
+   * 旧归档可能没有此字段（恢复时回退为生成全新 sessionId）。
+   */
+  sessionId?: string;
   messages: PersistedMessage[];
 }
 
@@ -125,7 +131,11 @@ function inferTitle(messages: ChatMessage[]): string {
   return oneLine.length <= max ? oneLine : `${oneLine.slice(0, max).trimEnd()}…`;
 }
 
-export function archiveConversation(agentId: string, messages: ChatMessage[]): void {
+export function archiveConversation(
+  agentId: string,
+  messages: ChatMessage[],
+  sessionId?: string | null,
+): void {
   if (messages.length === 0) return;
   const root = readRoot();
   const prev = root.agents[agentId] ?? emptyBucket();
@@ -135,6 +145,8 @@ export function archiveConversation(agentId: string, messages: ChatMessage[]): v
     updatedAt: new Date().toISOString(),
     messages: messages.map(msgToPersisted),
   };
+  const sid = sessionId?.trim();
+  if (sid) entry.sessionId = sid;
   const archived = [entry, ...prev.archived].slice(0, MAX_ARCHIVED_PER_AGENT);
   root.agents[agentId] = {
     ...prev,

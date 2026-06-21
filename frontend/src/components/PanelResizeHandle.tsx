@@ -5,11 +5,14 @@ interface PanelResizeHandleProps extends HorizontalResizeHandleProps {
   className?: string;
   /** Handle sits on the right edge of a left panel by default. */
   side?: 'left' | 'right';
+  /** When false, handle occupies layout space instead of overlaying panel content. */
+  overlay?: boolean;
 }
 
 export function PanelResizeHandle({
   className,
   side = 'right',
+  overlay = true,
   onPointerDown,
   onPointerMove,
   onPointerUp,
@@ -21,8 +24,10 @@ export function PanelResizeHandle({
       aria-orientation="vertical"
       aria-label="调整面板宽度"
       className={cn(
-        'absolute top-0 z-30 h-full w-2 touch-none select-none',
-        side === 'right' ? 'right-0 cursor-col-resize' : 'left-0 cursor-col-resize',
+        'w-2 shrink-0 touch-none select-none cursor-col-resize',
+        overlay
+          ? cn('absolute top-0 z-30 h-full', side === 'right' ? 'right-0' : 'left-0')
+          : 'relative self-stretch',
         'after:absolute after:inset-y-0 after:w-px after:bg-transparent after:transition-colors',
         side === 'right' ? 'after:right-1/2' : 'after:left-1/2',
         'hover:after:bg-border/80 active:after:bg-violet-500/50',

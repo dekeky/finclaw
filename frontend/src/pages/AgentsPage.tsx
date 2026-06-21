@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Dialog } from 'radix-ui';
-import { Navigate, useSearchParams } from 'react-router-dom';
-import { IconCpu, IconChevronDown, IconEye, IconEyeOff, IconFileDescription, IconPuzzle, IconSparkles, IconTrash, IconUpload, IconUser } from '@tabler/icons-react';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { IconCpu, IconChevronDown, IconEye, IconEyeOff, IconFileDescription, IconMessageCircle, IconPuzzle, IconSparkles, IconTrash, IconUpload, IconUser } from '@tabler/icons-react';
 import { PanelResizeHandle } from '@/components/PanelResizeHandle';
 import { useHorizontalResize } from '@/hooks/useHorizontalResize';
 import {
@@ -114,8 +114,11 @@ function saveDetailTab(tab: DetailTab) {
 }
 
 export default function AgentsPage() {
-  const { agents, agentNames, avatarRevision, currentAgent, refresh, createAgent, updateAgent, deleteAgent } = useAgents();
+  const { agents, agentNames, avatarRevision, currentAgent, selectAgent, refresh, createAgent, updateAgent, deleteAgent } = useAgents();
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const agentParam = searchParams.get('agent');
+  const appliedAgentParamRef = useRef(false);
 
   const [search, setSearch] = useState('');
   const [selectedName, setSelectedName] = useState<string | null>(null);
@@ -236,6 +239,23 @@ export default function AgentsPage() {
       return agentNames[0] ?? null;
     });
   }, [agentNames, currentAgent]);
+
+  // 来自对话页「详情」跳转：?agent=xxx 时优先定位到该 Agent（仅应用一次，避免覆盖后续手动选择）
+  useEffect(() => {
+    if (appliedAgentParamRef.current) return;
+    if (agentParam && agentNames.includes(agentParam)) {
+      setSelectedName(agentParam);
+      appliedAgentParamRef.current = true;
+    }
+  }, [agentParam, agentNames]);
+
+  const handleChatWithAgent = useCallback(
+    (name: string) => {
+      selectAgent(name);
+      navigate('/chat');
+    },
+    [navigate, selectAgent],
+  );
 
   const detailName = selectedName;
   const detailSummary = useMemo(() => findAgentSummary(agents, detailName), [agents, detailName]);
@@ -578,10 +598,11 @@ export default function AgentsPage() {
       {/* Content */}
       <div className="flex min-h-0 flex-1 gap-3 overflow-hidden p-3">
         {/* Left Pane - Agent List */}
-        <div
-          className="relative hidden shrink-0 flex-col rounded-xl border border-border bg-card md:flex"
-          style={{ width: agentsListResize.width }}
-        >
+        <div className="hidden min-h-0 shrink-0 md:flex">
+          <div
+            className="@container flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card"
+            style={{ width: agentsListResize.width }}
+          >
           <div className="space-y-2 border-b border-border/50 p-4">
             <Button
               variant="outline"
@@ -598,7 +619,7 @@ export default function AgentsPage() {
               className="h-8 text-sm"
             />
           </div>
-          <ScrollArea className="flex-1">
+          <ScrollArea className="min-w-0 flex-1">
             {filtered.length === 0 ? (
               <div className="p-4 text-center text-sm text-muted-foreground">
                 {search.trim() ? '没有匹配的 Agent' : '暂无 Agent'}
@@ -614,7 +635,7 @@ export default function AgentsPage() {
                     <div
                       key={name}
                       className={cn(
-                        'flex w-full items-center gap-0.5 rounded-lg pr-1 transition-colors',
+                        'grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center overflow-hidden rounded-lg',
                         selected
                           ? PRIMARY_LIST_ITEM_SELECTED_CLASS
                           : cn('text-foreground', PRIMARY_TAB_INACTIVE_HOVER_CLASS),
@@ -623,41 +644,59 @@ export default function AgentsPage() {
                       <button
                         type="button"
                         onClick={() => void handleSelectAgent(name)}
-                        className="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2.5 text-left"
+                        className="flex min-w-0 items-center gap-2 overflow-hidden rounded-lg px-2 py-2 text-left"
+                        title={name}
                       >
                         <AgentAvatar
                           name={name}
                           hasAvatar={agent.has_avatar}
                           avatarRevision={avatarRevision}
+                          size="sm"
+                          className="shrink-0"
                         />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="truncate text-sm text-foreground">{name}</span>
-                            {chatting && <Badge variant="secondary" className="text-[10px]">当前</Badge>}
-                          </div>
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        className={cn(
-                          'flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 transition-colors',
-                          'hover:bg-destructive/10 hover:text-destructive',
-                          deleting && 'pointer-events-none opacity-50',
+                        <span className="min-w-0 flex-1 truncate text-sm text-foreground">{name}</span>
+                        {chatting && (
+                          <Badge variant="secondary" className="shrink-0 text-[10px]">
+                            当前
+                          </Badge>
                         )}
-                        onClick={() => void onDelete(name)}
-                        disabled={deleting}
-                        title="删除 Agent"
-                        aria-label="删除 Agent"
-                      >
-                        <IconTrash className="size-3.5" stroke={1.75} />
                       </button>
+                      <div className="flex shrink-0 items-center pr-0.5">
+                        <button
+                          type="button"
+                          className={cn(
+                            'flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 transition-colors',
+                            'hover:bg-violet-500/12 hover:text-violet-600 dark:hover:text-violet-300',
+                          )}
+                          onClick={() => handleChatWithAgent(name)}
+                          title="去对话"
+                          aria-label="与该 Agent 对话"
+                        >
+                          <IconMessageCircle className="size-3.5" stroke={1.75} />
+                        </button>
+                        <button
+                          type="button"
+                          className={cn(
+                            'flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 transition-colors',
+                            'hover:bg-destructive/10 hover:text-destructive',
+                            deleting && 'pointer-events-none opacity-50',
+                          )}
+                          onClick={() => void onDelete(name)}
+                          disabled={deleting}
+                          title="删除 Agent"
+                          aria-label="删除 Agent"
+                        >
+                          <IconTrash className="size-3.5" stroke={1.75} />
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
               </div>
             )}
           </ScrollArea>
-          <PanelResizeHandle {...agentsListResize.handleProps} />
+          </div>
+          <PanelResizeHandle overlay={false} {...agentsListResize.handleProps} />
         </div>
 
         {/* Right Pane - Detail */}

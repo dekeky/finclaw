@@ -147,8 +147,14 @@ export interface UseWebSocketReturn {
   /** 收起「正在思考」指示（仅本地 UI，不中断服务端生成） */
   stop: () => void;
   clearMessages: (opts?: { startNewSession?: boolean }) => void;
-  /** 将归档/历史消息载入当前会话并写入本地草稿 */
-  restoreMessages: (messages: ChatMessage[]) => void;
+  /**
+   * 将归档/历史消息载入当前会话并写入本地草稿。
+   * 传入 sessionId 时把活动会话切回该归档自己的 session（缺失则生成全新 session），
+   * 并重连让连接重新绑定，避免后端把「最新会话」的缓存补发到历史窗口。
+   */
+  restoreMessages: (messages: ChatMessage[], sessionId?: string | null) => void;
+  /** 读取当前活动会话的 sessionId（归档时记录用）。 */
+  getSessionId: () => string | null;
   reconnect: () => void;
   /**
    * 当前思考任务的起始时间（ms）。挂载时若 localStorage 中存有未完成任务，会被恢复，
@@ -699,7 +705,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   }, [persistAgentKey, endTask, setSessionForAgent, clearSendConfirm, reset, connect]);
 
   const restoreMessages = useCallback(
-    (msgs: ChatMessage[]) => {
+    (msgs: ChatMessage[], sessionId?: string | null) => {
       if (typingFallbackRef.current) {
         clearTimeout(typingFallbackRef.current);
         typingFallbackRef.current = null;
@@ -709,13 +715,27 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       setSendError(null);
       endTask();
       const folded = prepareStoredChatMessages(msgs);
+      // 同步落盘到 ref，确保随后的重连/缓存补发以恢复后的消息为基准做去重
+      messagesRef.current = folded;
       setMessages(folded);
       if (persistAgentKey) {
         saveDraft(persistAgentKey, folded);
         skipPersistRef.current = true;
+        // 切换到该归档自己的 sessionId（旧归档无此字段则生成全新的），
+        // 避免继续复用「最新会话」的 session，让后端缓存串台到历史窗口。
+        const sid = sessionId?.trim() || genSessionId();
+        const prevSid = getSessionForAgent(persistAgentKey);
+        setSessionForAgent(persistAgentKey, sid);
+        // 仅当 session 真的变化时才重连：重连让后端连接重新绑定到该 session，
+        // 否则刷新前的旧连接仍按 prevSid 推送 / from_cache 补发。
+        if (sid !== prevSid) {
+          reconnectCountRef.current = 0;
+          reset();
+          connect();
+        }
       }
     },
-    [persistAgentKey, endTask, clearSendConfirm],
+    [persistAgentKey, endTask, clearSendConfirm, getSessionForAgent, setSessionForAgent, reset, connect],
   );
 
   const reconnect = useCallback(() => {
@@ -991,6 +1011,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     stop,
     clearMessages,
     restoreMessages,
+    getSessionId: getCurrentSessionId,
     reconnect,
     taskStartedAt,
     completedTaskElapsedSec,

@@ -16,6 +16,6 @@ export const PANEL_WIDTH_DEFAULTS = {
 export const PANEL_WIDTH_LIMITS = {
   appSidebar: { minWidth: 88, maxWidth: 400 },
   agentAssets: { minWidth: 180, maxWidth: 520 },
-  agentsList: { minWidth: 180, maxWidth: 400 },
+  agentsList: { minWidth: 120, maxWidth: 400 },
   docToc: { minWidth: 160, maxWidth: 420 },
 } as const;

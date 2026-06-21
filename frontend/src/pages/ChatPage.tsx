@@ -68,6 +68,7 @@ export default function ChatPage() {
     send,
     clearMessages,
     restoreMessages,
+    getSessionId,
     reconnect,
     taskStartedAt,
     completedTaskElapsedSec,
@@ -230,15 +231,16 @@ export default function ChatPage() {
 
   const handleArchiveAndClear = useCallback(() => {
     if (currentAgent && messages.length > 0) {
-      archiveConversation(currentAgent, messages);
+      // 归档时记录当前会话的 sessionId，恢复时据此切回，避免缓存串台
+      archiveConversation(currentAgent, messages, getSessionId());
       bumpHistory();
     }
     clearMessages({ startNewSession: true });
-  }, [currentAgent, messages, clearMessages, bumpHistory]);
+  }, [currentAgent, messages, clearMessages, bumpHistory, getSessionId]);
 
   const handleRestoreArchive = useCallback(
     (item: ArchivedChat) => {
-      restoreMessages(persistedToMessages(item.messages));
+      restoreMessages(persistedToMessages(item.messages), item.sessionId ?? null);
       setHistoryOpen(false);
     },
     [restoreMessages],
