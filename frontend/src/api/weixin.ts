@@ -111,6 +111,11 @@ export function getLocalBoundBotId(): string | null {
   return localStorage.getItem(STORAGE_KEYS.BOUND_BOT_ID);
 }
 
+// 清除本地绑定信息
+export function clearLocalBoundBotId(): void {
+  localStorage.removeItem(STORAGE_KEYS.BOUND_BOT_ID);
+}
+
 // 保存绑定 Agent
 export function saveBoundAgent(name: string): void {
   if (name) localStorage.setItem(STORAGE_KEYS.BOUND_AGENT, name);

@@ -58,15 +58,15 @@ type WeixinChannel struct {
 
 	typingStops sync.Map // map[chatID]context.CancelFunc - 正在输入取消函数
 
-	// pendingReplies 待发送的回复队列（当收到用户第一条消息时，还来不及回复，先队列起来）
+	// pendingReplies 待发送的回复队列（当收到用户第一条消息时，还来不及回复，先队列起来；
+	// 会话暂停期间无法下发的回复也会暂存在此，等暂停结束后自动重发，避免回复丢失）
 	pendingRepliesMu sync.Mutex
 	pendingReplies   map[string][]OutboundMessage // key = userID
 
-	feedbackThrottle sync.Map // map[chatID]time.Time
+	// pauseFlushScheduled 记录已为哪些用户安排了"暂停结束后重发"定时器，避免重复创建。
+	pauseFlushMu        sync.Mutex
+	pauseFlushScheduled map[string]bool // key = userID
 }
-
-// feedbackSummaryInterval 是连续两条 tool_feedback 摘要之间的最小间隔。
-const feedbackSummaryInterval = 20 * time.Second
 
 // GetMediaStore 返回媒体存储
 // TODO: 集成 finclaw 的媒体存储系统
@@ -100,7 +100,8 @@ func NewWeixinChannel(
 		typingCache:       make(map[string]typingTicketCacheEntry),
 		syncBufPath:       buildWeixinSyncBufPath(cfg),
 		contextTokensPath: buildWeixinContextTokensPath(cfg),
-		pendingReplies:    make(map[string][]OutboundMessage),
+		pendingReplies:      make(map[string][]OutboundMessage),
+		pauseFlushScheduled: make(map[string]bool),
 	}, nil
 }
 
@@ -707,19 +708,14 @@ func (c *WeixinChannel) dispatchOutbound(ctx context.Context, outboundMsg bus.Ou
 		return
 	}
 
-	// 过滤工作过程类消息：思考/推理、工具调用、工具反馈等只在 finclaw（Web UI）展示。
-	// 但对 tool_feedback 做一个特殊处理：摘要后节流（feedbackSummaryInterval）发给微信用户，
-	// 避免微信手机端 typing 中途消失时用户以为机器人卡住。
+	// 屏蔽 agent 的工作过程类消息：思考/推理、工具调用、工具反馈等只在 finclaw（Web UI）展示，
+	// 微信用户只接收最终回复（kind 为空）。
 	// 注意：finclaw 频道走 Channel!="weixin" 分支，不受此处理影响。
 	if isWorkProcessKind(kind) {
-		if kind == "tool_feedback" {
-			c.maybeSendFeedbackSummary(ctx, outboundMsg.ChatID, outboundMsg.Content)
-		} else {
-			logger.DebugCF("weixin", "Skipping work-process message for weixin", map[string]any{
-				"chat_id": outboundMsg.ChatID,
-				"kind":    kind,
-			})
-		}
+		logger.DebugCF("weixin", "Skipping work-process message for weixin", map[string]any{
+			"chat_id": outboundMsg.ChatID,
+			"kind":    kind,
+		})
 		return
 	}
 
@@ -744,64 +740,6 @@ func (c *WeixinChannel) dispatchOutbound(ctx context.Context, outboundMsg bus.Ou
 			"error":   err.Error(),
 		})
 	}
-}
-
-// maybeSendFeedbackSummary 将工具反馈摘要后下发给微信用户。
-// 微信手机端 typing 指示器会被客户端策略提前隐藏，这里用短文本兜底，
-// 让用户在等待最终回复期间仍能感知到 agent 在工作。
-//
-// 处理策略：
-//   - 截断到 40 个字符（按 rune 计），超出部分追加省略号；
-//   - 前缀 "🔍 "；
-//   - 节流 feedbackSummaryInterval(20s)：同一 chatID 在窗口内只发首条，后续静默丢弃。
-func (c *WeixinChannel) maybeSendFeedbackSummary(ctx context.Context, chatID, content string) {
-	if strings.TrimSpace(chatID) == "" {
-		return
-	}
-	now := time.Now()
-	if last, ok := c.feedbackThrottle.Load(chatID); ok {
-		if t, ok := last.(time.Time); ok && now.Sub(t) < feedbackSummaryInterval {
-			logger.DebugCF("weixin", "Throttled feedback summary", map[string]any{
-				"chat_id":    chatID,
-				"since_last": now.Sub(t).String(),
-			})
-			return
-		}
-	}
-
-	summary := summarizeFeedback(content)
-	if summary == "" {
-		return
-	}
-	c.feedbackThrottle.Store(chatID, now)
-
-	text := "🔍 " + summary
-	if _, err := c.Send(ctx, OutboundMessage{
-		Channel: "weixin",
-		ChatID:  chatID,
-		Content: text,
-	}); err != nil {
-		logger.WarnCF("weixin", "Failed to send feedback summary", map[string]any{
-			"chat_id": chatID,
-			"error":   err.Error(),
-		})
-	}
-}
-
-// summarizeFeedback 将 tool_feedback 内容裁剪为单行短摘要。
-func summarizeFeedback(content string) string {
-	trimmed := strings.TrimSpace(content)
-	if trimmed == "" {
-		return ""
-	}
-	// 多行折叠为单行，避免在微信里显示成多段。
-	collapsed := strings.Join(strings.Fields(trimmed), " ")
-	const maxRunes = 40
-	runes := []rune(collapsed)
-	if len(runes) <= maxRunes {
-		return collapsed
-	}
-	return string(runes[:maxRunes]) + "…"
 }
 
 // ============ 发送消息 ============
@@ -852,12 +790,6 @@ func (c *WeixinChannel) Send(ctx context.Context, msg OutboundMessage) ([]string
 	if !c.IsRunning() {
 		return nil, fmt.Errorf("weixin channel not running")
 	}
-	if err := c.ensureSessionActive(); err != nil {
-		logger.ErrorCF("weixin", "Session not active", map[string]any{
-			"error": err.Error(),
-		})
-		return nil, err
-	}
 
 	if msg.Content == "" {
 		return nil, nil
@@ -865,6 +797,20 @@ func (c *WeixinChannel) Send(ctx context.Context, msg OutboundMessage) ([]string
 
 	// 获取目标用户 ID（就是 chat_id，即 from_user_id）
 	toUserID := msg.ChatID
+
+	// 会话暂停期间无法下发消息（通常是凭证过期触发的临时暂停）。
+	// 若此时直接返回错误，dispatchOutbound 只会记日志并丢弃 agent 的回复，导致用户收不到任何答复。
+	// 因此这里把回复放入待发送队列，并安排在暂停结束后自动重发，确保回复不丢失。
+	if remaining := c.remainingPause(); remaining > 0 {
+		c.queuePendingReply(toUserID, msg)
+		c.schedulePauseFlush(toUserID, remaining)
+		logger.WarnCF("weixin", "Session paused, queued reply for retry after pause", map[string]any{
+			"chat_id":       toUserID,
+			"content_len":   len(msg.Content),
+			"retry_in_secs": int(remaining.Seconds()) + 1,
+		})
+		return nil, nil
+	}
 
 	logger.InfoCF("weixin", "Send - looking up context token", map[string]any{
 		"to_user_id": toUserID,
@@ -894,9 +840,7 @@ func (c *WeixinChannel) Send(ctx context.Context, msg OutboundMessage) ([]string
 			"to_user_id": toUserID,
 			"content":    msg.Content,
 		})
-		c.pendingRepliesMu.Lock()
-		c.pendingReplies[toUserID] = append(c.pendingReplies[toUserID], msg)
-		c.pendingRepliesMu.Unlock()
+		c.queuePendingReply(toUserID, msg)
 		return nil, nil // 不返回错误，让调用方以为发送成功
 	}
 
@@ -918,6 +862,52 @@ func (c *WeixinChannel) Send(ctx context.Context, msg OutboundMessage) ([]string
 	}
 
 	return nil, nil
+}
+
+// queuePendingReply 将一条回复加入指定用户的待发送队列。
+func (c *WeixinChannel) queuePendingReply(userID string, msg OutboundMessage) {
+	c.pendingRepliesMu.Lock()
+	c.pendingReplies[userID] = append(c.pendingReplies[userID], msg)
+	c.pendingRepliesMu.Unlock()
+}
+
+// schedulePauseFlush 安排在会话暂停结束后，自动重发该用户积压的待回复消息。
+// 同一用户同一时间只保留一个定时器，避免重复创建。
+// 若暂停结束后仍处于暂停（期间再次过期），flushPendingReplies → Send 会再次入队并安排下一轮重试。
+func (c *WeixinChannel) schedulePauseFlush(userID string, delay time.Duration) {
+	c.pauseFlushMu.Lock()
+	if c.pauseFlushScheduled[userID] {
+		c.pauseFlushMu.Unlock()
+		return
+	}
+	c.pauseFlushScheduled[userID] = true
+	c.pauseFlushMu.Unlock()
+
+	// 暂停结束后留出少量缓冲，确保 remainingPause 已清零再重发。
+	wait := delay + 2*time.Second
+
+	go func() {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+
+		select {
+		case <-c.ctx.Done():
+			c.clearPauseFlushScheduled(userID)
+			return
+		case <-timer.C:
+		}
+
+		// 先清除标记，使重发若再次遇到暂停时能安排下一轮定时器。
+		c.clearPauseFlushScheduled(userID)
+		c.flushPendingReplies(c.ctx, userID)
+	}()
+}
+
+// clearPauseFlushScheduled 清除某用户的暂停重发定时器标记。
+func (c *WeixinChannel) clearPauseFlushScheduled(userID string) {
+	c.pauseFlushMu.Lock()
+	delete(c.pauseFlushScheduled, userID)
+	c.pauseFlushMu.Unlock()
 }
 
 // flushPendingReplies 发送积压的待回复消息

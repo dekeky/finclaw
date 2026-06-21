@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import { Dialog } from 'radix-ui';
+import { IconRefresh, IconSwitchHorizontal } from '@tabler/icons-react';
 import {
   fetchQrcode,
   fetchQrcodeStatus,
@@ -12,10 +14,17 @@ import {
   saveBoundAgent,
   getLocalBoundAgent,
   fetchWeixinSettings,
+  clearLocalBoundBotId,
 } from '@/api/weixin';
 import { listAgents, type AgentSummary } from '@/api/agents';
 import { Button } from '@/components/ui/button';
-import { AgentSwitcher } from '@/components/AgentSwitcher';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { AgentAvatar } from '@/components/AgentAvatar';
+import { WechatIcon } from '@/components/WechatIcon';
+import { ThemeToggle } from '@/components/chrome/ThemeToggle';
+import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
+import { cn } from '@/lib/cn';
+import { TOOLBAR_ICON_BUTTON_CLASS } from '@/lib/toolbarButton';
 
 type BindStatus = 'idle' | 'loading' | 'binding' | 'scaned' | 'bound' | 'expired' | 'error';
 
@@ -43,12 +52,23 @@ export default function WeixinPage() {
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [agentsError, setAgentsError] = useState<string>('');
+  const [savedAgent, setSavedAgent] = useState('');
+  const [switchOpen, setSwitchOpen] = useState(false);
+  const [switchTarget, setSwitchTarget] = useState('');
+  const [agentSaving, setAgentSaving] = useState(false);
+
+  const currentAgent = agents.find(a => a.name === savedAgent);
+  const switchTargetAgent = agents.find(a => a.name === switchTarget);
+  const canSwitch = agents.length > 1 && !agentsLoading && !agentsError;
+
+  const isBound = settings.boundBotId !== '' || bindStatus === 'bound';
 
   // 初始化：检查本地存储的绑定状态
   useEffect(() => {
-    const savedAgent = getLocalBoundAgent();
-    if (savedAgent) {
-      setSettings(prev => ({ ...prev, boundAgent: savedAgent }));
+    const savedAgentLocal = getLocalBoundAgent();
+    if (savedAgentLocal) {
+      setSettings(prev => ({ ...prev, boundAgent: savedAgentLocal }));
+      setSavedAgent(savedAgentLocal);
     }
 
     const savedBoundBotId = getLocalBoundBotId();
@@ -58,10 +78,8 @@ export default function WeixinPage() {
       return;
     }
 
-    // 检查是否有未过期的二维码
     const savedQrcode = getLocalQrcode();
     if (savedQrcode) {
-      // 有保存的二维码，先检查状态
       setQrcodeImgContent(savedQrcode.qrcodeContent);
       setBindStatus('binding');
       startPolling(savedQrcode.qrcode);
@@ -82,8 +100,8 @@ export default function WeixinPage() {
         setAgents(list);
 
         const remoteAgent = remote?.bound_agent ?? '';
+        const remoteAccountId = remote?.account_id ?? '';
         setSettings(prev => {
-          // 后端值最权威：优先使用后端 bound_agent，其次本地，最后回退到第一个 agent
           let next = prev.boundAgent;
           if (remoteAgent && list.some(a => a.name === remoteAgent)) {
             next = remoteAgent;
@@ -95,10 +113,15 @@ export default function WeixinPage() {
           if (next !== prev.boundAgent) {
             saveBoundAgent(next);
           }
-          return { ...prev, boundAgent: next };
+          const nextBotId = remoteAccountId || prev.boundBotId;
+          if (remoteAccountId) {
+            saveBoundBotId(remoteAccountId);
+            setBindStatus('bound');
+          }
+          setSavedAgent(next);
+          return { ...prev, boundAgent: next, boundBotId: nextBotId };
         });
 
-        // 若后端尚未保存且本地有值，回写一次后端
         if (!remoteAgent) {
           const local = getLocalBoundAgent();
           if (local && list.some(a => a.name === local)) {
@@ -120,12 +143,26 @@ export default function WeixinPage() {
     };
   }, []);
 
-  const handleAgentChange = (name: string) => {
-    setSettings(prev => ({ ...prev, boundAgent: name }));
-    saveBoundAgent(name);
-    void saveWeixinSettings({ bound_agent: name }).catch(err => {
+  const openSwitchDialog = () => {
+    setSwitchTarget(savedAgent);
+    setSwitchOpen(true);
+  };
+
+  const handleConfirmSwitch = async () => {
+    if (!switchTarget || switchTarget === savedAgent) return;
+
+    setAgentSaving(true);
+    try {
+      await saveWeixinSettings({ bound_agent: switchTarget });
+      saveBoundAgent(switchTarget);
+      setSavedAgent(switchTarget);
+      setSettings(prev => ({ ...prev, boundAgent: switchTarget }));
+      setSwitchOpen(false);
+    } catch (err) {
       console.error('保存 bound_agent 到后端失败:', err);
-    });
+    } finally {
+      setAgentSaving(false);
+    }
   };
 
   const loadQrcode = async () => {
@@ -133,10 +170,8 @@ export default function WeixinPage() {
     setError('');
     try {
       const resp = await fetchQrcode();
-      console.log(resp, "请求链接结果");
       setQrcodeImgContent(resp.qrcode_img_content);
       setBindStatus('binding');
-      // 保存到本地
       saveQrcodeToLocal(resp.qrcode, resp.qrcode_img_content);
       startPolling(resp.qrcode);
     } catch {
@@ -150,20 +185,16 @@ export default function WeixinPage() {
     pollTimerRef.current = setInterval(async () => {
       try {
         const resp = await fetchQrcodeStatus(qrcode);
-        console.log('轮询状态:', resp.status, resp);
         if (resp.status === 'scaned') {
           setBindStatus('scaned');
         } else if (resp.status === 'confirmed') {
-          console.log('确认绑定成功', resp);
           setBindStatus('bound');
           const botId = resp.ilink_user_id || '';
           const botToken = resp.bot_token || '';
           if (botId) {
             setSettings(prev => ({ ...prev, boundBotId: botId }));
             saveBoundBotId(botId);
-            // 清除二维码本地存储
             clearLocalQrcode();
-            // 保存设置到后端
             saveWeixinSettings({
               token: botToken,
               account_id: botId,
@@ -190,233 +221,262 @@ export default function WeixinPage() {
     };
   }, []);
 
-  const handleRebind = () => {
-    setSettings(prev => ({ ...prev, boundBotId: '' }));
+  // 后端绑定状态确认为「未绑定」后，自动拉取二维码展示，无需用户手动点击。
+  useEffect(() => {
+    if (!agentsLoading && !isBound && bindStatus === 'idle') {
+      void loadQrcode();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentsLoading, isBound, bindStatus]);
+
+  const handleRebind = async () => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
     clearLocalQrcode();
+    clearLocalBoundBotId();
+    setSettings(prev => ({ ...prev, boundBotId: '' }));
+    setBindStatus('idle');
+
+    try {
+      await saveWeixinSettings({
+        account_id: '',
+        token: '',
+        enabled: false,
+      });
+    } catch (err) {
+      console.error('解除绑定失败:', err);
+    }
+
     void loadQrcode();
   };
 
-  const renderBindContent = () => {
-    // 已绑定状态
-    if (settings.boundBotId || bindStatus === 'bound') {
-      return (
-        <div className="flex flex-col items-center gap-3 py-6">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/10">
-            <svg className="h-7 w-7 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 12l5 5l10 -10" />
-            </svg>
-          </div>
-          <p className="text-sm font-medium text-emerald-600">微信已绑定</p>
-          <p className="font-mono text-xs text-muted-foreground">{settings.boundBotId}</p>
-          <Button variant="outline" size="sm" onClick={handleRebind} className="mt-1">
-            <svg className="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" />
-            </svg>
-            重新绑定
-          </Button>
-        </div>
-      );
-    }
+  const renderIconActionButton = (
+    label: string,
+    icon: ReactNode,
+    onClick: () => void,
+    disabled?: boolean,
+  ) => (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className={TOOLBAR_ICON_BUTTON_CLASS}
+          aria-label={label}
+          disabled={disabled}
+          onClick={onClick}
+        >
+          {icon}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{label}</TooltipContent>
+    </Tooltip>
+  );
 
-    // 未绑定状态 - 显示绑定按钮
-    if (bindStatus === 'idle') {
-      return (
-        <div className="flex flex-col items-center gap-4 py-6">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
-            <svg className="h-7 w-7 text-muted-foreground" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348z"/>
-            </svg>
-          </div>
-          <p className="text-sm text-muted-foreground">未绑定微信账号</p>
-          <Button onClick={() => void loadQrcode()} size="sm">
-            绑定微信
-          </Button>
-        </div>
-      );
-    }
+  const renderAgentControls = () => (
+    <>
+      {agentsLoading ? (
+        <span className="text-sm text-muted-foreground">加载中…</span>
+      ) : agentsError ? (
+        <span className="text-sm text-red-500">{agentsError}</span>
+      ) : agents.length === 0 ? (
+        <span className="text-sm text-muted-foreground">尚未创建 Agent</span>
+      ) : (
+        <>
+          <span className="flex min-w-0 items-center gap-1.5">
+            {currentAgent && (
+              <AgentAvatar
+                name={currentAgent.name}
+                hasAvatar={currentAgent.has_avatar}
+                size="sm"
+                className="!h-6 !w-6 !text-[10px]"
+              />
+            )}
+            <span className="max-w-[8rem] truncate text-sm font-medium">{savedAgent || '—'}</span>
+          </span>
+          {renderIconActionButton(
+            '切换',
+            <IconSwitchHorizontal className="size-3.5" stroke={1.75} />,
+            openSwitchDialog,
+            !canSwitch || agentSaving,
+          )}
+        </>
+      )}
+    </>
+  );
 
-    // 绑定中状态 - 显示二维码
+  const renderAgentFooter = () => (
+    <div className="flex flex-wrap items-center justify-center gap-2.5">
+      {renderAgentControls()}
+    </div>
+  );
+
+  const renderBoundSection = () => (
+    <div className="flex flex-col items-center gap-4 py-6">
+      <div className="flex items-center gap-3">
+        <WechatIcon className="h-7 w-7 text-emerald-600" />
+        <span className="text-sm font-medium text-emerald-600">已绑定</span>
+        {renderIconActionButton(
+          '重新绑定',
+          <IconRefresh className="size-3.5" stroke={1.75} />,
+          () => void handleRebind(),
+        )}
+      </div>
+      {renderAgentFooter()}
+    </div>
+  );
+
+  const renderIdleSection = () => (
+    <div className="flex flex-col items-center gap-4 py-6">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+        正在准备二维码…
+      </div>
+      {renderAgentFooter()}
+    </div>
+  );
+
+  const renderBindingSection = () => {
+    if (isBound) return renderBoundSection();
+    if (bindStatus === 'idle') return renderIdleSection();
+
     return (
       <div className="flex flex-col items-center gap-4 py-6">
-        <div className="relative flex aspect-square w-56 items-center justify-center rounded-xl border border-border bg-background">
-          {bindStatus === 'loading' && (
-            <div className="flex flex-col items-center gap-2 text-muted-foreground">
-              <div className="h-8 w-8 animate-spin rounded-full border-2 border-current border-t-transparent" />
-              <span className="text-sm">加载中...</span>
-            </div>
-          )}
+        {bindStatus === 'loading' && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            正在获取二维码…
+          </div>
+        )}
 
-          {bindStatus === 'binding' && qrcodeImgContent && (
-            <div className="flex flex-col items-center gap-2">
-              <QRCodeSVG
-                value={qrcodeImgContent}
-                size={192}
-                level="M"
-              />
-              <span className="text-xs text-muted-foreground">请使用微信扫描上方二维码</span>
-            </div>
-          )}
+        {bindStatus === 'binding' && qrcodeImgContent && (
+          <>
+            <QRCodeSVG value={qrcodeImgContent} size={176} level="M" />
+            <span className="text-xs text-muted-foreground">请使用微信扫描二维码完成绑定</span>
+          </>
+        )}
 
-          {bindStatus === 'scaned' && (
-            <div className="flex flex-col items-center gap-2 text-amber-600">
-              <svg className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span className="text-sm font-medium">已扫码，请在微信确认</span>
-            </div>
-          )}
-
-          {bindStatus === 'expired' && (
-            <div className="flex flex-col items-center gap-2 text-red-500">
-              <svg className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-              </svg>
-              <span className="text-sm font-medium">二维码已过期</span>
-            </div>
-          )}
-
-          {bindStatus === 'error' && (
-            <div className="flex flex-col items-center gap-2 text-red-500">
-              <svg className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-              </svg>
-              <span className="text-sm font-medium">{error || '加载失败'}</span>
-            </div>
-          )}
-        </div>
+        {bindStatus === 'scaned' && (
+          <span className="text-sm font-medium text-amber-600">已扫码，请在微信中确认</span>
+        )}
 
         {(bindStatus === 'expired' || bindStatus === 'error') && (
-          <Button onClick={() => void loadQrcode()} size="sm">
-            重新获取二维码
-          </Button>
+          <>
+            <span className="text-sm font-medium text-red-500">
+              {bindStatus === 'expired' ? '二维码已过期' : error || '加载失败'}
+            </span>
+            <Button onClick={() => void loadQrcode()} size="sm">
+              重新获取二维码
+            </Button>
+          </>
         )}
+
+        {renderAgentFooter()}
       </div>
     );
   };
 
+  const renderBindContent = () => renderBindingSection();
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-6">
-      <div className="mx-auto w-full max-w-4xl space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between shrink-0">
-          <h1 className="text-xl font-medium text-foreground/90">微信</h1>
-        </div>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border/50 px-4">
+        <SidebarExpandTrigger />
+        <h1 className="min-w-0 flex-1 text-base font-medium tracking-tight text-foreground/90">微信</h1>
+        <ThemeToggle />
+      </div>
 
-        {/* Enable Switch */}
-        {/* <div className="flex items-center justify-between rounded-xl border border-border/60 bg-card px-6 py-4 shadow-sm shrink-0">
-          <p className="text-sm font-medium">启用频道</p>
-          <Switch
-            checked={settings.enabled}
-            onCheckedChange={(checked: boolean) => {
-              setSettings(prev => ({ ...prev, enabled: checked }));
-              setIsDirty(true);
-            }}
-          />
-        </div> */}
-
-        {/* Bound Agent Card */}
-        <div className="rounded-xl bg-card py-6 text-sm text-card-foreground shadow-sm ring-1 ring-foreground/10 shrink-0">
-          <div className="px-6 pb-4 border-b border-border/60">
-            <div className="text-sm font-medium">绑定 Agent</div>
-            <div className="text-sm text-muted-foreground">
-              选择一个 Agent 用于响应来自此微信账号的消息。
+      <div className="min-h-0 flex-1 overflow-y-auto p-6">
+        <div className="mx-auto w-full max-w-4xl space-y-6">
+          <div className="rounded-xl bg-card text-sm text-card-foreground shadow-sm ring-1 ring-foreground/10 shrink-0">
+            <div className="border-b border-foreground/10 px-6 py-3">
+              <p className="font-semibold text-foreground">微信账号绑定</p>
+              <p className="mt-0.5 text-muted-foreground">使用微信账户与您的 Agent 聊天</p>
+            </div>
+            <div className="px-6">
+              {renderBindContent()}
             </div>
           </div>
-          <div className="px-6 pt-5">
-            {agentsLoading ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                加载 Agent 列表…
-              </div>
-            ) : agentsError ? (
-              <p className="text-sm text-red-500">{agentsError}</p>
-            ) : agents.length === 0 ? (
-              <p className="text-sm text-muted-foreground">尚未创建任何 Agent，请先在 Agent 管理页创建。</p>
-            ) : (
-              <div className="flex items-center gap-3">
-                <AgentSwitcher
-                  agents={agents}
-                  value={settings.boundAgent || null}
-                  onChange={handleAgentChange}
-                  size="default"
-                  triggerClassName="min-w-[14rem]"
-                  aria-label="为微信频道选择 Agent"
-                />
-                {/* {settings.boundAgent && (
-                  <span className="text-xs text-muted-foreground">
-                    当前：{settings.boundAgent}
-                  </span>
-                )} */}
-              </div>
+        </div>
+      </div>
+
+      <Dialog.Root open={switchOpen} onOpenChange={setSwitchOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[1200] bg-black/45 supports-backdrop-filter:backdrop-blur-[2px] data-[state=open]:animate-in data-[state=open]:fade-in-0" />
+          <Dialog.Content
+            className={cn(
+              'fixed left-1/2 top-1/2 z-[1201] w-[min(92vw,24rem)] -translate-x-1/2 -translate-y-1/2',
+              'rounded-xl border border-border bg-background p-5 shadow-2xl',
+              'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
             )}
-          </div>
-        </div>
-
-        {/* WeChat Account Binding Card */}
-        <div className="rounded-xl bg-card py-6 text-sm text-card-foreground shadow-sm ring-1 ring-foreground/10 shrink-0">
-          <div className="px-6 pb-4 border-b border-border/60">
-            <div className="text-sm font-medium">微信账号绑定</div>
-            <div className="text-sm text-muted-foreground">使用微信扫描二维码以绑定您的个人微信账号。</div>
-          </div>
-          <div className="p-0">
-            {renderBindContent()}
-          </div>
-        </div>
-
-
-        {/* Settings Card */}
-        {/* <div className="rounded-xl bg-card py-6 text-sm text-card-foreground shadow-sm ring-1 ring-foreground/10">
-          <div className="divide-y divide-border/60 px-6 py-0">
-            <div className="py-5">
-              <div className="space-y-1">
-                <label className="text-sm font-medium">允许来源</label>
-                <p className="text-xs text-muted-foreground">
-                  允许访问的用户或群组 ID。可逐项添加，也支持一次粘贴多个值。
+          >
+            <Dialog.Title className="text-sm font-semibold text-foreground">切换 Agent</Dialog.Title>
+            <Dialog.Description asChild>
+              <div className="mt-2 space-y-2 text-xs leading-relaxed text-muted-foreground">
+                <p>
+                  微信消息当前由 <strong className="text-foreground">{savedAgent || '—'}</strong> 处理。
+                </p>
+                <p>
+                  切换后，<strong className="text-foreground">后续</strong>来自微信的新消息将转交给新 Agent 处理。
                 </p>
               </div>
-              <div className="mt-3 space-y-3">
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="例如 123456, 789012"
-                    value={allowFromInput}
-                    onChange={(e) => setAllowFromInput(e.target.value)}
-                    className="h-9"
-                  />
-                  <Button size="sm" disabled={!allowFromInput.trim()}>
-                    确认
-                  </Button>
-                </div>
-              </div>
+            </Dialog.Description>
+
+            <div className="mt-4 max-h-52 space-y-1 overflow-y-auto">
+              {agents.map(agent => {
+                const selected = switchTarget === agent.name;
+                const isCurrent = savedAgent === agent.name;
+                return (
+                  <button
+                    key={agent.name}
+                    type="button"
+                    onClick={() => setSwitchTarget(agent.name)}
+                    className={cn(
+                      'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors',
+                      selected
+                        ? 'bg-violet-500/10 ring-1 ring-violet-500/30'
+                        : 'hover:bg-muted/70',
+                    )}
+                  >
+                    <AgentAvatar
+                      name={agent.name}
+                      hasAvatar={agent.has_avatar}
+                      size="sm"
+                      className="!h-6 !w-6 !text-[10px]"
+                    />
+                    <span className="min-w-0 flex-1 truncate font-medium">{agent.name}</span>
+                    {isCurrent && (
+                      <span className="shrink-0 text-[10px] text-muted-foreground">当前</span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
 
-            <div className="py-5">
-              <div className="space-y-1">
-                <label className="text-sm font-medium">HTTP 代理</label>
-                <p className="text-xs text-muted-foreground">HTTP 代理地址，用于网络访问</p>
-              </div>
-              <Input
-                placeholder="http://localhost:7890"
-                value={settings.proxy}
-                onChange={(e) => {
-                  setSettings(prev => ({ ...prev, proxy: e.target.value }));
-                  setIsDirty(true);
-                }}
-                className="mt-3 h-9"
-              />
-            </div>
-          </div>
-        </div> */}
+            {switchTarget && switchTarget !== savedAgent && switchTargetAgent && (
+              <p className="mt-3 rounded-lg bg-amber-500/8 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:text-amber-200">
+                确认后，微信消息将由 <strong>{switchTargetAgent.name}</strong> 接管处理。
+              </p>
+            )}
 
-        {/* Footer Buttons */}
-        {/* <div className="flex justify-end gap-2 border-t border-border/60 pt-4 shrink-0">
-          <Button variant="outline" onClick={handleReset} disabled={!isDirty}>
-            重置
-          </Button>
-          <Button onClick={handleSave} disabled={!isDirty}>
-            保存
-          </Button>
-        </div> */}
-      </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setSwitchOpen(false)} disabled={agentSaving}>
+                取消
+              </Button>
+              <Button
+                size="sm"
+                disabled={agentSaving || !switchTarget || switchTarget === savedAgent}
+                onClick={() => void handleConfirmSwitch()}
+              >
+                {agentSaving ? '切换中…' : '确认切换'}
+              </Button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   );
 }

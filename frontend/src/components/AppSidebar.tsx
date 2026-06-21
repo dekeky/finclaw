@@ -3,13 +3,13 @@ import {
   IconChartAreaLine,
   IconNews,
   IconRobot,
-  IconBrandWechat,
 } from '@tabler/icons-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import * as React from 'react';
 import { useNavigationGuard } from '../state/navigationGuard';
 
 import { FinclawMark } from '@/components/FinclawMark';
+import { WechatIcon } from '@/components/WechatIcon';
 import { PanelResizeHandle } from '@/components/PanelResizeHandle';
 import type { HorizontalResizeHandleProps } from '@/hooks/useHorizontalResize';
 import {
@@ -31,9 +31,12 @@ const AGENT_NAV = [
   { title: 'Agent 市场', url: '/agents/market', icon: IconBuildingStore },
 ] as const;
 
+const COMM_NAV = [
+  { title: '微信', url: '/weixin', icon: WechatIcon },
+] as const;
+
 const MORE_NAV = [
   { title: '金融资讯', url: '/news', icon: IconNews },
-  { title: '微信', url: '/weixin', icon: IconBrandWechat },
   { title: '量化回测', url: '/backtest', icon: IconChartAreaLine },
 ] as const;
 
@@ -136,9 +139,34 @@ export function AppSidebar({
             })}
           </SidebarMenu>
 
-          {/* 更多能力 */}
+          {/* 通信平台 */}
           <div className="mt-3 px-2 pb-1">
-            <p className="text-[11px] font-medium text-muted-foreground/50">更多</p>
+            <p className="text-[11px] font-medium text-muted-foreground/50">通信平台</p>
+          </div>
+          <SidebarMenu className="gap-0.5">
+            {COMM_NAV.map((item) => {
+              const active = isNavActive(currentPath, item.url);
+              return (
+                <SidebarMenuItem key={item.url}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={active}
+                    onClick={closeMobile}
+                    className={cnYuanbaoNav(active, true)}
+                  >
+                    <Link to={item.url} onClick={(e) => void tryNavigate(e, item.url)}>
+                      <item.icon className="size-4 opacity-60" />
+                      <span className="text-[13px]">{item.title}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              );
+            })}
+          </SidebarMenu>
+
+          {/* 金融能力 */}
+          <div className="mt-3 px-2 pb-1">
+            <p className="text-[11px] font-medium text-muted-foreground/50">金融能力</p>
           </div>
           <SidebarMenu className="gap-0.5">
             {MORE_NAV.map((item) => {

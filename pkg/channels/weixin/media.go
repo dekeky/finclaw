@@ -1201,6 +1201,14 @@ func (c *WeixinChannel) StartTyping(ctx context.Context, chatID string) (func(),
 			case <-typingCtx.Done():
 				return
 			case <-ticker.C:
+				// 会话暂停期间无法下发，继续刷新只会反复失败并刷屏，
+				// 且会让用户一直看到"正在输入"却收不到回复，因此直接结束刷新循环。
+				if c.remainingPause() > 0 {
+					logger.InfoCF("weixin", "Stop refreshing typing indicator: session paused", map[string]any{
+						"chat_id": chatID,
+					})
+					return
+				}
 				refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 4*time.Second)
 				rerr := c.sendTypingStatus(refreshCtx, chatID, ticket, TypingStatusTyping)
 				refreshCancel()
