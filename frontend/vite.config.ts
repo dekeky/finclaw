@@ -23,6 +23,9 @@ export default defineConfig({
           ) {
             return 'syntax-highlighter'
           }
+          if (id.includes('mermaid')) {
+            return 'mermaid'
+          }
           if (
             id.includes('react-markdown') ||
             id.includes('remark-') ||
@@ -58,7 +61,7 @@ export default defineConfig({
       '/rss': {
         target: 'http://127.0.0.1:8082',
         changeOrigin: true,
-      }
+      },
     },
   },
 })

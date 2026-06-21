@@ -1,6 +1,13 @@
 import type { ReactNode } from 'react';
 import { IconX } from '@tabler/icons-react';
+import { PanelResizeHandle } from '@/components/PanelResizeHandle';
+import { useHorizontalResize } from '@/hooks/useHorizontalResize';
 import { cn } from '@/lib/cn';
+import {
+  PANEL_WIDTH_DEFAULTS,
+  PANEL_WIDTH_KEYS,
+  PANEL_WIDTH_LIMITS,
+} from '@/lib/panelWidths';
 
 export type AgentAssetTab = 'docs' | 'skills';
 
@@ -24,12 +31,19 @@ export function AgentAssetsSidebar({
   children,
   className,
 }: AgentAssetsSidebarProps) {
+  const { width, handleProps } = useHorizontalResize({
+    storageKey: PANEL_WIDTH_KEYS.agentAssets,
+    defaultWidth: PANEL_WIDTH_DEFAULTS.agentAssets,
+    ...PANEL_WIDTH_LIMITS.agentAssets,
+  });
+
   return (
     <aside
       className={cn(
-        'flex h-full min-h-0 w-48 shrink-0 flex-col border-r border-border/50 bg-muted/20 sm:w-56 lg:w-60',
+        'relative flex h-full min-h-0 shrink-0 flex-col border-r border-border/50 bg-muted/20',
         className,
       )}
+      style={{ width }}
       aria-label="Agent 资产"
     >
       <div className="shrink-0 border-b border-border/40 px-2 pt-2">
@@ -64,6 +78,7 @@ export function AgentAssetsSidebar({
         </div>
       </div>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
+      <PanelResizeHandle {...handleProps} />
     </aside>
   );
 }

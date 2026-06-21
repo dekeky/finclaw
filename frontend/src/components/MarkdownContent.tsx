@@ -8,6 +8,7 @@ import { useTheme } from '../context/ThemeContext';
 import { cn } from '../lib/cn';
 
 const CodeBlock = lazy(() => import('./CodeBlock'));
+const MermaidDiagram = lazy(() => import('./MermaidDiagram'));
 
 export type MarkdownSize = 'sm' | 'md';
 
@@ -19,8 +20,13 @@ export interface MarkdownContentProps {
   className?: string;
   /** 是否显示代码块复制按钮 */
   copyableCode?: boolean;
-  /** 工具输出等密集文本：更紧的行距，且不将单换行转 <br> */
+  /** 工具输出等密集文本：更紧的行距 */
   compact?: boolean;
+  /**
+   * 是否将单个换行渲染为 <br>（remark-breaks）。
+   * 默认 true；仅极密集的工具日志可设为 false。
+   */
+  lineBreaks?: boolean;
   /** 额外的 rehype 插件（rehype-slug 已内置） */
   rehypePlugins?: PluggableList;
 }
@@ -70,6 +76,7 @@ export function MarkdownContent({
   className,
   copyableCode = true,
   compact = false,
+  lineBreaks = true,
   rehypePlugins,
 }: MarkdownContentProps) {
   const { scheme } = useTheme();
@@ -91,28 +98,73 @@ export function MarkdownContent({
       code({ className: codeClassName, children, ...props }) {
         const match = /language-(\w+)/.exec(codeClassName || '');
         const code = String(children).replace(/\n$/, '');
-        const codeId = `${idPrefix}-${match ? match[1] : 'inline'}-${code.slice(0, 24)}`;
+        // react-markdown v10 移除了 inline 属性；无语言标记的围栏块需用换行判断
+        const isBlock = Boolean(match) || code.includes('\n');
+        const codeId = `${idPrefix}-${match ? match[1] : isBlock ? 'block' : 'inline'}-${code.slice(0, 24)}`;
 
-        if (match) {
-          const lang = match[1];
+        if (isBlock) {
+          const lang = match?.[1];
+          const isMermaid = lang === 'mermaid';
+
+          if (isMermaid) {
+            return (
+              <div className="not-prose my-3 max-w-full min-w-0">
+                <div className="group/code relative max-w-full min-w-0 overflow-x-auto rounded-lg border border-border/60 bg-muted/30 dark:bg-muted/50">
+                  <div className="flex items-center justify-between border-b border-border/50 bg-muted/50 px-3 py-1.5 dark:bg-muted/70">
+                    <span className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground">
+                      mermaid
+                    </span>
+                    {copyableCode && (
+                      <CopyCodeButton code={code} id={codeId} copied={copiedId === codeId} onCopy={handleCopy} />
+                    )}
+                  </div>
+                  <Suspense
+                    fallback={
+                      <div className="px-3.5 py-6 text-center text-xs text-muted-foreground">加载图表…</div>
+                    }
+                  >
+                    <MermaidDiagram chart={code} dark={dark} className="px-3.5 py-3" />
+                  </Suspense>
+                </div>
+              </div>
+            );
+          }
+
           return (
-            <div className="not-prose my-3">
-              <div className="group/code relative overflow-hidden rounded-lg border border-border/60 bg-muted/30 dark:bg-muted/50">
-                <div className="flex items-center justify-between border-b border-border/50 bg-muted/50 dark:bg-muted/70 px-3 py-1.5">
-                  <span className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground">{lang}</span>
+            <div className="not-prose my-3 max-w-full min-w-0">
+              <div className="group/code relative max-w-full min-w-0 overflow-x-auto rounded-lg border border-border/60 bg-muted/30 dark:bg-muted/50">
+                <div
+                  className={cn(
+                    'flex items-center border-b border-border/50 bg-muted/50 px-3 py-1.5 dark:bg-muted/70',
+                    lang ? 'justify-between' : 'justify-end',
+                  )}
+                >
+                  {lang ? (
+                    <span className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground">
+                      {lang}
+                    </span>
+                  ) : null}
                   {copyableCode && (
                     <CopyCodeButton code={code} id={codeId} copied={copiedId === codeId} onCopy={handleCopy} />
                   )}
                 </div>
-                <Suspense
-                  fallback={
-                    <pre className="overflow-x-auto px-3.5 py-3 font-mono text-[13px] leading-relaxed">
-                      <code>{code}</code>
-                    </pre>
-                  }
-                >
-                  <CodeBlock code={code} lang={lang} dark={dark} />
-                </Suspense>
+                {lang ? (
+                  <Suspense
+                    fallback={
+                      <pre className="overflow-x-auto whitespace-pre px-3.5 py-3 font-mono text-[13px] leading-relaxed">
+                        <code>{code}</code>
+                      </pre>
+                    }
+                  >
+                    <CodeBlock code={code} lang={lang} dark={dark} />
+                  </Suspense>
+                ) : (
+                  <pre className="overflow-x-auto whitespace-pre px-3.5 py-3 font-mono text-[13px] leading-relaxed">
+                    <code className="bg-transparent p-0 font-normal text-foreground before:content-none after:content-none">
+                      {code}
+                    </code>
+                  </pre>
+                )}
               </div>
             </div>
           );
@@ -141,8 +193,8 @@ export function MarkdownContent({
       },
       table({ children }) {
         return (
-          <div className="not-prose my-4 overflow-x-auto rounded-lg border border-border/60">
-            <table className="w-full border-collapse text-[13px]">{children}</table>
+          <div className="not-prose my-4 max-w-full min-w-0 overflow-x-auto rounded-lg border border-border/60">
+            <table className="w-max min-w-full border-collapse text-[13px]">{children}</table>
           </div>
         );
       },
@@ -164,10 +216,18 @@ export function MarkdownContent({
       },
       blockquote({ children }) {
         return (
-          <blockquote className="border-l-4 border-violet-500/35 pl-4 text-muted-foreground not-italic">
+          <blockquote
+            className={cn(
+              'my-2 border-l-4 border-violet-500/50 pl-4 text-muted-foreground not-italic',
+              compact ? 'py-0.5' : 'py-1',
+            )}
+          >
             {children}
           </blockquote>
         );
+      },
+      strong({ children }) {
+        return <strong className="font-semibold text-foreground">{children}</strong>;
       },
       img({ src, alt }) {
         return (
@@ -215,7 +275,7 @@ export function MarkdownContent({
     [compact, copiedId, copyableCode, dark, handleCopy, idPrefix],
   );
 
-  const remarkPlugins = compact ? [remarkGfm] : [remarkGfm, remarkBreaks];
+  const remarkPlugins = lineBreaks ? [remarkGfm, remarkBreaks] : [remarkGfm];
 
   if (!children?.trim()) {
     return null;
@@ -224,7 +284,8 @@ export function MarkdownContent({
   return (
     <div
       className={cn(
-        'markdown-body prose max-w-none break-words dark:prose-invert',
+        'markdown-body prose max-w-none min-w-0 w-full break-words [overflow-wrap:anywhere] dark:prose-invert',
+        '[&_pre]:max-w-full [&_pre]:overflow-x-auto',
         'prose-headings:scroll-mt-20 prose-headings:font-semibold prose-headings:tracking-tight',
         compact ? 'prose-p:my-0.5 prose-p:leading-snug' : 'prose-p:my-2 prose-p:leading-relaxed',
         'prose-pre:bg-transparent prose-pre:p-0',

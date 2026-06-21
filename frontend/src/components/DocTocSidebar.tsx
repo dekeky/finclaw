@@ -1,7 +1,14 @@
 import { useState } from 'react';
 import { IconChevronsLeft, IconList, IconX } from '@tabler/icons-react';
+import { PanelResizeHandle } from '@/components/PanelResizeHandle';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { useHorizontalResize } from '@/hooks/useHorizontalResize';
 import { cn } from '@/lib/cn';
+import {
+  PANEL_WIDTH_DEFAULTS,
+  PANEL_WIDTH_KEYS,
+  PANEL_WIDTH_LIMITS,
+} from '@/lib/panelWidths';
 import type { TocHeading } from '@/hooks/useTocHeadings';
 
 /* ─── 类型 ─── */
@@ -34,6 +41,14 @@ interface DocTocOverlayProps {
 }
 
 const TOC_COLLAPSE_LS_KEY = 'finclaw.docDock.tocCollapsed';
+
+function useDocTocWidth() {
+  return useHorizontalResize({
+    storageKey: PANEL_WIDTH_KEYS.docToc,
+    defaultWidth: PANEL_WIDTH_DEFAULTS.docToc,
+    ...PANEL_WIDTH_LIMITS.docToc,
+  });
+}
 
 function readCollapsed(storageKey: string, defaultCollapsed: boolean): boolean {
   try {
@@ -88,6 +103,8 @@ export function DocTocOverlay({
   activeId,
   onHeadingClick,
 }: DocTocOverlayProps) {
+  const { width, handleProps } = useDocTocWidth();
+
   return (
     <div
       className={cn('doc-dock-toc-overlay', open && 'doc-dock-toc-overlay--open')}
@@ -99,7 +116,7 @@ export function DocTocOverlay({
         aria-label="关闭目录"
         onClick={() => onOpenChange(false)}
       />
-      <nav className="doc-dock-toc-overlay-panel" aria-label="目录">
+      <nav className="doc-dock-toc-overlay-panel" aria-label="目录" style={{ width }}>
         <div className="doc-dock-toc-header">
           <span>目录</span>
           <button
@@ -120,6 +137,7 @@ export function DocTocOverlay({
             onAfterNavigate={() => onOpenChange(false)}
           />
         </ScrollArea>
+        <PanelResizeHandle {...handleProps} />
       </nav>
     </div>
   );
@@ -135,6 +153,7 @@ export function DocTocSidebar({
   storageKey = TOC_COLLAPSE_LS_KEY,
 }: DocTocSidebarProps) {
   const [collapsed, setCollapsed] = useState<boolean>(() => readCollapsed(storageKey, defaultCollapsed));
+  const { width, handleProps } = useDocTocWidth();
 
   const toggle = (next: boolean) => {
     setCollapsed(next);
@@ -163,7 +182,7 @@ export function DocTocSidebar({
   }
 
   return (
-    <nav className="doc-dock-toc-sidebar" aria-label="目录">
+    <nav className="doc-dock-toc-sidebar relative" aria-label="目录" style={{ width }}>
       <div className="doc-dock-toc-inner">
         <div className="doc-dock-toc-header">
           <span>目录</span>
@@ -181,6 +200,7 @@ export function DocTocSidebar({
           <DocTocList headings={headings} activeId={activeId} onHeadingClick={onHeadingClick} />
         </ScrollArea>
       </div>
+      <PanelResizeHandle {...handleProps} />
     </nav>
   );
 }

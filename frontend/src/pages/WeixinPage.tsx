@@ -16,8 +16,6 @@ import {
 import { listAgents, type AgentSummary } from '@/api/agents';
 import { Button } from '@/components/ui/button';
 import { AgentSwitcher } from '@/components/AgentSwitcher';
-// import { Input } from '@/components/ui/input';
-// import { Switch } from '@/components/ui/switch';
 
 type BindStatus = 'idle' | 'loading' | 'binding' | 'scaned' | 'bound' | 'expired' | 'error';
 
@@ -45,8 +43,6 @@ export default function WeixinPage() {
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [agentsError, setAgentsError] = useState<string>('');
-  // const [allowFromInput, setAllowFromInput] = useState('');
-  // const [isDirty, setIsDirty] = useState(false);
 
   // 初始化：检查本地存储的绑定状态
   useEffect(() => {
@@ -199,21 +195,6 @@ export default function WeixinPage() {
     clearLocalQrcode();
     void loadQrcode();
   };
-
-  // const handleSave = () => {
-  //   setIsDirty(false);
-  // };
-
-  // const handleReset = () => {
-  //   setSettings({
-  //     enabled: true,
-  //     allowFrom: [],
-  //     proxy: '',
-  //     boundBotId: '',
-  //   });
-  //   setAllowFromInput('');
-  //   setIsDirty(false);
-  // };
 
   const renderBindContent = () => {
     // 已绑定状态

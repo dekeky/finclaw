@@ -80,10 +80,24 @@ type Channel interface {
 	GetDecoded() (any, error)
 }
 
+// SMTPSettings configures outbound email for verification codes.
+type SMTPSettings struct {
+	Host     string `toml:"host" json:"host"`         // SMTP 服务器，如 smtp.qq.com、smtp.163.com
+	Port     int    `toml:"port" json:"port"`         // 端口，SSL 常用 465，TLS 常用 587
+	Username string `toml:"username" json:"username"` // 发信邮箱地址，通常与登录账号相同
+	Password string `toml:"password" json:"password"` // 邮箱授权码，非登录密码
+	From     string `toml:"from" json:"from"`         // 发件人显示，如 "Finclaw <your@email.com>"
+}
+
+func (s *SMTPSettings) Enabled() bool {
+	return s != nil && s.Host != "" && s.Port > 0 && s.Username != ""
+}
+
 type FinclawConfigServer struct {
 	ServerAddr          string                    `toml:"serverAddr"`
 	RSSServerAddr       string                    `toml:"rssServerAddr"`
 	AgentHubAddr       string                    `toml:"agentHubAddr"`
+	SMTP               *SMTPSettings             `toml:"smtp"`
 	FinClawChannelConf *finclaw.FinChannelConfig `toml:"finClawChannel"`
 	Channels           map[string]*ChannelConfig `toml:"channels"`
 }
@@ -139,8 +153,17 @@ func loadFinclawConfig() (finServerConf *FinclawConfigServer, err error) {
 
 	finServerConf = new(FinclawConfigServer)
 	err = tomlDecodeFile(finConfigPath(), finServerConf)
+	if err != nil {
+		return nil, err
+	}
+	ensureDefaultChannels(finServerConf)
+	if ensureDefaultSMTP(finServerConf) {
+		if err := appendSMTPSectionIfMissing(); err != nil {
+			return nil, err
+		}
+	}
 
-	return finServerConf, err
+	return finServerConf, nil
 }
 
 func FinConfigGet() *FinclawConfig {

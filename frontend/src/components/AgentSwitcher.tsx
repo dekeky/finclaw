@@ -42,7 +42,6 @@ export function AgentSwitcher({
 }: AgentSwitcherProps) {
   const isSidebar = variant === 'sidebar';
   const isInline = variant === 'inline';
-  const selected = agents.find((a) => a.name === value);
 
   return (
     <div className={cn('min-w-0', isSidebar && 'w-full', className)}>

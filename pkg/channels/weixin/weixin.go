@@ -22,20 +22,20 @@ import (
 // 用于运行时切换绑定的 agent，无需重启。
 type AgentResolver interface {
 	GetMsgBus(name string) *bus.MessageBus
-	GetFinclawOutboundCh(name string) chan bus.OutboundMessage
+	GetWeixinOutboundCh(name string) chan bus.OutboundMessage
 }
 
 // WeixinChannel 微信频道实现
 // 通过腾讯 iLink REST API 与微信用户进行消息收发
 // 注意: 当前实现为独立版本，不依赖 picoclaw 的 BaseChannel
 type WeixinChannel struct {
-	api    *ApiClient                         // iLink API HTTP 客户端
-	config *config.WeixinSettings             // 微信配置
-	ctx    context.Context                    // 生命周期上下文
-	cancel context.CancelFunc                 // 取消函数
-	running atomic.Bool                       // 运行状态
-	name   string                             // 频道名称
-	mediaStore interface{}                    // 媒体存储（待集成）
+	api        *ApiClient             // iLink API HTTP 客户端
+	config     *config.WeixinSettings // 微信配置
+	ctx        context.Context        // 生命周期上下文
+	cancel     context.CancelFunc     // 取消函数
+	running    atomic.Bool            // 运行状态
+	name       string                 // 频道名称
+	mediaStore interface{}            // 媒体存储（待集成）
 
 	// 通过 resolver+boundAgent 动态查找 msgBus / finclaw 转发通道，
 	// 支持运行时通过 Rebind 切换绑定 agent。
@@ -47,11 +47,11 @@ type WeixinChannel struct {
 	// contextTokens 存储每个用户的 context_token
 	contextTokens sync.Map
 
-	typingMu    sync.Mutex                      // 保护 typingCache 的互斥锁
+	typingMu    sync.Mutex                        // 保护 typingCache 的互斥锁
 	typingCache map[string]typingTicketCacheEntry // typing_ticket 缓存
 
-	pauseMu   sync.Mutex // 保护 pauseUntil 的互斥锁
-	pauseUntil time.Time // 会话暂停结束时间
+	pauseMu    sync.Mutex // 保护 pauseUntil 的互斥锁
+	pauseUntil time.Time  // 会话暂停结束时间
 
 	syncBufPath       string // 轮询游标文件路径
 	contextTokensPath string // context_token 文件路径
@@ -62,8 +62,6 @@ type WeixinChannel struct {
 	pendingRepliesMu sync.Mutex
 	pendingReplies   map[string][]OutboundMessage // key = userID
 
-	// feedbackThrottle 记录每个 chatID 最近一次发送 tool_feedback 摘要的时间，
-	// 用于节流，避免在多工具调用时短时间内连发多条 🔍 短消息。
 	feedbackThrottle sync.Map // map[chatID]time.Time
 }
 
@@ -125,8 +123,7 @@ func (c *WeixinChannel) currentMsgBus() *bus.MessageBus {
 	return resolver.GetMsgBus(agent)
 }
 
-// currentFinclawForwardCh 获取当前绑定 agent 的 finclaw 转发通道。
-func (c *WeixinChannel) currentFinclawForwardCh() chan bus.OutboundMessage {
+func (c *WeixinChannel) currentWeixinOutboundCh() chan bus.OutboundMessage {
 	c.bindMu.RLock()
 	agent := c.boundAgent
 	resolver := c.resolver
@@ -134,7 +131,7 @@ func (c *WeixinChannel) currentFinclawForwardCh() chan bus.OutboundMessage {
 	if resolver == nil || agent == "" {
 		return nil
 	}
-	return resolver.GetFinclawOutboundCh(agent)
+	return resolver.GetWeixinOutboundCh(agent)
 }
 
 // Rebind 在运行时切换绑定的 agent，无需重启频道。
@@ -277,10 +274,10 @@ func (c *WeixinChannel) Stop(ctx context.Context) error {
 // 4. 处理完消息后立即发起下一次请求
 func (c *WeixinChannel) pollLoop(ctx context.Context) {
 	const (
-		defaultPollTimeoutMs = 35_000  // 默认长轮询超时时间（毫秒）
+		defaultPollTimeoutMs = 35_000           // 默认长轮询超时时间（毫秒）
 		retryDelay           = 2 * time.Second  // 失败后重试延迟
 		backoffDelay         = 30 * time.Second // 连续失败后的退避延迟
-		maxConsecutiveFails  = 3      // 连续失败次数阈值
+		maxConsecutiveFails  = 3                // 连续失败次数阈值
 	)
 
 	consecutiveFails := 0 // 连续失败计数
@@ -554,8 +551,8 @@ func (c *WeixinChannel) handleInboundMessage(ctx context.Context, msg WeixinMess
 // TODO: 实现与 finclaw 消息系统的集成
 func (c *WeixinChannel) handleMessage(ctx context.Context, chatID, content string, media []string, inboundCtx InboundContext, sender SenderInfo) {
 	logger.InfoCF("weixin", "Message received", map[string]any{
-		"chat_id":  chatID,
-		"sender":   sender.PlatformID,
+		"chat_id": chatID,
+		"sender":  sender.PlatformID,
 		"content": content,
 		"media":   media,
 	})
@@ -629,21 +626,13 @@ func buildSessionKey(chatID string) string {
 	return fmt.Sprintf("weixin:%s", chatID)
 }
 
-// processOutboundLoop 处理出站消息循环
-// 从消息总线读取出站消息并发送给微信用户
-// 注意: 这是 msgBus.OutboundChan() 的唯一消费者。
-// 非微信消息会被转发到 finclawForwardCh 供 finclaw 频道处理，
-// 以避免多个 goroutine 从同一个 channel 读取导致消息随机丢失。
-//
-// 支持运行时切换绑定 agent: rebindCh 触发后会重新解析当前绑定的 msgBus 和转发通道。
 func (c *WeixinChannel) processOutboundLoop(ctx context.Context) {
 	logger.InfoCF("weixin", "Starting outbound message processor", nil)
 
 	for {
-		msgBus := c.currentMsgBus()
-		if msgBus == nil {
-			// 没有可用的 msgBus，等待 rebind 或退出
-			logger.WarnCF("weixin", "No msgBus for current bound agent, waiting for rebind", map[string]any{
+		outboundChan := c.currentWeixinOutboundCh()
+		if outboundChan == nil {
+			logger.WarnCF("weixin", "No weixin outbound queue for current bound agent, waiting for rebind", map[string]any{
 				"agent": c.BoundAgent(),
 			})
 			select {
@@ -655,12 +644,10 @@ func (c *WeixinChannel) processOutboundLoop(ctx context.Context) {
 			}
 		}
 
-		outboundChan := msgBus.OutboundChan()
-		logger.InfoCF("weixin", "Subscribed to outbound channel", map[string]any{
+		logger.InfoCF("weixin", "Subscribed to weixin outbound queue", map[string]any{
 			"agent": c.BoundAgent(),
 		})
 
-	consumeLoop:
 		for {
 			select {
 			case <-ctx.Done():
@@ -670,15 +657,17 @@ func (c *WeixinChannel) processOutboundLoop(ctx context.Context) {
 				logger.InfoCF("weixin", "Rebind signal received, re-subscribing", map[string]any{
 					"agent": c.BoundAgent(),
 				})
-				break consumeLoop
+				goto resubscribe
 			case outboundMsg, ok := <-outboundChan:
 				if !ok {
-					logger.InfoCF("weixin", "Outbound channel closed", nil)
+					logger.InfoCF("weixin", "Outbound queue closed", nil)
 					return
 				}
 				c.dispatchOutbound(ctx, outboundMsg)
 			}
 		}
+
+	resubscribe:
 	}
 }
 
@@ -703,18 +692,7 @@ func (c *WeixinChannel) dispatchOutbound(ctx context.Context, outboundMsg bus.Ou
 		"content_len": len(outboundMsg.Content),
 	})
 
-	// 非微信消息转发给 finclaw 频道处理
 	if outboundMsg.Channel != "weixin" {
-		if forwardCh := c.currentFinclawForwardCh(); forwardCh != nil {
-			select {
-			case forwardCh <- outboundMsg:
-			default:
-				logger.WarnCF("weixin", "Finclaw outbound channel full, dropping message", map[string]any{
-					"channel": outboundMsg.Channel,
-					"chat_id": outboundMsg.ChatID,
-				})
-			}
-		}
 		return
 	}
 
@@ -867,7 +845,7 @@ func stripMarkdown(text string) string {
 // Send 发送文本消息给微信用户
 func (c *WeixinChannel) Send(ctx context.Context, msg OutboundMessage) ([]string, error) {
 	logger.InfoCF("weixin", "Send called", map[string]any{
-		"chat_id":  msg.ChatID,
+		"chat_id": msg.ChatID,
 		"content": msg.Content,
 		"running": c.IsRunning(),
 	})
@@ -900,8 +878,8 @@ func (c *WeixinChannel) Send(ctx context.Context, msg OutboundMessage) ([]string
 	}
 
 	logger.InfoCF("weixin", "Send - context token lookup result", map[string]any{
-		"to_user_id":    toUserID,
-		"has_context":   contextToken != "",
+		"to_user_id":  toUserID,
+		"has_context": contextToken != "",
 	})
 	if contextToken != "" {
 		logger.InfoCF("weixin", "Send - token prefix", map[string]any{
@@ -954,7 +932,7 @@ func (c *WeixinChannel) flushPendingReplies(ctx context.Context, userID string) 
 	}
 
 	logger.InfoCF("weixin", "Flushing pending replies", map[string]any{
-		"user_id":    userID,
+		"user_id":     userID,
 		"reply_count": len(replies),
 	})
 

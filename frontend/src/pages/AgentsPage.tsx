@@ -2,6 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Dialog } from 'radix-ui';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { IconCpu, IconChevronDown, IconEye, IconEyeOff, IconFileDescription, IconPuzzle, IconSparkles, IconTrash, IconUpload, IconUser } from '@tabler/icons-react';
+import { PanelResizeHandle } from '@/components/PanelResizeHandle';
+import { useHorizontalResize } from '@/hooks/useHorizontalResize';
+import {
+  PANEL_WIDTH_DEFAULTS,
+  PANEL_WIDTH_KEYS,
+  PANEL_WIDTH_LIMITS,
+} from '@/lib/panelWidths';
 import { useAgents, findAgentSummary } from '../state/agents';
 import {
   getAgent,
@@ -139,6 +146,11 @@ export default function AgentsPage() {
   const [skillsRefreshRev, setSkillsRefreshRev] = useState(0);
   const { confirm, dialog: confirmDialog } = useConfirm();
   const { setNavigationGuard } = useNavigationGuard();
+  const agentsListResize = useHorizontalResize({
+    storageKey: PANEL_WIDTH_KEYS.agentsList,
+    defaultWidth: PANEL_WIDTH_DEFAULTS.agentsList,
+    ...PANEL_WIDTH_LIMITS.agentsList,
+  });
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -552,7 +564,10 @@ export default function AgentsPage() {
       {/* Content */}
       <div className="flex min-h-0 flex-1 gap-3 overflow-hidden p-3">
         {/* Left Pane - Agent List */}
-        <div className="hidden w-[14rem] shrink-0 flex-col rounded-xl border border-border bg-card lg:w-[15rem] xl:w-[16rem] md:flex">
+        <div
+          className="relative hidden shrink-0 flex-col rounded-xl border border-border bg-card md:flex"
+          style={{ width: agentsListResize.width }}
+        >
           <div className="space-y-2 border-b border-border/50 p-4">
             <Button
               variant="outline"
@@ -609,6 +624,7 @@ export default function AgentsPage() {
               </div>
             )}
           </ScrollArea>
+          <PanelResizeHandle {...agentsListResize.handleProps} />
         </div>
 
         {/* Right Pane - Detail */}

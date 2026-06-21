@@ -11,6 +11,12 @@ export interface AuthResponse {
   user: AuthUser;
 }
 
+export type VerificationPurpose = 'register' | 'reset_password';
+
+export interface AuthConfig {
+  email_verification_enabled: boolean;
+}
+
 async function parseGinx<T>(res: Response): Promise<GinxResponse<T>> {
   let json: GinxResponse<T> | null = null;
   try {
@@ -38,14 +44,49 @@ export function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-export async function register(account: string, password: string, display_name: string): Promise<AuthResponse> {
+export async function fetchAuthConfig(): Promise<AuthConfig> {
+  const res = await fetch('/api/v1/auth/config');
+  const data = await parseGinx<AuthConfig>(res);
+  if (!data.body) {
+    throw new Error('Auth config not found');
+  }
+  return data.body;
+}
+
+export async function sendVerificationCode(email: string, purpose: VerificationPurpose): Promise<void> {
+  const res = await fetch('/api/v1/auth/send-code', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, purpose }),
+  });
+  await parseGinx<{ message: string }>(res);
+}
+
+export interface RegisterParams {
+  account: string;
+  password: string;
+  display_name: string;
+  email?: string;
+  code?: string;
+}
+
+export async function register(params: RegisterParams): Promise<AuthResponse> {
   const res = await fetch('/api/v1/auth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ account, password, display_name }),
+    body: JSON.stringify(params),
   });
   const data = await parseGinx<AuthResponse>(res);
   return data.body!;
+}
+
+export async function resetPassword(email: string, password: string, code: string): Promise<void> {
+  const res = await fetch('/api/v1/auth/reset-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, code }),
+  });
+  await parseGinx<{ message: string }>(res);
 }
 
 export async function login(account: string, password: string): Promise<AuthResponse> {

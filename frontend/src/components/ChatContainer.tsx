@@ -68,10 +68,10 @@ export function ChatContainer({
   }
 
   const taskTiming = useElapsedSeconds(taskActive, { startedAtMs: taskStartedAt });
-  const finishedElapsedSec =
-    taskTiming.completed || !taskActive
-      ? (taskTiming.completed ? taskTiming.seconds : completedTaskElapsedSec)
-      : null;
+  const finishedElapsedSec = !taskActive
+    ? (completedTaskElapsedSec ??
+        (taskTiming.completed || taskTiming.seconds > 0 ? taskTiming.seconds : null))
+    : null;
   const lastMsg = messages.length > 0 ? messages[messages.length - 1] : undefined;
   const activeTaskSegments = taskActive ? collectActiveTaskSegments(messages) : [];
 
@@ -82,10 +82,8 @@ export function ChatContainer({
     if (!taskActive) {
       // 完成后把总耗时挂在「工作过程」面板上（独立 process 消息）
       if (lastProcessIdx >= 0) return index === lastProcessIdx;
-      // 无独立过程消息时，思考块可能嵌在正文回复里
-      if (completeReplyIdx >= 0 && index === completeReplyIdx) {
-        return Boolean(splitAssistantContent(messages[completeReplyIdx].content).thought);
-      }
+      // 无独立过程消息时挂在本轮正文回复（思考块可能已合并进正文）
+      if (completeReplyIdx >= 0) return index === completeReplyIdx;
       return false;
     }
     if (index !== messages.length - 1) return false;
@@ -178,7 +176,7 @@ export function ChatContainer({
                   : (finishedElapsedSec ?? undefined)
                 : undefined
             }
-            taskElapsedCompleted={attachTaskTiming && !taskActive && finishedElapsedSec != null}
+            taskElapsedCompleted={attachTaskTiming && !taskActive}
           />
         );
       })}

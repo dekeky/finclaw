@@ -163,6 +163,12 @@
   height: 100svh;
 }
 
+/* 拖拽调宽时关闭侧栏 width 过渡，避免不跟手 */
+[data-sidebar-resizing] [data-slot="sidebar-gap"],
+[data-sidebar-resizing] [data-slot="sidebar-container"] {
+  transition: none !important;
+}
+
 @keyframes shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
@@ -215,4 +221,34 @@
 
 .fc-process-active {
   animation: fc-process-breathe 2.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fc-process-active {
+    animation: none;
+  }
+}
+
+/* 思考过程滚动区：可见滚动条 */
+.fc-process-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(139 92 246 / 0.45) rgb(139 92 246 / 0.1);
+}
+
+.fc-process-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.fc-process-scroll::-webkit-scrollbar-track {
+  background: rgb(139 92 246 / 0.1);
+  border-radius: 4px;
+}
+
+.fc-process-scroll::-webkit-scrollbar-thumb {
+  background: rgb(139 92 246 / 0.45);
+  border-radius: 4px;
+}
+
+.fc-process-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(139 92 246 / 0.65);
 }

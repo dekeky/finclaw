@@ -46,5 +46,9 @@ export function isIncompleteChatTask(messages: ChatMessage[]): boolean {
 
 export function isChatTaskActive(messages: ChatMessage[], isTyping: boolean): boolean {
   if (hasCompleteReplyInTurn(messages)) return false;
-  return isTyping || isIncompleteChatTask(messages);
+  if (isTyping) return true;
+  // 仅「用户已发送、尚未收到助手消息」时保持进行中面板；避免 reasoning/工具结束后
+  // isIncompleteChatTask 仍为 true 导致过程消息被 processOutputActive 永久隐藏。
+  const last = messages[messages.length - 1];
+  return last?.role === 'user';
 }

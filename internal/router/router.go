@@ -116,10 +116,13 @@ func (fr *FinClawRouter) marketRouter() {
 }
 
 func (fr *FinClawRouter) authRouter() {
-	handler := auth.NewHandler(fr.authStore)
+	handler := auth.NewHandler(fr.authStore, fr.finclawConf)
 	authGroup := fr.r.Group("/api/v1/auth")
 	{
+		authGroup.GET("/config", handler.Config)
+		authGroup.POST("/send-code", handler.SendCode)
 		authGroup.POST("/register", handler.Register)
+		authGroup.POST("/reset-password", handler.ResetPassword)
 		authGroup.POST("/login", handler.Login)
 		authGroup.GET("/me", auth.AuthMiddleware(fr.authStore), handler.Me)
 		authGroup.POST("/refresh", auth.AuthMiddleware(fr.authStore), handler.Refresh)
