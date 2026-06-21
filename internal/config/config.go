@@ -27,11 +27,12 @@ func NewSecureString(value string) *SecureString {
 
 // WeixinSettings 微信配置
 type WeixinSettings struct {
-	Token      string `toml:"token" json:"token"`
-	AccountID  string `toml:"account_id" json:"account_id"`
-	BaseURL    string `toml:"base_url" json:"base_url"`
-	CDNBaseURL string `toml:"cdn_base_url" json:"cdn_base_url"`
-	Proxy      string `toml:"proxy" json:"proxy"`
+	Token       string `toml:"token" json:"token"`
+	AccountID   string `toml:"account_id" json:"account_id"`
+	BaseURL     string `toml:"base_url" json:"base_url"`
+	CDNBaseURL  string `toml:"cdn_base_url" json:"cdn_base_url"`
+	Proxy       string `toml:"proxy" json:"proxy"`
+	BoundAgent  string `toml:"bound_agent" json:"bound_agent"`
 }
 
 // GetToken returns token as SecureString

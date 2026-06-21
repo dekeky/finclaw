@@ -32,7 +32,7 @@ import (
 
 const (
 	weixinMediaMaxBytes         = 100 << 20       // 媒体文件最大 100MB
-	weixinTypingKeepAlive       = 5 * time.Second // "正在输入"状态刷新间隔
+	weixinTypingKeepAlive       = 3 * time.Second // "正在输入"状态刷新间隔（微信侧有效期较短，需要 ≤4 秒续期）
 	weixinUploadRetryMax        = 3               // 上传最大重试次数
 	weixinDownloadRetryMax      = 2               // 下载最大重试次数
 	weixinDownloadRetryDelay    = 300 * time.Millisecond
@@ -1116,7 +1116,9 @@ func (c *WeixinChannel) sendTypingStatus(
 }
 
 // StartTyping 开始发送"正在输入"状态
-// 返回一个停止函数，调用后取消"正在输入"状态
+// 返回一个停止函数，调用后取消"正在输入"状态。
+// 整个过程（拉取 ticket、首次发送、周期刷新）都在后台 goroutine 执行，
+// 调用方立即返回，避免阻塞收到消息后的主流程，输入指示器才能"立刻"出现。
 func (c *WeixinChannel) StartTyping(ctx context.Context, chatID string) (func(), error) {
 	if strings.TrimSpace(chatID) == "" {
 		return func() {}, nil
@@ -1125,69 +1127,91 @@ func (c *WeixinChannel) StartTyping(ctx context.Context, chatID string) (func(),
 		return func() {}, nil
 	}
 
-	// 获取 typing_ticket
-	ticket, err := c.getTypingTicket(ctx, chatID)
-	if err != nil {
-		if ticket == "" {
+	typingCtx, cancel := context.WithCancel(ctx)
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			cancel()
+			// 异步发送取消状态，避免阻塞调用方（最终回复发送前会立即调用 stop）。
+			go func() {
+				stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer stopCancel()
+				ticket, err := c.getTypingTicket(stopCtx, chatID)
+				if err != nil || ticket == "" {
+					return
+				}
+				if err := c.sendTypingStatus(stopCtx, chatID, ticket, TypingStatusCancel); err != nil {
+					logger.DebugCF("weixin", "Failed to cancel typing indicator", map[string]any{
+						"chat_id": chatID,
+						"error":   err.Error(),
+					})
+				}
+			}()
+		})
+	}
+
+	// 异步获取 ticket、首次发送 typing、并启动周期刷新。
+	go func() {
+		if typingCtx.Err() != nil {
+			return
+		}
+
+		fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 4*time.Second)
+		ticket, err := c.getTypingTicket(fetchCtx, chatID)
+		fetchCancel()
+		if err != nil && ticket == "" {
 			logger.WarnCF("weixin", "No typing ticket available", map[string]any{
 				"chat_id": chatID,
 				"error":   err.Error(),
 			})
-			return func() {}, err
+			return
 		}
-		logger.InfoCF("weixin", "GetConfig refresh failed; using cached typing ticket", map[string]any{
+		if ticket == "" {
+			logger.WarnCF("weixin", "Typing ticket is empty, cannot start typing", map[string]any{
+				"chat_id": chatID,
+			})
+			return
+		}
+
+		// 在第一次发送前再检查一次是否已被取消（用户可能很快连发消息或回复已经返回）。
+		if typingCtx.Err() != nil {
+			return
+		}
+
+		logger.InfoCF("weixin", "Sending typing status to WeChat", map[string]any{
 			"chat_id": chatID,
-			"error":   err.Error(),
 		})
-	}
-	if ticket == "" {
-		logger.WarnCF("weixin", "Typing ticket is empty, cannot start typing", map[string]any{
-			"chat_id": chatID,
-		})
-		return func() {}, nil
-	}
 
-	logger.InfoCF("weixin", "Sending typing status to WeChat", map[string]any{
-		"chat_id": chatID,
-	})
+		firstCtx, firstCancel := context.WithTimeout(context.Background(), 4*time.Second)
+		err = c.sendTypingStatus(firstCtx, chatID, ticket, TypingStatusTyping)
+		firstCancel()
+		if err != nil {
+			logger.WarnCF("weixin", "Failed to send initial typing status", map[string]any{
+				"chat_id": chatID,
+				"error":   err.Error(),
+			})
+			return
+		}
 
-	typingCtx, cancel := context.WithCancel(ctx)
-	var once sync.Once
-	// 停止函数
-	stop := func() {
-		once.Do(func() {
-			cancel()
-			// 发送取消状态
-			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer stopCancel()
-			if err := c.sendTypingStatus(stopCtx, chatID, ticket, TypingStatusCancel); err != nil {
-				logger.DebugCF("weixin", "Failed to cancel typing indicator", map[string]any{
-					"chat_id": chatID,
-					"error":   err.Error(),
-				})
-			}
-		})
-	}
-
-	// 发送"正在输入"状态
-	if err := c.sendTypingStatus(typingCtx, chatID, ticket, TypingStatusTyping); err != nil {
-		stop()
-		return func() {}, err
-	}
-
-	// 定时刷新"正在输入"状态（微信要求每 5 秒刷新一次）
-	ticker := time.NewTicker(weixinTypingKeepAlive)
-	go func() {
+		// 定时刷新"正在输入"状态（微信要求每 5 秒刷新一次）
+		ticker := time.NewTicker(weixinTypingKeepAlive)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-typingCtx.Done():
 				return
 			case <-ticker.C:
-				if err := c.sendTypingStatus(typingCtx, chatID, ticket, TypingStatusTyping); err != nil {
-					logger.DebugCF("weixin", "Failed to refresh typing indicator", map[string]any{
+				refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 4*time.Second)
+				rerr := c.sendTypingStatus(refreshCtx, chatID, ticket, TypingStatusTyping)
+				refreshCancel()
+				if rerr != nil {
+					logger.WarnCF("weixin", "Failed to refresh typing indicator", map[string]any{
 						"chat_id": chatID,
-						"error":   err.Error(),
+						"error":   rerr.Error(),
+					})
+				} else {
+					logger.InfoCF("weixin", "Refreshed typing indicator", map[string]any{
+						"chat_id": chatID,
 					})
 				}
 			}

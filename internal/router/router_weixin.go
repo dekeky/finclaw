@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -59,7 +60,8 @@ func (fr *FinClawRouter) weixinRouter() {
 		weixinGroup.GET("/qrcode/status", fr.makeQRCodeStatusHandler(apiClient))
 	}
 
-	// 设置保存接口
+	// 设置读写接口
+	weixinGroup.GET("/settings", fr.makeGetWeixinSettingsHandler())
 	weixinGroup.PUT("/settings", fr.makeSaveWeixinSettingsHandler())
 
 	log.Printf("📡 Weixin auth routes initialized (base_url: %s)", weixinCfg.BaseURL)
@@ -243,15 +245,51 @@ func (fr *FinClawRouter) handleSSEQRCodeStatus(c *gin.Context, apiClient *weixin
 	}
 }
 
+// makeGetWeixinSettingsHandler 返回当前微信设置（不含 token 等敏感字段需要时再筛减）
+func (fr *FinClawRouter) makeGetWeixinSettingsHandler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		weixinCfg := fr.getWeixinConfig()
+		if weixinCfg == nil {
+			c.JSON(http.StatusOK, gin.H{
+				"account_id":   "",
+				"base_url":     "",
+				"proxy":        "",
+				"enabled":      false,
+				"bound_agent":  "",
+			})
+			return
+		}
+
+		enabled := false
+		if fr.finclawConf != nil && fr.finclawConf.Channels != nil {
+			for _, chConfig := range fr.finclawConf.Channels {
+				if chConfig != nil && chConfig.Weixin != nil {
+					enabled = chConfig.Enabled
+					break
+				}
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"account_id":  weixinCfg.AccountID,
+			"base_url":    weixinCfg.BaseURL,
+			"proxy":       weixinCfg.Proxy,
+			"enabled":     enabled,
+			"bound_agent": weixinCfg.BoundAgent,
+		})
+	}
+}
+
 // makeSaveWeixinSettingsHandler 保存微信设置
 func (fr *FinClawRouter) makeSaveWeixinSettingsHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var settings struct {
-			Token     string `json:"token"`
-			AccountID string `json:"account_id"`
-			BaseURL   string `json:"base_url"`
-			Proxy     string `json:"proxy"`
-			Enabled   bool   `json:"enabled"`
+			Token      *string `json:"token"`
+			AccountID  *string `json:"account_id"`
+			BaseURL    *string `json:"base_url"`
+			Proxy      *string `json:"proxy"`
+			Enabled    *bool   `json:"enabled"`
+			BoundAgent *string `json:"bound_agent"`
 		}
 
 		if err := c.ShouldBindJSON(&settings); err != nil {
@@ -266,16 +304,27 @@ func (fr *FinClawRouter) makeSaveWeixinSettingsHandler() gin.HandlerFunc {
 			return
 		}
 
-		weixinCfg.Token = settings.Token
-		weixinCfg.AccountID = settings.AccountID
-		weixinCfg.BaseURL = settings.BaseURL
-		weixinCfg.Proxy = settings.Proxy
+		if settings.Token != nil {
+			weixinCfg.Token = *settings.Token
+		}
+		if settings.AccountID != nil {
+			weixinCfg.AccountID = *settings.AccountID
+		}
+		if settings.BaseURL != nil {
+			weixinCfg.BaseURL = *settings.BaseURL
+		}
+		if settings.Proxy != nil {
+			weixinCfg.Proxy = *settings.Proxy
+		}
+		if settings.BoundAgent != nil {
+			weixinCfg.BoundAgent = *settings.BoundAgent
+		}
 
 		// 更新 enabled 状态
-		if fr.finclawConf.Channels != nil {
+		if settings.Enabled != nil && fr.finclawConf.Channels != nil {
 			for _, chConfig := range fr.finclawConf.Channels {
 				if chConfig != nil && chConfig.Weixin != nil {
-					chConfig.Enabled = settings.Enabled
+					chConfig.Enabled = *settings.Enabled
 					break
 				}
 			}
@@ -287,8 +336,19 @@ func (fr *FinClawRouter) makeSaveWeixinSettingsHandler() gin.HandlerFunc {
 			return
 		}
 
-		log.Printf("✅ Weixin settings saved: token=%s, account_id=%s, enabled=%v",
-			settings.Token, settings.AccountID, settings.Enabled)
+		// 如果切换了 bound_agent，热更新所有运行中的微信频道，无需重启。
+		if settings.BoundAgent != nil {
+			resolved := fr.resolveBoundAgentKey(*settings.BoundAgent)
+			if resolved != "" {
+				n := fr.rebindAllWeixinChannels(resolved)
+				log.Printf("🔁 Rebound %d weixin channel(s) to agent %s (resolved=%s)", n, *settings.BoundAgent, resolved)
+			} else {
+				log.Printf("⚠️ Could not resolve bound_agent=%s to any running agent; skipping rebind", *settings.BoundAgent)
+			}
+		}
+
+		log.Printf("✅ Weixin settings saved: account_id=%s, enabled=%v, bound_agent=%s",
+			weixinCfg.AccountID, fr.weixinChannelEnabled(), weixinCfg.BoundAgent)
 
 		// Restart polling so the new bot token takes effect without a full server restart.
 		if fr.agentManager != nil {
@@ -297,4 +357,39 @@ func (fr *FinClawRouter) makeSaveWeixinSettingsHandler() gin.HandlerFunc {
 
 		c.JSON(http.StatusOK, gin.H{"message": "settings saved"})
 	}
+}
+
+// resolveBoundAgentKey 把 boundAgent（通常是 agentName）映射到 agentManager 内部 key。
+// 与 cmd/agent/main.go 中 resolveBoundAgent 使用相同语义，但回退策略是：
+// 找不到时返回空字符串，由调用方自行决定是否回退/拒绝。
+func (fr *FinClawRouter) resolveBoundAgentKey(boundAgent string) string {
+	if boundAgent == "" || fr.agentManager == nil {
+		return ""
+	}
+	names := fr.agentManager.Names()
+	for _, key := range names {
+		if key == boundAgent {
+			return key
+		}
+	}
+	suffix := ":" + boundAgent
+	for _, key := range names {
+		if strings.HasSuffix(key, suffix) {
+			return key
+		}
+	}
+	return ""
+}
+
+// weixinChannelEnabled 返回 weixin 频道当前是否启用
+func (fr *FinClawRouter) weixinChannelEnabled() bool {
+	if fr.finclawConf == nil || fr.finclawConf.Channels == nil {
+		return false
+	}
+	for _, chConfig := range fr.finclawConf.Channels {
+		if chConfig != nil && chConfig.Weixin != nil {
+			return chConfig.Enabled
+		}
+	}
+	return false
 }

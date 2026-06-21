@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 
 	"github.com/finclaw/internal/auth"
 	finclawconfig "github.com/finclaw/internal/config"
 	"github.com/finclaw/internal/rss"
 	"github.com/finclaw/internal/webui"
 	agentruntime "github.com/finclaw/pkg/agent"
+	"github.com/finclaw/pkg/channels/weixin"
 	"github.com/gin-gonic/gin"
 )
 
@@ -21,17 +23,43 @@ type FinClawRouter struct {
 	rssServerAddr string
 	agentHubAddr  string
 	authStore     *auth.Store
+
+	weixinMu       sync.RWMutex
+	weixinChannels map[string]*weixin.WeixinChannel // channel name -> running channel
 }
 
 // NewFinClawRouter creates a new router instance
 func NewFinClawRouter(rssServerAddr, agentHubAddr string, agentManager *agentruntime.AgentManager, authStore *auth.Store, finclawConf *finclawconfig.FinclawConfig) *FinClawRouter {
 	return &FinClawRouter{
-		rssServerAddr: rssServerAddr,
-		agentHubAddr:  agentHubAddr,
-		agentManager:  agentManager,
-		authStore:     authStore,
-		finclawConf:   finclawConf,
+		rssServerAddr:  rssServerAddr,
+		agentHubAddr:   agentHubAddr,
+		agentManager:   agentManager,
+		authStore:      authStore,
+		finclawConf:    finclawConf,
+		weixinChannels: make(map[string]*weixin.WeixinChannel),
 	}
+}
+
+// RegisterWeixinChannel 注册一个正在运行的微信频道实例，
+// 供 PUT /api/weixin/auth/settings 在切换 bound_agent 时调用 Rebind。
+func (fr *FinClawRouter) RegisterWeixinChannel(name string, ch *weixin.WeixinChannel) {
+	fr.weixinMu.Lock()
+	defer fr.weixinMu.Unlock()
+	fr.weixinChannels[name] = ch
+}
+
+// rebindAllWeixinChannels 让所有已注册的微信频道切换到新的 agent。
+// 当前实现按通道名单一切换；多通道场景下需要调用方传入更细的映射，本函数会对所有通道生效。
+func (fr *FinClawRouter) rebindAllWeixinChannels(agentName string) int {
+	fr.weixinMu.RLock()
+	defer fr.weixinMu.RUnlock()
+	count := 0
+	for _, ch := range fr.weixinChannels {
+		if ch.Rebind(agentName) {
+			count++
+		}
+	}
+	return count
 }
 
 // RoutesInit configures all HTTP and WebSocket routes

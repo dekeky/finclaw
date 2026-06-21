@@ -14,6 +14,25 @@ func (m *AgentManager) StartWeixinChannels(conf *config.FinclawConfig) {
 	m.reloadWeixinChannels(conf, false)
 }
 
+func resolveBoundAgent(agentNames []string, boundAgent, defaultAgent string) string {
+	if boundAgent == "" {
+		return defaultAgent
+	}
+	for _, key := range agentNames {
+		if key == boundAgent {
+			return key
+		}
+	}
+	suffix := ":" + boundAgent
+	for _, key := range agentNames {
+		if strings.HasSuffix(key, suffix) {
+			return key
+		}
+	}
+	log.Printf("⚠️ bound_agent %q not found, fallback to %q", boundAgent, defaultAgent)
+	return defaultAgent
+}
+
 // ReloadWeixinChannels stops running weixin channels and restarts from the latest config.
 // Call after binding saves a new bot token so polling uses the new credentials.
 func (m *AgentManager) ReloadWeixinChannels(conf *config.FinclawConfig) {
@@ -43,16 +62,6 @@ func (m *AgentManager) reloadWeixinChannels(conf *config.FinclawConfig, stopExis
 	}
 
 	defaultAgentName := agentNames[0]
-	msgBus := m.msgBusses[defaultAgentName]
-	if msgBus == nil {
-		log.Printf("⚠️ Failed to get msgBus for agent %s, skipping weixin channel init", defaultAgentName)
-		return
-	}
-	weixinOutCh := m.weixinOutboundChs[defaultAgentName]
-	if weixinOutCh == nil {
-		log.Printf("⚠️ No weixin outbound queue for agent %s", defaultAgentName)
-		return
-	}
 
 	if m.weixinChannels == nil {
 		m.weixinChannels = make(map[string]*weixin.WeixinChannel)
@@ -70,18 +79,18 @@ func (m *AgentManager) reloadWeixinChannels(conf *config.FinclawConfig, stopExis
 			continue
 		}
 
-		weixinCh, err := weixin.NewWeixinChannel(chConfig.Weixin, msgBus)
+		targetAgent := resolveBoundAgent(agentNames, chConfig.Weixin.BoundAgent, defaultAgentName)
+		weixinCh, err := weixin.NewWeixinChannel(chConfig.Weixin, m, targetAgent)
 		if err != nil {
 			log.Printf("⚠️ Failed to create weixin channel %s: %v", name, err)
 			continue
 		}
-		weixinCh.SetOutboundCh(weixinOutCh)
 		if err := weixinCh.Start(m.ctx); err != nil {
 			log.Printf("⚠️ Failed to start weixin channel %s: %v", name, err)
 			continue
 		}
 		m.weixinChannels[name] = weixinCh
-		log.Printf("✅ Weixin channel %s started (agent=%s, base_url=%s)", name, defaultAgentName, chConfig.Weixin.BaseURL)
+		log.Printf("✅ Weixin channel %s started (agent=%s, base_url=%s)", name, targetAgent, chConfig.Weixin.BaseURL)
 	}
 }
 
