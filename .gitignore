@@ -9,7 +9,7 @@ node_modules/
 *.exe
 # 编译出的二进制（勿提交，体积巨大）
 /finclaw
-/finclaw-linux-*
+/finclaw-linux*
 /finclaw-agent-linux*
 # 依赖
 vendor/
