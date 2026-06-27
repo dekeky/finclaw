@@ -138,7 +138,21 @@ go build -o finclaw ./cmd/agent
 
 ## Star 趋势
 
-[![Star History Chart](https://api.star-history.com/svg?repos=dekeky/finclaw&type=Date)](https://star-history.com/#dekeky/finclaw&Date)
+折线图由 [Star History](https://star-history.com) 根据 GitHub 上本仓库的 **Star 事件时间线**动态生成（每次 Star 记为一个数据点）。当前仓库 **2** 个 Star，折线会较短并贴近图表底部，属正常现象。
+
+> 若曾设为私有仓库，GitHub 可能缓存了当时的空白图；下方已换用新版嵌入地址并带版本参数以刷新缓存。仍不显示时，可 [点此直接打开图表](https://api.star-history.com/chart?repos=dekeky/finclaw&type=date)。
+
+<p align="center">
+  <a href="https://star-history.com/#dekeky/finclaw&Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=dekeky/finclaw&type=date&theme=dark&v=20260627" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=dekeky/finclaw&type=date&v=20260627" />
+      <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=dekeky/finclaw&type=date&v=20260627" width="800" />
+    </picture>
+  </a>
+</p>
+
+[![GitHub Stars](https://img.shields.io/github/stars/dekeky/finclaw?style=flat-square&logo=github)](https://github.com/dekeky/finclaw/stargazers)
 
 ## 开源协议
 
