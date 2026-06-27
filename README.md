@@ -6,6 +6,18 @@
 - **项目主页**：[dekeky.github.io/finclaw](https://dekeky.github.io/finclaw)
 - **下载发布版**：[GitHub Releases](https://github.com/dekeky/finclaw/releases)
 
+<p align="center">
+  <a href="http://159.75.51.78:8082/chat">
+    <img src="assets/finclawimg.jpg" alt="Finclaw Web 控制台界面" width="720" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="http://159.75.51.78:8082/chat"><strong>在线体验</strong></a>
+  ·
+  <a href="https://dekeky.github.io/finclaw"><strong>项目主页</strong></a>
+</p>
+
 ## 现已支持
 
 ### 账号
@@ -17,7 +29,7 @@
 
 - 创建、管理多个 Agent，自定义头像与人设
 - 编辑角色定位、沟通风格与用户偏好；管理 Skills 与工作区文档，支持 AI 辅助生成与润色
-- **Agent 市场**已沉淀并蒸馏多位投资大师的方法论，包括本杰明·格雷厄姆、沃伦·巴菲特等，一键安装即可拥有对应风格的投研助手；也可将自己的 Agent 上传分享
+- **Agent 市场**已蒸馏多位投资大师的方法论，包括本杰明·格雷厄姆、沃伦·巴菲特等，一键安装即可拥有对应风格的投研助手；也可将自己的 Agent 上传分享
 - 从市场安装模板后，绑定模型即可开始对话
 
 ### 模型
@@ -115,10 +127,6 @@ http://127.0.0.1:8082
 
 确认「微信」页已选择要绑定的 Agent，且该 Agent 的模型配置正常。
 
-## 发布 GitHub Pages
-
-仓库已包含 `docs/` 静态站点。在 GitHub 仓库 **Settings → Pages** 中，Source 选择 **Deploy from a branch**，Branch 选 `master`，文件夹选 **`/docs`**，保存后可通过 [dekeky.github.io/finclaw](https://dekeky.github.io/finclaw) 访问。
-
 ## 开发者
 
 如需从源码构建，请参阅仓库内 `frontend/` 与 `cmd/agent/`。基于 [PicoClaw](https://github.com/sipeed/picoclaw) 运行时。
@@ -127,3 +135,11 @@ http://127.0.0.1:8082
 cd frontend && npm install && npm run build && cd ..
 go build -o finclaw ./cmd/agent
 ```
+
+## Star 趋势
+
+[![Star History Chart](https://api.star-history.com/svg?repos=dekeky/finclaw&type=Date)](https://star-history.com/#dekeky/finclaw&Date)
+
+## 开源协议
+
+本项目基于 [Apache License 2.0](LICENSE) 开源。
