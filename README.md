@@ -138,17 +138,13 @@ go build -o finclaw ./cmd/agent
 
 ## Star 趋势
 
-折线图由 [Star History](https://star-history.com) 根据 GitHub 上本仓库的 **Star 事件时间线**动态生成（每次 Star 记为一个数据点）。当前仓库 **2** 个 Star，折线会较短并贴近图表底部，属正常现象。
+数据来自 [Star History](https://star-history.com)（读取 GitHub 上每次 Star 的时间戳并连成折线）。当前 **2** 个 Star，折线较短、贴近底部，属正常现象。
 
-> 若曾设为私有仓库，GitHub 可能缓存了当时的空白图；下方已换用新版嵌入地址并带版本参数以刷新缓存。仍不显示时，可 [点此直接打开图表](https://api.star-history.com/chart?repos=dekeky/finclaw&type=date)。
+下方图片存放在本仓库 `assets/star-history.svg`（自包含 SVG，无外链，GitHub 可直接渲染），由 [GitHub Actions](.github/workflows/star-history.yml) 每日根据 Star 时间戳自动更新；也可在 [Star History 网站](https://star-history.com/#dekeky/finclaw&Date) 查看交互版。
 
 <p align="center">
   <a href="https://star-history.com/#dekeky/finclaw&Date">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=dekeky/finclaw&type=date&theme=dark&v=20260627" />
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=dekeky/finclaw&type=date&v=20260627" />
-      <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=dekeky/finclaw&type=date&v=20260627" width="800" />
-    </picture>
+    <img src="assets/star-history.svg" alt="Finclaw Star 趋势图" width="800" />
   </a>
 </p>
 
