@@ -22,13 +22,15 @@ import {
 import { AgentAvatar } from '../components/AgentAvatar';
 import { AgentProfileSection } from '../components/AgentProfileSection';
 import { AgentCreateDialog } from '../components/AgentCreateDialog';
-import { isAgentModelSetupValid, type ReuseAgentSourceMeta } from '../components/AgentModelSetupSection';
+import {
+  isAgentModelSetupValid,
+  type AgentModelsMeta,
+} from '../components/AgentModelSetupSection';
+import { ModelSwitcherMenu } from '@/components/ModelSwitcherMenu';
 import { AgentPersonaEditor } from '../components/AgentPersonaEditor';
 import { AgentSkillsPanel, skillFileKey, type SkillFileTarget } from '../components/AgentSkillsPanel';
 import { DocReadingPanel } from '../components/DocReadingPanel';
-import { ModelConnectivityCheck } from '../components/ModelConnectivityCheck';
 import { uploadAgentToMarket, generateMarketSummary } from '../api/agentMarket';
-import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useNavigationGuard } from '../state/navigationGuard';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -37,16 +39,12 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
-import { AGENT_MODEL_PRESETS } from '@/lib/agentModelPresets';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { cn } from '@/lib/cn';
 import { PRIMARY_BUTTON_CLASS, PRIMARY_LIST_ITEM_SELECTED_CLASS, PRIMARY_TAB_ACTIVE_CLASS, PRIMARY_TAB_INACTIVE_HOVER_CLASS, PRIMARY_AI_PANEL_CLASS, PRIMARY_AI_PANEL_HOVER_CLASS, PRIMARY_ICON_GRADIENT_CLASS } from '@/lib/primaryButton';
-import { toast } from 'sonner';
 
-type FormState = { name: string; model: string; apiBase: string; apiKey: string };
-type EditFormState = { model: string; apiBase: string; apiKey: string };
-type CredMode = 'reuse' | 'manual';
-const EMPTY_FORM: FormState = { name: '', model: '', apiBase: '', apiKey: '' };
-const EMPTY_EDIT_FORM: EditFormState = { model: '', apiBase: '', apiKey: '' };
+type FormState = { name: string };
+const EMPTY_FORM: FormState = { name: '' };
 
 const MARKET_UPLOAD_TOKEN_KEY = 'finclaw.marketUploadToken';
 
@@ -70,15 +68,6 @@ function saveCachedUploadToken(token: string) {
   }
 }
 
-function ModelFieldHint() {
-  return (
-    <p className="mt-1 text-[11px] text-muted-foreground">
-      格式为 <span className="font-mono">服务商/模型名</span>，例如{' '}
-      <span className="font-mono">deepseek/deepseek-chat</span>、{' '}
-      <span className="font-mono">openai/gpt-4o</span>。
-    </p>
-  );
-}
 
 type DetailTab = 'profile' | 'persona' | 'skills' | 'config';
 
@@ -92,7 +81,7 @@ const DETAIL_TABS: Array<{
   { id: 'profile', label: '基本资料', icon: IconUser },
   { id: 'persona', label: '人设', icon: IconFileDescription },
   { id: 'skills', label: 'Skills', icon: IconPuzzle },
-  { id: 'config', label: '模型配置', icon: IconCpu },
+  { id: 'config', label: '模型', icon: IconCpu },
 ];
 
 function loadDetailTab(): DetailTab {
@@ -114,7 +103,7 @@ function saveDetailTab(tab: DetailTab) {
 }
 
 export default function AgentsPage() {
-  const { agents, agentNames, avatarRevision, currentAgent, selectAgent, refresh, createAgent, updateAgent, deleteAgent } = useAgents();
+  const { agents, agentNames, avatarRevision, currentAgent, selectAgent, refresh, createAgent, deleteAgent } = useAgents();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const agentParam = searchParams.get('agent');
@@ -124,26 +113,16 @@ export default function AgentsPage() {
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
-  const [credMode, setCredMode] = useState<CredMode>('manual');
-  const [reuseAgent, setReuseAgent] = useState('');
-  const [reuseMeta, setReuseMeta] = useState<ReuseAgentSourceMeta>({
-    source: null,
+  const [selectedModel, setSelectedModel] = useState('');
+  const [modelsMeta, setModelsMeta] = useState<AgentModelsMeta>({
+    models: [],
     loading: false,
     error: null,
   });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
-  const [editConfigOpen, setEditConfigOpen] = useState(false);
-  const [editFetchLoading, setEditFetchLoading] = useState(false);
-  const [editFetchError, setEditFetchError] = useState<string | null>(null);
-  const [editBaseline, setEditBaseline] = useState<AgentDetailBody | null>(null);
-  const editLoadGenRef = useRef(0);
-  const [editForm, setEditForm] = useState<EditFormState>(EMPTY_EDIT_FORM);
-  const [editSubmitting, setEditSubmitting] = useState(false);
-  const [editSubmitError, setEditSubmitError] = useState<string | null>(null);
   const [agentRuntime, setAgentRuntime] = useState<AgentDetailBody | null>(null);
-  const [agentRuntimeLoading, setAgentRuntimeLoading] = useState(false);
   const [agentRuntimeError, setAgentRuntimeError] = useState<string | null>(null);
   const [detailTab, setDetailTabState] = useState<DetailTab>(loadDetailTab);
   const [personaDirty, setPersonaDirty] = useState(false);
@@ -263,15 +242,14 @@ export default function AgentsPage() {
   const openAddForm = useCallback(() => {
     void refresh();
     setForm(EMPTY_FORM);
-    setCredMode(agentNames.length > 0 ? 'reuse' : 'manual');
-    setReuseAgent(agentNames[0] ?? '');
-    setReuseMeta({ source: null, loading: false, error: null });
+    setSelectedModel('');
+    setModelsMeta({ models: [], loading: false, error: null });
     setSubmitError(null);
     setAddOpen(true);
-  }, [agentNames, refresh]);
+  }, [refresh]);
 
-  const handleReuseMetaChange = useCallback((meta: ReuseAgentSourceMeta) => {
-    setReuseMeta(meta);
+  const handleModelsMetaChange = useCallback((meta: AgentModelsMeta) => {
+    setModelsMeta(meta);
   }, []);
 
   // 切换 Agent 或离开 Skills 标签时关闭已打开的 skill 文件
@@ -363,46 +341,12 @@ export default function AgentsPage() {
   );
 
   useEffect(() => {
-    setEditConfigOpen(false);
-    editLoadGenRef.current += 1;
-    setEditFetchLoading(false);
-    setEditFetchError(null);
-    setEditBaseline(null);
-    setEditForm(EMPTY_EDIT_FORM);
-    setEditSubmitError(null);
-  }, [detailName]);
-
-  const loadLatestForEdit = useCallback(async () => {
-    if (!detailName) return;
-    const gen = ++editLoadGenRef.current;
-    setEditFetchLoading(true);
-    setEditFetchError(null);
-    setEditBaseline(null);
-    setEditSubmitError(null);
-    setEditForm(EMPTY_EDIT_FORM);
-    try {
-      const d = await getAgent(detailName);
-      if (gen !== editLoadGenRef.current) return;
-      setAgentRuntime(d);
-      setEditBaseline(d);
-      const mp = d.model_provider;
-      setEditForm({ model: mp.model ?? '', apiBase: mp.api_base ?? '', apiKey: '' });
-    } catch (err) {
-      if (gen !== editLoadGenRef.current) return;
-      setEditFetchError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (gen === editLoadGenRef.current) setEditFetchLoading(false);
-    }
-  }, [detailName]);
-
-  useEffect(() => {
-    if (!detailName) { setAgentRuntime(null); setAgentRuntimeError(null); setAgentRuntimeLoading(false); return; }
+    if (!detailName) { setAgentRuntime(null); setAgentRuntimeError(null); return; }
     let cancelled = false;
-    setAgentRuntimeLoading(true);
     setAgentRuntimeError(null);
     getAgent(detailName)
-      .then((d) => { if (!cancelled) { setAgentRuntime(d); setAgentRuntimeLoading(false); } })
-      .catch((err) => { if (!cancelled) { setAgentRuntime(null); setAgentRuntimeLoading(false); setAgentRuntimeError(err instanceof Error ? err.message : String(err)); } });
+      .then((d) => { if (!cancelled) setAgentRuntime(d); })
+      .catch((err) => { if (!cancelled) { setAgentRuntime(null); setAgentRuntimeError(err instanceof Error ? err.message : String(err)); } });
     return () => { cancelled = true; };
   }, [detailName]);
 
@@ -413,25 +357,8 @@ export default function AgentsPage() {
 
   const formValid = useMemo(() => {
     if (!form.name.trim() || addNameConflict) return false;
-    return isAgentModelSetupValid(
-      credMode,
-      { model: form.model, apiBase: form.apiBase, apiKey: form.apiKey },
-      reuseMeta,
-      reuseAgent,
-    );
-  }, [form, credMode, reuseAgent, reuseMeta, addNameConflict]);
-
-  const editFormValid = useMemo(() => {
-    const hasStoredKey = editBaseline?.model_provider.has_api_key === true;
-    return (
-      !!editBaseline
-      && !editFetchLoading
-      && !editFetchError
-      && editForm.model.trim()
-      && editForm.apiBase.trim()
-      && (editForm.apiKey.trim().length > 0 || hasStoredKey)
-    );
-  }, [editBaseline, editFetchError, editFetchLoading, editForm]);
+    return isAgentModelSetupValid(selectedModel, modelsMeta);
+  }, [form, selectedModel, modelsMeta, addNameConflict]);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -439,19 +366,8 @@ export default function AgentsPage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const req =
-        credMode === 'reuse'
-          ? { name: form.name.trim(), from_agent: reuseAgent }
-          : {
-              name: form.name.trim(),
-              model_provider: {
-                model: form.model.trim(),
-                api_base: form.apiBase.trim(),
-                api_key: form.apiKey.trim(),
-              },
-            };
       const createdName = form.name.trim();
-      await createAgent(req);
+      await createAgent({ name: createdName, model: selectedModel });
       setForm(EMPTY_FORM);
       setAddOpen(false);
       setSelectedName(createdName);
@@ -482,9 +398,6 @@ export default function AgentsPage() {
       setPendingDelete(null);
     }
   };
-
-  const applyEditPreset = (preset: (typeof AGENT_MODEL_PRESETS)[number]) =>
-    setEditForm((prev) => ({ ...prev, model: preset.model, apiBase: preset.apiBase }));
 
   const openUploadDialog = useCallback(() => {
     if (!detailName) return;
@@ -535,35 +448,6 @@ export default function AgentsPage() {
       setUploadError(err instanceof Error ? err.message : String(err));
     } finally {
       setUploading(false);
-    }
-  };
-
-  const onEditSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!detailName || !editFormValid || editSubmitting) return;
-    setEditSubmitting(true);
-    setEditSubmitError(null);
-    try {
-      await updateAgent(detailName, {
-        model_provider: {
-          model: editForm.model.trim(),
-          api_base: editForm.apiBase.trim(),
-          api_key: editForm.apiKey.trim(),
-        },
-      });
-      try {
-        const d = await getAgent(detailName);
-        setAgentRuntime(d);
-      } catch {
-        /* ignore */
-      }
-      setEditForm(EMPTY_EDIT_FORM);
-      setEditConfigOpen(false);
-      toast.success('保存成功');
-    } catch (err) {
-      setEditSubmitError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setEditSubmitting(false);
     }
   };
 
@@ -726,19 +610,6 @@ export default function AgentsPage() {
                   })}
                 </nav>
                 <div className="flex flex-wrap gap-2">
-                  {detailTab === 'config' && (
-                    <Button
-                      variant="default"
-                      size="sm"
-                      className={PRIMARY_BUTTON_CLASS}
-                      onClick={() => {
-                        setEditConfigOpen(!editConfigOpen);
-                        if (!editConfigOpen) void loadLatestForEdit();
-                      }}
-                    >
-                      {editConfigOpen ? '收起编辑' : '更新配置'}
-                    </Button>
-                  )}
                   <Button
                     variant="default"
                     size="sm"
@@ -794,91 +665,16 @@ export default function AgentsPage() {
                       <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-destructive">⚠️ {agentRuntimeError}</div>
                     )}
 
-                    {agentRuntimeLoading ? (
-                      <p className="text-xs text-muted-foreground">正在同步配置…</p>
-                    ) : agentRuntime ? (
-                      <Card size="sm" className="mb-4">
-                        <CardContent className="p-4">
-                          <dl className="grid gap-2 text-sm">
-                            <div className="grid grid-cols-[80px_1fr] gap-2">
-                              <dt className="text-xs text-muted-foreground">模型</dt>
-                              <dd className="break-all font-mono text-xs">{agentRuntime.model_provider.model || '—'}</dd>
-                            </div>
-                            {agentRuntime.model_provider.api_base && (
-                              <div className="grid grid-cols-[80px_1fr] gap-2">
-                                <dt className="text-xs text-muted-foreground">api_base</dt>
-                                <dd className="break-all font-mono text-xs">{agentRuntime.model_provider.api_base}</dd>
-                              </div>
-                            )}
-                            <div className="grid grid-cols-[80px_1fr] gap-2">
-                              <dt className="text-xs text-muted-foreground">API Key</dt>
-                              <dd className="font-mono text-xs">{agentRuntime.model_provider.has_api_key ? '已配置' : '未检测到密钥'}</dd>
-                            </div>
-                          </dl>
-                        </CardContent>
-                      </Card>
-                    ) : null}
+                    <p className="mb-4 text-xs text-muted-foreground">
+                      点击按钮选择模型即可热切换，当前对话与历史将保留。接入参数请在左侧栏「模型」页面管理。
+                    </p>
 
-                    {editConfigOpen && (
-                      <div className="mt-4 rounded-xl border border-border bg-muted/20 p-4">
-                        <p className="mb-3 text-xs text-muted-foreground">
-                          保存后将重启该 Agent。
-                          {editBaseline?.model_provider.has_api_key ? ' 若已配置密钥，可留空以沿用。' : ' 请填写 API 密钥。'}
-                        </p>
-
-                        {editFetchLoading ? (
-                          <p className="text-xs text-muted-foreground">加载配置中…</p>
-                        ) : editFetchError && !editBaseline ? (
-                          <div className="text-xs text-destructive">⚠️ {editFetchError}</div>
-                        ) : editBaseline ? (
-                          <>
-                            <div className="mb-3 flex flex-wrap gap-2">
-                              {AGENT_MODEL_PRESETS.map((p) => (
-                                <button key={p.label} type="button" onClick={() => applyEditPreset(p)} className="rounded-full border border-violet-500/20 bg-violet-500/5 px-2 py-1 text-[10px] text-violet-600 hover:bg-violet-500/10">
-                                  {p.label}
-                                </button>
-                              ))}
-                            </div>
-                            <form onSubmit={onEditSubmit} className="flex flex-col gap-3">
-                              <div>
-                                <label className="mb-1 block text-xs text-muted-foreground">模型 *</label>
-                                <Input
-                                  value={editForm.model}
-                                  onChange={(e) => setEditForm((s) => ({ ...s, model: e.target.value }))}
-                                  placeholder="deepseek/deepseek-chat"
-                                  className="font-mono text-sm"
-                                  disabled={editSubmitting}
-                                />
-                                <ModelFieldHint />
-                              </div>
-                              <div>
-                                <label className="mb-1 block text-xs text-muted-foreground">api_base *</label>
-                                <Input value={editForm.apiBase} onChange={(e) => setEditForm((s) => ({ ...s, apiBase: e.target.value }))} disabled={editSubmitting} />
-                              </div>
-                              <div>
-                                <label className="mb-1 block text-xs text-muted-foreground">api_key {editBaseline.model_provider.has_api_key ? '（可选）' : '*'}</label>
-                                <Input type="password" value={editForm.apiKey} onChange={(e) => setEditForm((s) => ({ ...s, apiKey: e.target.value }))} placeholder={editBaseline.model_provider.has_api_key ? '留空沿用已有密钥' : 'sk-...'} disabled={editSubmitting} />
-                              </div>
-                              <ModelConnectivityCheck
-                                fields={{
-                                  model: editForm.model,
-                                  apiBase: editForm.apiBase,
-                                  apiKey: editForm.apiKey,
-                                  agentName:
-                                    editForm.apiKey.trim() || editBaseline.model_provider.has_api_key
-                                      ? detailName ?? undefined
-                                      : undefined,
-                                }}
-                                disabled={editSubmitting}
-                              />
-                              {editSubmitError && <p className="text-xs text-destructive">{editSubmitError}</p>}
-                              <div className="flex justify-end">
-                                <Button type="submit" size="sm" className={PRIMARY_BUTTON_CLASS} disabled={!editFormValid || editSubmitting}>{editSubmitting ? '保存中…' : '保存'}</Button>
-                              </div>
-                            </form>
-                          </>
-                        ) : null}
-                      </div>
+                    {detailName && (
+                      <ModelSwitcherMenu
+                        agentName={detailName}
+                        variant="panel"
+                        active={detailTab === 'config'}
+                      />
                     )}
                   </div>
                 </ScrollArea>
@@ -911,17 +707,12 @@ export default function AgentsPage() {
         open={addOpen}
         onOpenChange={setAddOpen}
         title="添加 Agent"
-        existingAgents={agentNames}
         name={form.name}
         onNameChange={(name) => setForm((s) => ({ ...s, name }))}
         nameConflict={addNameConflict}
-        credMode={credMode}
-        onCredModeChange={setCredMode}
-        reuseAgent={reuseAgent}
-        onReuseAgentChange={setReuseAgent}
-        manual={{ model: form.model, apiBase: form.apiBase, apiKey: form.apiKey }}
-        onManualChange={(patch) => setForm((s) => ({ ...s, ...patch }))}
-        onReuseMetaChange={handleReuseMetaChange}
+        selectedModel={selectedModel}
+        onSelectedModelChange={setSelectedModel}
+        onModelsMetaChange={handleModelsMetaChange}
         busy={submitting}
         submitDisabled={!formValid}
         error={submitError}

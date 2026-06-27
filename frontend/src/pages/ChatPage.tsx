@@ -42,6 +42,8 @@ import {
   persistedToMessages,
   type ArchivedChat,
 } from '@/lib/chatPersistence';
+import { prefetchModels } from '@/api/models';
+import { getAgent } from '@/api/agents';
 import { useState, useRef, useMemo, useEffect, useCallback, type ChangeEvent, type MouseEvent } from 'react';
 import { filesToPendingImages, type PendingImage } from '@/lib/imageAttach';
 import { cn } from '@/lib/cn';
@@ -58,7 +60,9 @@ export default function ChatPage() {
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    void prefetchModels();
+    if (currentAgent) void getAgent(currentAgent);
+  }, [refresh, currentAgent]);
 
   const {
     messages,

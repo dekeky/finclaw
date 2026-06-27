@@ -252,3 +252,24 @@
 .fc-process-scroll::-webkit-scrollbar-thumb:hover {
   background: rgb(139 92 246 / 0.65);
 }
+
+/** Sonner 提示：与 Agent 主界面一致的浅紫（violet-500/10） */
+.fc-toast-soft-violet {
+  background: rgb(139 92 246 / 10%) !important;
+  border: 1px solid rgb(139 92 246 / 22%) !important;
+  color: rgb(109 40 217) !important;
+  box-shadow: 0 4px 16px rgb(139 92 246 / 10%) !important;
+}
+
+.fc-toast-soft-violet [data-description] {
+  color: rgb(109 40 217 / 72%) !important;
+}
+
+.dark .fc-toast-soft-violet {
+  background: rgb(139 92 246 / 14%) !important;
+  color: rgb(196 181 253) !important;
+}
+
+.dark .fc-toast-soft-violet [data-description] {
+  color: rgb(196 181 253 / 80%) !important;
+}

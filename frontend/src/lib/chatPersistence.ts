@@ -1,8 +1,16 @@
 import type { ChatMessage, MessageKind, MessageRole, ProcessSegment } from '@/types';
 
 const STORAGE_KEY = 'finclaw.chat.v1';
+const TASK_STORAGE_KEY = 'finclaw.chat.task.v1';
 const STORAGE_VERSION = 1 as const;
 const MAX_ARCHIVED_PER_AGENT = 48;
+
+interface AgentTaskState {
+  taskStartMs?: number;
+  lastTaskElapsedSec?: number;
+}
+
+type TaskRoot = Record<string, AgentTaskState>;
 
 export interface PersistedMessage {
   id: string;
@@ -29,10 +37,6 @@ export interface ArchivedChat {
 interface AgentBucket {
   draft: PersistedMessage[];
   archived: ArchivedChat[];
-  /** 当前进行中思考任务的起始时间戳（ms）。任务结束后清空。 */
-  taskStartMs?: number;
-  /** 上一轮已完成任务的总耗时（秒），供刷新后在工作过程面板展示。 */
-  lastTaskElapsedSec?: number;
 }
 
 interface PersistRoot {
@@ -70,6 +74,63 @@ function writeRoot(root: PersistRoot): void {
   } catch {
     // quota / private mode — ignore
   }
+}
+
+function readTaskRoot(): TaskRoot {
+  if (typeof localStorage === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(TASK_STORAGE_KEY);
+    if (!raw) return migrateLegacyTaskFields();
+    const data = JSON.parse(raw) as TaskRoot;
+    if (!data || typeof data !== 'object') return migrateLegacyTaskFields();
+    return data;
+  } catch {
+    return migrateLegacyTaskFields();
+  }
+}
+
+function writeTaskRoot(root: TaskRoot): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(root));
+  } catch {
+    // quota / private mode — ignore
+  }
+}
+
+/** 从 finclaw.chat.v1 bucket 迁移 task 字段到独立 key（一次性）。 */
+function migrateLegacyTaskFields(): TaskRoot {
+  const migrated: TaskRoot = {};
+  const root = readRoot();
+  for (const [agentId, bucket] of Object.entries(root.agents)) {
+    const legacy = bucket as AgentBucket & Partial<AgentTaskState>;
+    if (legacy.taskStartMs != null || legacy.lastTaskElapsedSec != null) {
+      migrated[agentId] = {
+        taskStartMs: legacy.taskStartMs,
+        lastTaskElapsedSec: legacy.lastTaskElapsedSec,
+      };
+    }
+  }
+  if (Object.keys(migrated).length > 0) {
+    writeTaskRoot(migrated);
+  } else {
+    writeTaskRoot({});
+  }
+  return migrated;
+}
+
+function patchTaskState(agentId: string, patch: Partial<AgentTaskState>): void {
+  const root = readTaskRoot();
+  const prev = root[agentId] ?? {};
+  const next: AgentTaskState = { ...prev, ...patch };
+  if (next.taskStartMs == null) delete next.taskStartMs;
+  if (next.lastTaskElapsedSec == null) delete next.lastTaskElapsedSec;
+  if (Object.keys(next).length === 0) {
+    delete root[agentId];
+  } else {
+    root[agentId] = next;
+  }
+  writeTaskRoot(root);
 }
 
 function msgToPersisted(m: ChatMessage): PersistedMessage {
@@ -173,36 +234,26 @@ export function deleteArchived(agentId: string, archiveId: string): boolean {
 
 /** 读取当前正在进行的思考任务起始时间（ms）；无任务时返回 null。 */
 export function loadTaskStart(agentId: string): number | null {
-  const root = readRoot();
-  const v = root.agents[agentId]?.taskStartMs;
+  const v = readTaskRoot()[agentId]?.taskStartMs;
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
 /** 记录或清除当前思考任务的起始时间；传 null 表示任务结束。 */
 export function saveTaskStart(agentId: string, startedAtMs: number | null): void {
-  const root = readRoot();
-  const prev = root.agents[agentId] ?? emptyBucket();
-  root.agents[agentId] = {
-    ...prev,
+  patchTaskState(agentId, {
     taskStartMs: startedAtMs == null ? undefined : startedAtMs,
-  };
-  writeRoot(root);
+  });
 }
 
 /** 读取上一轮已完成任务的总耗时（秒）。 */
 export function loadLastTaskElapsed(agentId: string): number | null {
-  const root = readRoot();
-  const v = root.agents[agentId]?.lastTaskElapsedSec;
+  const v = readTaskRoot()[agentId]?.lastTaskElapsedSec;
   return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 }
 
 /** 记录或清除上一轮已完成任务的总耗时（秒）。 */
 export function saveLastTaskElapsed(agentId: string, seconds: number | null): void {
-  const root = readRoot();
-  const prev = root.agents[agentId] ?? emptyBucket();
-  root.agents[agentId] = {
-    ...prev,
+  patchTaskState(agentId, {
     lastTaskElapsedSec: seconds == null ? undefined : Math.max(0, Math.floor(seconds)),
-  };
-  writeRoot(root);
+  });
 }

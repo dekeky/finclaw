@@ -105,11 +105,13 @@ type installTemplateRequest struct {
 	Template string `json:"template" binding:"required"`
 	Version  string `json:"version,omitempty"`
 	Name     string `json:"name" binding:"required"`
+	// Model selects a saved model profile by name. Takes precedence over FromAgent and ModelProvider.
+	Model string `json:"model,omitempty"`
 	// FromAgent, when set, reuses an existing agent's model provider (model,
 	// api_base and stored api_key) so the user does not have to re-enter
 	// credentials. Takes precedence over ModelProvider when both are present.
 	FromAgent string `json:"from_agent,omitempty"`
-	// ModelProvider is required unless FromAgent is set.
+	// ModelProvider is required unless Model or FromAgent is set.
 	ModelProvider *ModelProvider `json:"model_provider,omitempty"`
 }
 
@@ -121,24 +123,27 @@ type installTemplateResp struct {
 	SkillDir      string `json:"skill_dir,omitempty"`
 }
 
-// resolveInstallModelProvider picks the model provider for an install request:
-// reuse an existing agent's config when from_agent is set, otherwise validate
-// the inline model_provider payload.
-func (mr *MarketRouter) resolveInstallModelProvider(userID string, req *installTemplateRequest) (ModelProvider, error) {
+// resolveInstallModelProvider picks the model provider for an install request.
+func (mr *MarketRouter) resolveInstallModelProvider(userID string, req *installTemplateRequest) (ModelProvider, string, error) {
+	if profile := strings.TrimSpace(req.Model); profile != "" {
+		mp, err := NewModelStore(userID).ResolveProvider(profile)
+		return mp, profile, err
+	}
 	if from := strings.TrimSpace(req.FromAgent); from != "" {
-		return modelProviderFromAgent(mr.agentManager, userID, from)
+		mp, err := modelProviderFromAgent(mr.agentManager, userID, from)
+		return mp, "", err
 	}
 	if req.ModelProvider == nil {
-		return ModelProvider{}, fmt.Errorf("either model_provider or from_agent is required")
+		return ModelProvider{}, "", fmt.Errorf("model, model_provider or from_agent is required")
 	}
 	mp := *req.ModelProvider
 	if err := fillModelName(&mp); err != nil {
-		return ModelProvider{}, err
+		return ModelProvider{}, "", err
 	}
 	if strings.TrimSpace(mp.ApiKey) == "" {
-		return ModelProvider{}, fmt.Errorf("api_key is required")
+		return ModelProvider{}, "", fmt.Errorf("api_key is required")
 	}
-	return mp, nil
+	return mp, "", nil
 }
 
 // POST /api/v1/market/install — download a template from AgentHub, apply it to a
@@ -159,7 +164,7 @@ func (mr *MarketRouter) installTemplate(c *gin.Context) {
 		return
 	}
 
-	mp, err := mr.resolveInstallModelProvider(userID, &req)
+	mp, profileName, err := mr.resolveInstallModelProvider(userID, &req)
 	if err != nil {
 		ginx.NewRender(c, http.StatusBadRequest).Err(err)
 		return
@@ -201,6 +206,13 @@ func (mr *MarketRouter) installTemplate(c *gin.Context) {
 		_ = os.RemoveAll(agentDir)
 		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
 		return
+	}
+	if profileName != "" {
+		if err := setAgentModelProfile(home, req.Name, profileName); err != nil {
+			_ = os.RemoveAll(agentDir)
+			ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+			return
+		}
 	}
 	mr.agentManager.AddAgent(internalKey, picoclawAgent, msgBus)
 

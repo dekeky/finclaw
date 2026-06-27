@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { IconPlugConnected } from '@tabler/icons-react';
 import { probeModelProvider, type AgentModelProvider } from '../api/agents';
+import { probeModelProfile } from '../api/models';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
 
@@ -10,6 +11,8 @@ export interface ModelConnectivityFields {
   apiKey: string;
   /** When api_key is empty, reuse this agent's stored key. */
   agentName?: string;
+  /** When api_key is empty, reuse this model profile's stored key. */
+  modelProfileName?: string;
 }
 
 interface ModelConnectivityCheckProps {
@@ -25,7 +28,9 @@ export function ModelConnectivityCheck({ fields, disabled, className }: ModelCon
   const canProbe =
     fields.model.trim() &&
     fields.apiBase.trim() &&
-    (fields.apiKey.trim().length > 0 || !!fields.agentName?.trim());
+    (fields.apiKey.trim().length > 0 ||
+      !!fields.agentName?.trim() ||
+      !!fields.modelProfileName?.trim());
 
   const onProbe = async () => {
     if (!canProbe || probing || disabled) return;
@@ -37,7 +42,9 @@ export function ModelConnectivityCheck({ fields, disabled, className }: ModelCon
         api_base: fields.apiBase.trim(),
         api_key: fields.apiKey.trim(),
       };
-      const res = await probeModelProvider(mp, fields.agentName?.trim() || undefined);
+      const res = fields.modelProfileName?.trim()
+        ? await probeModelProfile(mp, fields.modelProfileName.trim())
+        : await probeModelProvider(mp, fields.agentName?.trim() || undefined);
       setResult({
         ok: res.ok,
         message: res.message,

@@ -1,10 +1,12 @@
 package picoclaw
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/agent"
 	"github.com/sipeed/picoclaw/pkg/bus"
@@ -84,6 +86,48 @@ func NewPicoclawAgent(rootDir string, msgBus *bus.MessageBus, modelConf *picocla
 
 	agentLoop := agent.NewAgentLoop(picoConf, msgBus, provider)
 	return agentLoop, nil
+}
+
+// SwitchAgentModel hot-swaps the LLM provider on a running AgentLoop without
+// restarting the message bus or WebSocket channel. Session history is kept on
+// disk and reloaded into the new registry (same approach as picoclaw gateway).
+func SwitchAgentModel(loop *agent.AgentLoop, rootDir, agentName string, modelConf *picoclawconfig.ModelConfig) error {
+	if loop == nil {
+		return fmt.Errorf("agent loop is nil")
+	}
+	if err := modelConf.Validate(); err != nil {
+		return fmt.Errorf("invalid model config: %w", err)
+	}
+
+	modelConf.RequestTimeout = 500
+	picoConf, err := picoclawconfig.LoadConfig(agentConfigPath(rootDir, agentName))
+	if err != nil {
+		return fmt.Errorf("load agent config: %w", err)
+	}
+	picoConf.Agents.Defaults.ToolFeedback.Enabled = true
+	workspace := agentWorkspacePath(rootDir, agentName)
+	picoConf.Agents.Defaults.Workspace = workspace
+	if err := applyModelConfig(picoConf, modelConf); err != nil {
+		return err
+	}
+	if err := picoclawconfig.SaveConfig(agentConfigPath(rootDir, agentName), picoConf); err != nil {
+		return fmt.Errorf("save agent config: %w", err)
+	}
+
+	newProvider, _, err := providers.CreateProviderFromConfig(modelConf)
+	if err != nil {
+		return fmt.Errorf("create provider for model %q: %w", modelConf.ModelName, err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := loop.ReloadProviderAndConfig(ctx, newProvider, picoConf); err != nil {
+		if cp, ok := newProvider.(providers.StatefulProvider); ok {
+			cp.Close()
+		}
+		return fmt.Errorf("reload provider: %w", err)
+	}
+	return nil
 }
 
 func newPicoclawConfig(rootDir, agentName string) (*picoclawconfig.Config, error) {

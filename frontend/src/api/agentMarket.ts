@@ -47,9 +47,11 @@ export interface InstallTemplateRequest {
   template: string;
   version?: string;
   name: string;
+  /** 选择已保存的模型配置（推荐）。 */
+  model?: string;
   /** 复用已有 Agent 的模型配置（含密钥），设置后无需再填 model_provider。 */
   from_agent?: string;
-  /** 手动填写模型配置；与 from_agent 二选一。 */
+  /** 手动填写模型配置；与 model / from_agent 二选一。 */
   model_provider?: AgentModelProvider;
 }
 

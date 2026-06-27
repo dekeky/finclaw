@@ -1,6 +1,7 @@
 import {
   IconBuildingStore,
   IconChartAreaLine,
+  IconCpu,
   IconNews,
   IconRobot,
 } from '@tabler/icons-react';
@@ -28,6 +29,7 @@ import { cn } from '@/lib/cn';
 
 const AGENT_NAV = [
   { title: 'Agent', url: '/agents', icon: IconRobot },
+  { title: '模型', url: '/models', icon: IconCpu },
   { title: 'Agent 市场', url: '/agents/market', icon: IconBuildingStore },
 ] as const;
 

@@ -2,9 +2,7 @@ import type { FormEvent, ReactNode } from 'react';
 import { Dialog } from 'radix-ui';
 import {
   AgentModelSetupSection,
-  type AgentManualModelFields,
-  type AgentModelCredMode,
-  type ReuseAgentSourceMeta,
+  type AgentModelsMeta,
 } from '@/components/AgentModelSetupSection';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,17 +14,12 @@ export interface AgentCreateDialogProps {
   onOpenChange: (open: boolean) => void;
   title: string;
   description?: ReactNode;
-  existingAgents: string[];
   name: string;
   onNameChange: (name: string) => void;
   nameConflict?: boolean;
-  credMode: AgentModelCredMode;
-  onCredModeChange: (mode: AgentModelCredMode) => void;
-  reuseAgent: string;
-  onReuseAgentChange: (name: string) => void;
-  manual: AgentManualModelFields;
-  onManualChange: (patch: Partial<AgentManualModelFields>) => void;
-  onReuseMetaChange?: (meta: ReuseAgentSourceMeta) => void;
+  selectedModel: string;
+  onSelectedModelChange: (name: string) => void;
+  onModelsMetaChange?: (meta: AgentModelsMeta) => void;
   busy?: boolean;
   submitDisabled?: boolean;
   error?: string | null;
@@ -40,17 +33,12 @@ export function AgentCreateDialog({
   onOpenChange,
   title,
   description,
-  existingAgents,
   name,
   onNameChange,
   nameConflict = false,
-  credMode,
-  onCredModeChange,
-  reuseAgent,
-  onReuseAgentChange,
-  manual,
-  onManualChange,
-  onReuseMetaChange,
+  selectedModel,
+  onSelectedModelChange,
+  onModelsMetaChange,
   busy = false,
   submitDisabled = false,
   error,
@@ -102,16 +90,11 @@ export function AgentCreateDialog({
             </section>
 
             <AgentModelSetupSection
-              existingAgents={existingAgents}
-              credMode={credMode}
-              onCredModeChange={onCredModeChange}
-              reuseAgent={reuseAgent}
-              onReuseAgentChange={onReuseAgentChange}
-              manual={manual}
-              onManualChange={onManualChange}
+              selectedModel={selectedModel}
+              onSelectedModelChange={onSelectedModelChange}
               disabled={busy}
               active={open}
-              onReuseMetaChange={onReuseMetaChange}
+              onModelsMetaChange={onModelsMetaChange}
             />
 
             {error && <p className="text-xs text-destructive">{error}</p>}

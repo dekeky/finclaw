@@ -13,8 +13,7 @@ import {
 import { AgentCreateDialog } from './AgentCreateDialog';
 import {
   isAgentModelSetupValid,
-  type AgentModelCredMode,
-  type ReuseAgentSourceMeta,
+  type AgentModelsMeta,
 } from './AgentModelSetupSection';
 import { MarketFileTree } from './MarketFileTree';
 import { DocReadingPanel } from './DocReadingPanel';
@@ -25,27 +24,23 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/cn';
 import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 
-const LAST_MODEL_KEY = 'finclaw.market.lastModel';
+const LAST_MODEL_KEY = 'finclaw.market.lastModelProfile';
 
-type InstallForm = { name: string; model: string; apiBase: string; apiKey: string };
-const EMPTY_INSTALL: InstallForm = { name: '', model: '', apiBase: '', apiKey: '' };
+type InstallForm = { name: string };
+const EMPTY_INSTALL: InstallForm = { name: '' };
 
-function loadLastModel(): { model: string; apiBase: string } {
+function loadLastModelProfile(): string {
   try {
-    const raw = localStorage.getItem(LAST_MODEL_KEY);
-    if (raw) {
-      const o = JSON.parse(raw) as { model?: string; apiBase?: string };
-      return { model: o.model ?? '', apiBase: o.apiBase ?? '' };
-    }
+    return localStorage.getItem(LAST_MODEL_KEY) ?? '';
   } catch {
-    /* private mode / bad json */
+    return '';
   }
-  return { model: '', apiBase: '' };
 }
 
-function saveLastModel(model: string, apiBase: string) {
+function saveLastModelProfile(name: string) {
   try {
-    localStorage.setItem(LAST_MODEL_KEY, JSON.stringify({ model, apiBase }));
+    if (name) localStorage.setItem(LAST_MODEL_KEY, name);
+    else localStorage.removeItem(LAST_MODEL_KEY);
   } catch {
     /* private mode */
   }
@@ -78,18 +73,16 @@ interface BlockedReasonArgs {
   form: InstallForm;
   existingAgents: string[];
   installable: boolean;
-  credMode: AgentModelCredMode;
-  reuseAgent: string;
-  reuseMeta: ReuseAgentSourceMeta;
+  selectedModel: string;
+  modelsMeta: AgentModelsMeta;
 }
 
 function installBlockedReason({
   form,
   existingAgents,
   installable,
-  credMode,
-  reuseAgent,
-  reuseMeta,
+  selectedModel,
+  modelsMeta,
 }: BlockedReasonArgs): string | null {
   if (!installable) {
     return '该模板包不可安装：需包含 AGENT.md、SKILL.md 或 workspace/ 目录。';
@@ -97,23 +90,11 @@ function installBlockedReason({
   const name = form.name.trim();
   if (!name) return '请为 Agent 命名。';
   if (existingAgents.includes(name)) return '已存在同名 Agent，请换一个名称。';
-  if (
-    !isAgentModelSetupValid(
-      credMode,
-      { model: form.model, apiBase: form.apiBase, apiKey: form.apiKey },
-      reuseMeta,
-      reuseAgent,
-    )
-  ) {
-    if (credMode === 'reuse') {
-      if (reuseMeta.loading) return '正在加载来源 Agent 模型配置…';
-      if (reuseMeta.error) return reuseMeta.error;
-      if (!reuseMeta.source?.model_provider.has_api_key) return '来源 Agent 未配置 API Key。';
-      return '请选择有效的来源 Agent。';
-    }
-    if (!form.model.trim()) return '请填写模型。';
-    if (!form.apiBase.trim()) return '请填写 api_base。';
-    if (!form.apiKey.trim()) return '请填写 api_key。';
+  if (!isAgentModelSetupValid(selectedModel, modelsMeta)) {
+    if (modelsMeta.loading) return '正在加载模型列表…';
+    if (modelsMeta.error) return modelsMeta.error;
+    if (modelsMeta.models.length === 0) return '请先在「模型」页面添加模型配置。';
+    return '请选择一个有效的模型。';
   }
   return null;
 }
@@ -154,10 +135,9 @@ export function AgentMarketPanel({
   const [openFilePath, setOpenFilePath] = useState<string | null>(null);
 
   const [version, setVersion] = useState('');
-  const [credMode, setCredMode] = useState<AgentModelCredMode>('manual');
-  const [reuseAgent, setReuseAgent] = useState('');
-  const [reuseMeta, setReuseMeta] = useState<ReuseAgentSourceMeta>({
-    source: null,
+  const [selectedModel, setSelectedModel] = useState('');
+  const [modelsMeta, setModelsMeta] = useState<AgentModelsMeta>({
+    models: [],
     loading: false,
     error: null,
   });
@@ -209,16 +189,11 @@ export function AgentMarketPanel({
       setInstallDialogOpen(false);
       setInstallError(null);
       setVersion(tpl.latestVersion || '');
-      const last = loadLastModel();
       setForm({
         ...EMPTY_INSTALL,
         name: suggestAgentName(tpl.agentName, existingAgents),
-        model: last.model,
-        apiBase: last.apiBase,
       });
-      // 默认复用已有 Agent 的模型配置（更省事）；无可复用时回退到手填。
-      setCredMode(existingAgents.length > 0 ? 'reuse' : 'manual');
-      setReuseAgent(existingAgents[0] ?? '');
+      setSelectedModel(loadLastModelProfile());
       setDetailLoading(true);
       try {
         const d = await getMarketTemplate(tpl.agentName);
@@ -237,8 +212,8 @@ export function AgentMarketPanel({
     [detail],
   );
 
-  const handleReuseMetaChange = useCallback((meta: ReuseAgentSourceMeta) => {
-    setReuseMeta(meta);
+  const handleModelsMetaChange = useCallback((meta: AgentModelsMeta) => {
+    setModelsMeta(meta);
   }, []);
 
   const blockedReason = useMemo(
@@ -247,11 +222,10 @@ export function AgentMarketPanel({
         form,
         existingAgents,
         installable: templateInstallable,
-        credMode,
-        reuseAgent,
-        reuseMeta,
+        selectedModel,
+        modelsMeta,
       }),
-    [form, existingAgents, templateInstallable, credMode, reuseAgent, reuseMeta],
+    [form, existingAgents, templateInstallable, selectedModel, modelsMeta],
   );
 
   const formValid = blockedReason === null;
@@ -284,20 +258,10 @@ export function AgentMarketPanel({
         template: selected.agentName,
         version: version || detail?.latestVersion || selected.latestVersion || undefined,
         name: form.name.trim(),
+        model: selectedModel,
       };
-      if (credMode === 'reuse') {
-        req.from_agent = reuseAgent;
-      } else {
-        req.model_provider = {
-          model: form.model.trim(),
-          api_base: form.apiBase.trim(),
-          api_key: form.apiKey.trim(),
-        };
-      }
       await installMarketTemplate(req);
-      if (credMode === 'manual') {
-        saveLastModel(form.model.trim(), form.apiBase.trim());
-      }
+      saveLastModelProfile(selectedModel);
       setInstallDialogOpen(false);
       onInstalled(form.name.trim());
     } catch (err) {
@@ -310,7 +274,6 @@ export function AgentMarketPanel({
   const openInstallDialog = () => {
     if (!templateInstallable) return;
     setInstallError(null);
-    setReuseMeta({ source: null, loading: false, error: null });
     setInstallDialogOpen(true);
   };
 
@@ -578,17 +541,12 @@ export function AgentMarketPanel({
       onOpenChange={setInstallDialogOpen}
       title="从模板创建 Agent"
       description={`模板：${selected?.displayName || selected?.agentName || ''}`}
-      existingAgents={existingAgents}
       name={form.name}
       onNameChange={(name) => setForm((s) => ({ ...s, name }))}
       nameConflict={nameConflict}
-      credMode={credMode}
-      onCredModeChange={setCredMode}
-      reuseAgent={reuseAgent}
-      onReuseAgentChange={setReuseAgent}
-      manual={{ model: form.model, apiBase: form.apiBase, apiKey: form.apiKey }}
-      onManualChange={(patch) => setForm((s) => ({ ...s, ...patch }))}
-      onReuseMetaChange={handleReuseMetaChange}
+      selectedModel={selectedModel}
+      onSelectedModelChange={setSelectedModel}
+      onModelsMetaChange={handleModelsMetaChange}
       busy={installing}
       submitDisabled={!formValid}
       error={installError}

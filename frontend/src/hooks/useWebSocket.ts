@@ -216,9 +216,22 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   const lastActivityRef = useRef(0);
   /** 防止并发 connect() 调用 */
   const connectingRef = useRef(false);
-  /** 始终指向最新 messages，供卸载 cleanup 同步落盘 */
+  /** 始终指向最新 messages，供卸载 cleanup / pagehide 同步落盘 */
   const messagesRef = useRef<ChatMessage[]>(messages);
   messagesRef.current = messages;
+
+  /** 在 setState 回调内同步更新 ref，避免 pagehide 早于下一次 render 时落到旧快照。 */
+  const commitMessages = useCallback((next: ChatMessage[]): ChatMessage[] => {
+    messagesRef.current = next;
+    return next;
+  }, []);
+
+  const flushDraftNow = useCallback(() => {
+    const agentId = persistAgentKeyRef.current;
+    if (!agentId) return;
+    const msgs = messagesRef.current;
+    if (msgs.length > 0) saveDraft(agentId, msgs);
+  }, []);
 
   /** 读取指定 agent 的 sessionId（内存 map → localStorage sessions map）。 */
   const getSessionForAgent = useCallback((agentId: string | null | undefined): string | null => {
@@ -404,7 +417,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         setMessages((prev) => {
           const ids = new Set(prev.map((m) => m.id));
           const deduped = history.filter((m) => !ids.has(m.id));
-          return foldChatMessages([...prev, ...deduped]);
+          return commitMessages(foldChatMessages([...prev, ...deduped]));
         });
         break;
       }
@@ -447,6 +460,8 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
               clearTypingFallback();
               setIsTyping(false);
               endTask();
+              const agentId = persistAgentKeyRef.current;
+              if (agentId) saveDraft(agentId, next);
             } else if (inProgress) {
               setIsTyping(true);
               armTypingFallback();
@@ -458,7 +473,12 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
             }
           }
 
-          return next;
+          if (fromCache && added) {
+            const agentId = persistAgentKeyRef.current;
+            if (agentId) saveDraft(agentId, next);
+          }
+
+          return commitMessages(next);
         });
         // 增量诊断日志：刷新后排查「面板内容未追加」时定位丢失环节
         console.log('[Finclaw WS] message recv:', {
@@ -509,22 +529,24 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         // 把服务器错误追加为一条 assistant 消息，让用户看到
         if (errContent) {
           setMessages((prev) =>
-            foldChatMessages([
-              ...prev,
-              {
-                id: msg.id || genId(),
-                role: 'assistant',
-                content: `⚠️ Error: ${errContent}`,
-                timestamp: new Date(),
-                kind: 'reply',
-              },
-            ]),
+            commitMessages(
+              foldChatMessages([
+                ...prev,
+                {
+                  id: msg.id || genId(),
+                  role: 'assistant',
+                  content: `⚠️ Error: ${errContent}`,
+                  timestamp: new Date(),
+                  kind: 'reply',
+                },
+              ]),
+            ),
           );
         }
         break;
       }
     }
-  }, [beginTask, endTask, applySessionId, getCurrentSessionId, clearSendConfirm]);
+  }, [beginTask, endTask, applySessionId, getCurrentSessionId, clearSendConfirm, commitMessages]);
 
   const connect = useCallback(() => {
     const target = urlRef.current;
@@ -681,6 +703,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     }
     clearSendConfirm();
     setIsTyping(false);
+    messagesRef.current = [];
     setMessages([]);
     if (persistAgentKey) {
       if (opts?.startNewSession) {
@@ -715,7 +738,6 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       setSendError(null);
       endTask();
       const folded = prepareStoredChatMessages(msgs);
-      // 同步落盘到 ref，确保随后的重连/缓存补发以恢复后的消息为基准做去重
       messagesRef.current = folded;
       setMessages(folded);
       if (persistAgentKey) {
@@ -797,7 +819,9 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
               }))
             : undefined;
         setMessages((prev) =>
-          foldChatMessages([...prev, { id, role: 'user', content, timestamp: new Date(), attachments }]),
+          commitMessages(
+            foldChatMessages([...prev, { id, role: 'user', content, timestamp: new Date(), attachments }]),
+          ),
         );
       }
       // 元宝式：发出后即显示「正在思考」，不依赖服务端 typing_start
@@ -873,7 +897,6 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         } else {
           setIsTyping(false);
           setTaskStartedAt(null);
-          saveTaskStart(persistAgentKey, null);
           setCompletedTaskElapsedSec(loadLastTaskElapsed(persistAgentKey));
         }
       });
@@ -917,7 +940,12 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       skipPersistRef.current = false;
       return;
     }
-    const t = setTimeout(() => saveDraft(persistAgentKey, messages), 400);
+    const agentId = persistAgentKey;
+    const t = setTimeout(() => {
+      if (persistAgentKeyRef.current !== agentId) return;
+      const msgs = messagesRef.current;
+      if (msgs.length > 0) saveDraft(agentId, msgs);
+    }, 200);
     return () => clearTimeout(t);
   }, [messages, persistAgentKey]);
 
@@ -987,9 +1015,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     const flush = () => {
       try {
         persistSessionId();
-        if (messagesRef.current.length > 0) {
-          saveDraft(persistAgentKey, messagesRef.current);
-        }
+        flushDraftNow();
       } catch {
         // 忽略 quota / privacy 错误
       }
@@ -1000,7 +1026,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       window.removeEventListener('pagehide', flush);
       window.removeEventListener('beforeunload', flush);
     };
-  }, [persistAgentKey, persistSessionId]);
+  }, [persistAgentKey, persistSessionId, flushDraftNow]);
 
   return {
     messages,

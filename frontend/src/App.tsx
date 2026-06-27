@@ -4,6 +4,7 @@ import { IconLoader2 } from '@tabler/icons-react';
 import { AuthProvider, useAuth } from './state/auth';
 import { AppLayout } from './layouts/AppLayout';
 
+const ModelsPage = lazy(() => import('./pages/ModelsPage'));
 const AgentMarketPage = lazy(() => import('./pages/AgentMarketPage'));
 const AgentsPage = lazy(() => import('./pages/AgentsPage'));
 const BacktestPage = lazy(() => import('./pages/BacktestPage'));
@@ -57,6 +58,7 @@ export default function App() {
             <Route path="/news" element={<NewsPage />} />
             <Route path="/rss" element={<Navigate to="/news" replace />} />
             <Route path="/agents" element={<AgentsPage />} />
+            <Route path="/models" element={<ModelsPage />} />
             <Route path="/agents/market" element={<AgentMarketPage />} />
             <Route path="/backtest" element={<BacktestPage />} />
             <Route path="/weixin" element={<WeixinPage />} />

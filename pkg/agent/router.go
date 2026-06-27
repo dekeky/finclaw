@@ -19,8 +19,8 @@ import (
 )
 
 type AgentManagerRouter struct {
-	agentManager  *AgentManager
-	r             *gin.Engine
+	agentManager   *AgentManager
+	r              *gin.Engine
 	authMiddleware gin.HandlerFunc
 }
 
@@ -95,15 +95,16 @@ func (ar *AgentManagerRouter) listAgents(c *gin.Context) {
 }
 
 type agentModelProviderInfo struct {
-	Model   string `json:"model"`
-	ApiBase string `json:"api_base"`
-	HasApiKey bool `json:"has_api_key"`
+	Model     string `json:"model"`
+	ApiBase   string `json:"api_base"`
+	HasApiKey bool   `json:"has_api_key"`
 }
 
 type agentDetailResp struct {
 	Name          string                 `json:"name"`
 	HasAvatar     bool                   `json:"has_avatar"`
 	Workspace     string                 `json:"workspace,omitempty"`
+	ModelProfile  string                 `json:"model_profile,omitempty"`
 	ModelProvider agentModelProviderInfo `json:"model_provider"`
 }
 
@@ -120,14 +121,15 @@ func (ar *AgentManagerRouter) getAgent(c *gin.Context) {
 	}
 	home := agentHomeDir(userID)
 	hasAvatar := picoclaw.HasAvatar(home, name)
+	meta, _ := readAgentMeta(home, name)
 	loop, ok := a.(*picoagent.AgentLoop)
 	if !ok || loop == nil {
-		ginx.NewRender(c).Data(agentDetailResp{Name: name, HasAvatar: hasAvatar})
+		ginx.NewRender(c).Data(agentDetailResp{Name: name, HasAvatar: hasAvatar, ModelProfile: meta.ModelProfile})
 		return
 	}
 	cfg := loop.GetConfig()
 	if cfg == nil {
-		ginx.NewRender(c).Data(agentDetailResp{Name: name, HasAvatar: hasAvatar})
+		ginx.NewRender(c).Data(agentDetailResp{Name: name, HasAvatar: hasAvatar, ModelProfile: meta.ModelProfile})
 		return
 	}
 	modelAlias := strings.TrimSpace(cfg.Agents.Defaults.ModelName)
@@ -145,16 +147,19 @@ func (ar *AgentManagerRouter) getAgent(c *gin.Context) {
 		Name:          name,
 		HasAvatar:     picoclaw.HasAvatar(agentHomeDir(userID), name),
 		Workspace:     strings.TrimSpace(cfg.Agents.Defaults.Workspace),
+		ModelProfile:  meta.ModelProfile,
 		ModelProvider: info,
 	})
 }
 
 type createAgentRequest struct {
 	Name string `json:"name" binding:"required"`
+	// Model selects a saved model profile by name. Takes precedence over FromAgent and ModelProvider.
+	Model string `json:"model,omitempty"`
 	// FromAgent, when set, reuses an existing agent's model provider (model,
 	// api_base and stored api_key). Takes precedence over ModelProvider.
 	FromAgent string `json:"from_agent,omitempty"`
-	// ModelProvider is required unless FromAgent is set.
+	// ModelProvider is required unless Model or FromAgent is set.
 	ModelProvider *ModelProvider `json:"model_provider,omitempty"`
 }
 
@@ -249,21 +254,26 @@ func modelProviderFromAgent(am *AgentManager, userID, agentName string) (ModelPr
 	return mp, nil
 }
 
-func resolveCreateModelProvider(am *AgentManager, userID string, req *createAgentRequest) (ModelProvider, error) {
+func resolveCreateModelProvider(am *AgentManager, userID string, req *createAgentRequest) (ModelProvider, string, error) {
+	if profile := strings.TrimSpace(req.Model); profile != "" {
+		mp, err := NewModelStore(userID).ResolveProvider(profile)
+		return mp, profile, err
+	}
 	if from := strings.TrimSpace(req.FromAgent); from != "" {
-		return modelProviderFromAgent(am, userID, from)
+		mp, err := modelProviderFromAgent(am, userID, from)
+		return mp, "", err
 	}
 	if req.ModelProvider == nil {
-		return ModelProvider{}, fmt.Errorf("either model_provider or from_agent is required")
+		return ModelProvider{}, "", fmt.Errorf("model, model_provider or from_agent is required")
 	}
 	mp := *req.ModelProvider
 	if err := fillModelName(&mp); err != nil {
-		return ModelProvider{}, err
+		return ModelProvider{}, "", err
 	}
 	if strings.TrimSpace(mp.ApiKey) == "" {
-		return ModelProvider{}, fmt.Errorf("api_key is required")
+		return ModelProvider{}, "", fmt.Errorf("api_key is required")
 	}
-	return mp, nil
+	return mp, "", nil
 }
 
 type probeModelProviderRequest struct {
@@ -341,7 +351,7 @@ func (ar *AgentManagerRouter) createAgent(c *gin.Context) {
 		ginx.NewRender(c, http.StatusBadRequest).Err(err)
 		return
 	}
-	mp, err := resolveCreateModelProvider(ar.agentManager, userID, &req)
+	mp, profileName, err := resolveCreateModelProvider(ar.agentManager, userID, &req)
 	if err != nil {
 		ginx.NewRender(c, http.StatusBadRequest).Err(err)
 		return
@@ -353,6 +363,12 @@ func (ar *AgentManagerRouter) createAgent(c *gin.Context) {
 	if err != nil {
 		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
 		return
+	}
+	if profileName != "" {
+		if err := setAgentModelProfile(home, req.Name, profileName); err != nil {
+			ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+			return
+		}
 	}
 	internalKey := AgentKey(userID, req.Name)
 	ar.agentManager.AddAgent(internalKey, picoclawAgent, msgBus)
@@ -394,7 +410,9 @@ func (mp updateModelProviderPayload) toModelProvider(apiKey string) ModelProvide
 }
 
 type updateAgentRequest struct {
-	ModelProvider updateModelProviderPayload `json:"model_provider" binding:"required"`
+	// Model selects a saved model profile by name.
+	Model         string                      `json:"model,omitempty"`
+	ModelProvider *updateModelProviderPayload `json:"model_provider,omitempty"`
 }
 
 func resolveUpdateAPIKey(loop *picoagent.AgentLoop, modelAlias string, provided string) (string, error) {
@@ -425,7 +443,7 @@ func resolveUpdateAPIKey(loop *picoagent.AgentLoop, modelAlias string, provided 
 	return "", fmt.Errorf("api_key is required: no saved key found for this agent")
 }
 
-// PUT /api/v1/agents/:name — replace model provider and restart agent.
+// PUT /api/v1/agents/:name — hot-swap model provider on the running agent loop.
 func (ar *AgentManagerRouter) updateAgent(c *gin.Context) {
 	userID := getUserID(c)
 	name := c.Param("name")
@@ -436,34 +454,52 @@ func (ar *AgentManagerRouter) updateAgent(c *gin.Context) {
 		ginx.NewRender(c, http.StatusNotFound).Err(fmt.Errorf("agent %q not found", name))
 		return
 	}
+	loop, ok := a.(*picoagent.AgentLoop)
+	if !ok || loop == nil {
+		ginx.NewRender(c, http.StatusInternalServerError).Err(fmt.Errorf("agent %q is not a picoclaw loop", name))
+		return
+	}
 
 	var req updateAgentRequest
 	ginx.PanicIfNotNil(c.ShouldBindJSON(&req))
-	if err := fillUpdateModelName(&req.ModelProvider); err != nil {
-		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+
+	var mp ModelProvider
+	var profileName string
+	if profile := strings.TrimSpace(req.Model); profile != "" {
+		var err error
+		mp, err = NewModelStore(userID).ResolveProvider(profile)
+		if err != nil {
+			ginx.NewRender(c, http.StatusBadRequest).Err(err)
+			return
+		}
+		profileName = profile
+	} else if req.ModelProvider != nil {
+		if err := fillUpdateModelName(req.ModelProvider); err != nil {
+			ginx.NewRender(c, http.StatusBadRequest).Err(err)
+			return
+		}
+		apiKey, err := resolveUpdateAPIKey(loop, req.ModelProvider.ModelName, req.ModelProvider.ApiKey)
+		if err != nil {
+			ginx.NewRender(c, http.StatusBadRequest).Err(err)
+			return
+		}
+		mp = req.ModelProvider.toModelProvider(apiKey)
+	} else {
+		ginx.NewRender(c, http.StatusBadRequest).Err(fmt.Errorf("model or model_provider is required"))
 		return
 	}
 
-	var loop *picoagent.AgentLoop
-	if lg, ok := a.(*picoagent.AgentLoop); ok && lg != nil {
-		loop = lg
-	}
-
-	apiKey, err := resolveUpdateAPIKey(loop, req.ModelProvider.ModelName, req.ModelProvider.ApiKey)
-	if err != nil {
-		ginx.NewRender(c, http.StatusBadRequest).Err(err)
-		return
-	}
-
-	mp := req.ModelProvider.toModelProvider(apiKey)
 	home := agentHomeDir(userID)
-	msgBus := bus.NewMessageBus()
-	picoclawAgent, err := picoclaw.NewPicoclawAgent(home, msgBus, mp.toPicoModelConfig(apiKey), name)
-	if err != nil {
+	if err := picoclaw.SwitchAgentModel(loop, home, name, mp.toPicoModelConfig(mp.ApiKey)); err != nil {
 		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
 		return
 	}
-	ar.agentManager.AddAgent(internalKey, picoclawAgent, msgBus)
+	if profileName != "" {
+		if err := setAgentModelProfile(home, name, profileName); err != nil {
+			ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+			return
+		}
+	}
 
 	ginx.NewRender(c).Data(agentStatusResp{Name: name, ModelProvider: mp.Model})
 }

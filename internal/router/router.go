@@ -76,6 +76,7 @@ func (fr *FinClawRouter) RoutesInit() error {
 	fr.rssRouter()
 	fr.authRouter()
 	fr.agentManagerRouter()
+	fr.modelRouter()
 	fr.marketRouter()
 	fr.weixinRouter()
 
@@ -109,6 +110,11 @@ func (fr *FinClawRouter) rssRouter() {
 func (fr *FinClawRouter) agentManagerRouter() {
 	agentManagerRouter := agentruntime.NewAgentManagerRouter(fr.agentManager, fr.r, auth.AuthMiddleware(fr.authStore))
 	agentManagerRouter.ConfigRouter()
+}
+
+func (fr *FinClawRouter) modelRouter() {
+	modelRouter := agentruntime.NewModelRouter(fr.r, auth.AuthMiddleware(fr.authStore))
+	modelRouter.ConfigRouter()
 }
 
 func (fr *FinClawRouter) marketRouter() {

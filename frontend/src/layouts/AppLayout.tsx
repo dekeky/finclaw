@@ -1,8 +1,11 @@
 import { Outlet } from 'react-router-dom';
+import { useEffect } from 'react';
+import { prefetchModels } from '@/api/models';
 import { AppSidebar } from '../components/AppSidebar';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { SidebarInset } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { MODEL_SWITCH_TOAST_STYLE } from '@/lib/modelSwitchToast';
 import { Toaster } from 'sonner';
 import { useHorizontalResize } from '@/hooks/useHorizontalResize';
 import {
@@ -18,6 +21,10 @@ export function AppLayout() {
     ...PANEL_WIDTH_LIMITS.appSidebar,
   });
 
+  useEffect(() => {
+    void prefetchModels();
+  }, []);
+
   return (
     <TooltipProvider>
       <SidebarProvider
@@ -29,7 +36,12 @@ export function AppLayout() {
         <SidebarInset className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-[#f7f7f8] dark:bg-background">
           <Outlet />
         </SidebarInset>
-        <Toaster position="bottom-center" />
+        <Toaster
+          position="top-center"
+          style={MODEL_SWITCH_TOAST_STYLE}
+          closeButton
+          toastOptions={{ duration: 5000 }}
+        />
       </SidebarProvider>
     </TooltipProvider>
   );
