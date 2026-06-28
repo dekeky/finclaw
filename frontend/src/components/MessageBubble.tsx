@@ -475,7 +475,7 @@ export function MessageBubble({
     if (processOutputActive) return null;
     const segments = isProcess ? getProcessSegments(message) : [{ type: 'tool' as const, content: message.content }];
     return (
-      <div className="flex min-w-0 w-full animate-in flex-col gap-1 duration-200 fade-in-0 slide-in-from-bottom-1">
+      <div className="flex min-w-0 w-full flex-col gap-1">
         <AgentProcessPanel
           segments={segments}
           messageId={`${message.id}-process`}

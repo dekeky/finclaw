@@ -9,6 +9,7 @@ import {
   type InstallTemplateRequest,
   type MarketTemplate,
   type MarketTemplateDetail,
+  type MarketCategory,
 } from '../api/agentMarket';
 import { AgentCreateDialog } from './AgentCreateDialog';
 import {
@@ -119,7 +120,7 @@ export function AgentMarketPanel({
   search: searchProp,
   onSearchChange,
 }: AgentMarketPanelProps) {
-  const [categories, setCategories] = useState<string[]>([]);
+  const [categories, setCategories] = useState<MarketCategory[]>([]);
   const [activeCategory, setActiveCategory] = useState<string>('picoclaw');
   const [templates, setTemplates] = useState<MarketTemplate[]>([]);
   const [loading, setLoading] = useState(false);
@@ -319,17 +320,17 @@ export function AgentMarketPanel({
       </button>
       {categories.map((cat) => (
         <button
-          key={cat}
+          key={cat.id}
           type="button"
-          onClick={() => setActiveCategory(cat)}
+          onClick={() => setActiveCategory(cat.id)}
           className={cn(
             'shrink-0 rounded-full border px-3 py-1 text-xs transition-colors',
-            activeCategory === cat
+            activeCategory === cat.id
               ? 'border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-300'
               : 'border-border bg-muted/40 text-muted-foreground hover:bg-muted',
           )}
         >
-          {cat}
+          {cat.label || cat.id}
         </button>
       ))}
     </>

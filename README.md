@@ -24,24 +24,6 @@
 
 ## ✨ 现已支持
 
-### 🔐 账号
-
-- 📧 邮箱注册 / 登录，每位用户数据相互隔离
-- ✉️ 可选邮箱验证码（管理员在配置文件中开启 SMTP 后生效）
-
-### 🤖 Agent
-
-- 🎭 创建、管理多个 Agent，自定义头像与人设
-- ✍️ 编辑角色定位、沟通风格与用户偏好；管理 Skills 与工作区文档，支持 AI 辅助生成与润色
-- 🏪 **Agent 市场**已蒸馏多位投资大师的方法论，包括本杰明·格雷厄姆、沃伦·巴菲特等，一键安装即可拥有对应风格的投研助手；也可将自己的 Agent 上传分享
-- 🔗 从市场安装模板后，绑定模型即可开始对话
-
-### 🧠 模型
-
-- ⚙️ **模型中心**集中管理 API Key 与模型信息，多个 Agent 可复用同一份配置
-- 🔄 对话页顶栏随时切换当前 Agent 使用的模型
-- 📡 一键检测模型是否连通
-
 ### 💬 对话
 
 - ⚡ 流式回复，展示推理过程与工具调用
@@ -50,10 +32,53 @@
 - 📂 侧边栏可查看 Skills、工作区文档与历史对话
 - 🌓 深色 / 浅色主题
 
+<p align="center">
+  <img src="assets/readme/chat.jpg" alt="流式对话" width="720" />
+</p>
+
+### 🤖 Agent
+
+- 🎭 创建、管理多个 Agent，自定义头像与人设
+- ✍️ 编辑角色定位、沟通风格与用户偏好；管理 Skills 与工作区文档，支持 AI 辅助生成与润色
+
+<p align="center">
+  <img src="assets/readme/agent.jpg" alt="Agent 创建与管理" width="720" />
+</p>
+
+### 🏪 Agent 市场
+
+- 已蒸馏多位投资大师的方法论，包括格雷厄姆、巴菲特等，一键安装即可拥有对应风格的投研助手
+- 也欢迎大家沉淀自己的 Agent，上传分享；从市场安装模板后，绑定模型即可开始对话
+
+<p align="center">
+  <img src="assets/readme/agent-market.jpg" alt="Agent 市场" width="720" />
+</p>
+
+### 🧠 模型
+
+- ⚙️ **模型中心**集中管理 API Key 与模型信息，多个 Agent 可复用同一份配置
+- 🔄 对话页顶栏随时切换当前 Agent 使用的模型
+- 📡 一键检测模型是否连通
+
+<p align="center">
+  <img src="assets/readme/model.jpg" alt="模型中心" width="720" />
+</p>
+
 ### 📱 微信
 
 - 📲 扫码绑定微信，指定 Agent 自动回复消息
 
+<p align="center">
+  <img src="assets/readme/weixin.jpg" alt="微信绑定" width="720" />
+</p>
+
+### 🔐 账号
+
+- 📧 支持多租户，邮箱注册 / 登录，每位用户数据相互隔离
+
+<p align="center">
+  <img src="assets/readme/account.jpg" alt="多账户登录与数据隔离" width="720" />
+</p>
 ---
 
 ## 🚀 即将上线
@@ -162,17 +187,7 @@ go build -o finclaw ./cmd/agent
 
 ## ⭐ Star 趋势
 
-数据来自 [Star History](https://star-history.com)
-
-<p align="center">
-  <a href="https://star-history.com/#dekeky/finclaw&Date">
-    <img src="assets/star-history.svg" alt="Finclaw Star 趋势图" width="640" />
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/dekeky/finclaw/stargazers"><img src="https://img.shields.io/github/stars/dekeky/finclaw?style=for-the-badge&logo=github" alt="GitHub Stars" /></a>
-</p>
+[![Star 趋势](https://api.star-history.com/svg?repos=dekeky/finclaw&type=Date)](https://star-history.com/#dekeky/finclaw&Date)
 
 ---
 

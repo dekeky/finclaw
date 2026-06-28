@@ -171,7 +171,7 @@ func (c *WeixinChannel) pauseSession(operation string, ret, errcode int, errmsg 
 	}
 
 	remaining := time.Until(c.pauseUntil)
-	logger.ErrorCF("weixin", "Session expired; pausing Weixin channel", map[string]any{
+	logger.InfoCF("weixin", "Session expired; pausing Weixin channel", map[string]any{
 		"operation": operation,
 		"ret":       ret,
 		"errcode":   errcode,

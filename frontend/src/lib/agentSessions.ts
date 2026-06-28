@@ -4,6 +4,7 @@
  */
 
 const SESSIONS_KEY = 'finclaw.chat.sessions.v1';
+const SESSION_BACKUP_PREFIX = 'finclaw.chat.session.sid.';
 const LEGACY_CHAT_KEY = 'finclaw.chat.v1';
 const legacySidKey = (agentId: string) => `finclaw.chat.sid.${agentId}`;
 
@@ -45,6 +46,32 @@ function writeSessionMap(map: AgentSessionMap): void {
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.setItem(SESSIONS_KEY, JSON.stringify(map));
+  } catch {
+    // quota / private mode
+  }
+}
+
+function sessionBackupKey(agentId: string): string {
+  return `${SESSION_BACKUP_PREFIX}${agentId}`;
+}
+
+function readSessionBackup(agentId: string): string | null {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    const sid = sessionStorage.getItem(sessionBackupKey(agentId))?.trim();
+    return sid || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionBackup(agentId: string, sessionId: string | null): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    const key = sessionBackupKey(agentId);
+    const sid = sessionId?.trim() ?? '';
+    if (sid) sessionStorage.setItem(key, sid);
+    else sessionStorage.removeItem(key);
   } catch {
     // quota / private mode
   }
@@ -113,14 +140,24 @@ export function loadSessionMap(): AgentSessionMap {
 /** 读取指定 agent 的 sessionId。 */
 export function loadSessionId(agentId: string): string | null {
   if (!agentId) return null;
-  return ensureSessionMap()[agentId] ?? null;
+  const fromLocal = ensureSessionMap()[agentId] ?? null;
+  if (fromLocal) return fromLocal;
+  const fromSession = readSessionBackup(agentId);
+  if (fromSession) {
+    // 回填 localStorage，避免 F5 后 localStorage 尚未写入时误生成新 sessionId
+    const map = ensureSessionMap();
+    map[agentId] = fromSession;
+    writeSessionMap(map);
+  }
+  return fromSession;
 }
 
 /** 写入或清除指定 agent 的 sessionId。 */
 export function saveSessionId(agentId: string, sessionId: string | null): void {
   if (!agentId) return;
-  const map = ensureSessionMap();
   const sid = sessionId?.trim() ?? '';
+  writeSessionBackup(agentId, sid || null);
+  const map = ensureSessionMap();
   if (sid) {
     map[agentId] = sid;
   } else {
@@ -143,6 +180,8 @@ export function migrateSessionId(oldAgentId: string, newAgentId: string): void {
   map[newAgentId] = sid;
   delete map[oldAgentId];
   writeSessionMap(map);
+  writeSessionBackup(newAgentId, sid);
+  writeSessionBackup(oldAgentId, null);
   try {
     localStorage.removeItem(legacySidKey(oldAgentId));
   } catch {

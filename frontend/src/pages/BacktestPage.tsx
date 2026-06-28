@@ -19,7 +19,7 @@ export default function BacktestPage() {
             </div>
             <CardTitle>量化回测即将上线</CardTitle>
             <CardDescription className="space-y-2">
-              <p>即将提供两大核心能力：</p>
+              <p>将提供两大核心能力：</p>
               <ul className="list-inside list-disc space-y-1 text-left">
                 <li>量化策略智能生成</li>
                 <li>回测验证</li>

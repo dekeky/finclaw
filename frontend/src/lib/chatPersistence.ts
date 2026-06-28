@@ -1,7 +1,9 @@
 import type { ChatMessage, MessageKind, MessageRole, ProcessSegment } from '@/types';
+import { prepareStoredChatMessages } from '@/utils/prepareStoredChatMessages';
 
 const STORAGE_KEY = 'finclaw.chat.v1';
 const TASK_STORAGE_KEY = 'finclaw.chat.task.v1';
+const SESSION_DRAFT_PREFIX = 'finclaw.chat.session.draft.';
 const STORAGE_VERSION = 1 as const;
 const MAX_ARCHIVED_PER_AGENT = 48;
 
@@ -156,24 +158,116 @@ export function persistedToMessages(rows: PersistedMessage[]): ChatMessage[] {
   }));
 }
 
+function sessionDraftKey(agentId: string): string {
+  return `${SESSION_DRAFT_PREFIX}${agentId}`;
+}
+
+function readSessionDraftRows(agentId: string): PersistedMessage[] {
+  if (typeof sessionStorage === 'undefined') return [];
+  try {
+    const raw = sessionStorage.getItem(sessionDraftKey(agentId));
+    if (!raw) return [];
+    const rows = JSON.parse(raw) as PersistedMessage[];
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeSessionDraftRows(agentId: string, rows: PersistedMessage[]): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    const key = sessionDraftKey(agentId);
+    if (rows.length === 0) sessionStorage.removeItem(key);
+    else sessionStorage.setItem(key, JSON.stringify(rows));
+  } catch {
+    // quota / private mode — ignore
+  }
+}
+
+function rowsFromPrepared(msgs: ChatMessage[]): PersistedMessage[] {
+  return prepareStoredChatMessages(msgs).map(msgToPersisted);
+}
+
+/** 按 id 合并两份草稿；先折叠再比内容量，避免条数多但未折叠的那份覆盖完整过程。 */
+function mergeDraftRows(a: PersistedMessage[], b: PersistedMessage[]): PersistedMessage[] {
+  if (a.length === 0) return b;
+  if (b.length === 0) return a;
+
+  const rowsA = rowsFromPrepared(persistedToMessages(a));
+  const rowsB = rowsFromPrepared(persistedToMessages(b));
+  const richer = draftContentLength(rowsA) >= draftContentLength(rowsB) ? rowsA : rowsB;
+  const poorer = richer === rowsA ? rowsB : rowsA;
+
+  const byId = new Map<string, PersistedMessage>();
+  for (const row of [...poorer, ...richer]) {
+    const prev = byId.get(row.id);
+    if (!prev || row.content.length >= prev.content.length) {
+      byId.set(row.id, row);
+    }
+  }
+
+  const seen = new Set<string>();
+  const merged: PersistedMessage[] = [];
+  for (const row of richer) {
+    merged.push(byId.get(row.id) ?? row);
+    seen.add(row.id);
+  }
+  for (const row of poorer) {
+    if (!seen.has(row.id)) {
+      merged.push(byId.get(row.id)!);
+      seen.add(row.id);
+    }
+  }
+  return merged;
+}
+
+function draftContentLength(rows: PersistedMessage[]): number {
+  return rows.reduce((n, row) => n + row.content.length, 0);
+}
+
+/**
+ * 拒绝明显过期的写回：旧页面 pagehide 与新页面 mount 并发时，
+ * 可能用更短的 draft 覆盖刚落盘的完整对话（远程网络慢时更易复现）。
+ * 折叠 process 消息会减少条数但内容量不变，因此不能只看 length。
+ */
+function isStaleDraftWrite(prev: PersistedMessage[], next: PersistedMessage[]): boolean {
+  if (next.length === 0) return true;
+  if (prev.length === 0) return false;
+  const nextIds = new Set(next.map((r) => r.id));
+  if (prev.every((r) => nextIds.has(r.id))) return false;
+  if (draftContentLength(next) >= draftContentLength(prev)) return false;
+  return next.length <= prev.length;
+}
+
 export function loadDraft(agentId: string): ChatMessage[] {
   const root = readRoot();
-  const bucket = root.agents[agentId];
-  if (!bucket?.draft?.length) return [];
-  return persistedToMessages(bucket.draft);
+  const fromLocal = root.agents[agentId]?.draft ?? [];
+  const fromSession = readSessionDraftRows(agentId);
+  const merged = mergeDraftRows(fromLocal, fromSession);
+  if (!merged.length) return [];
+  return prepareStoredChatMessages(persistedToMessages(merged));
 }
 
 export function saveDraft(agentId: string, messages: ChatMessage[]): void {
+  if (messages.length === 0) return;
+  const rows = prepareStoredChatMessages(messages).map(msgToPersisted);
+  writeSessionDraftRows(agentId, rows);
+
   const root = readRoot();
   const prev = root.agents[agentId] ?? emptyBucket();
+  const prevDraft = prev.draft ?? [];
+  if (isStaleDraftWrite(prevDraft, rows)) return;
+
   root.agents[agentId] = {
     ...prev,
-    draft: messages.map(msgToPersisted),
+    draft: rows,
   };
   writeRoot(root);
 }
 
 export function clearDraft(agentId: string): void {
+  writeSessionDraftRows(agentId, []);
   const root = readRoot();
   const prev = root.agents[agentId];
   if (!prev) return;

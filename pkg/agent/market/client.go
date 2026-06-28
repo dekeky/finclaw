@@ -22,6 +22,15 @@ import (
 	"github.com/finclaw/internal/config"
 )
 
+// CategoryMeta is one runtime category from AgentHub (/api/hub/categories).
+type CategoryMeta struct {
+	ID           string   `json:"id"`
+	Label        string   `json:"label"`
+	Description  string   `json:"description,omitempty"`
+	Platforms    []string `json:"platforms,omitempty"`
+	RequiredFile string   `json:"requiredFile,omitempty"`
+}
+
 // AgentMeta mirrors AgentHub's hub.AgentMeta (a template package summary).
 type AgentMeta struct {
 	AgentName     string    `json:"agentName"`
@@ -122,12 +131,15 @@ func (c *Client) getJSON(path string, out any) error {
 }
 
 // ListCategories returns the runtime categories known to AgentHub.
-func (c *Client) ListCategories() ([]string, error) {
+func (c *Client) ListCategories() ([]CategoryMeta, error) {
 	var out struct {
-		Categories []string `json:"categories"`
+		Categories []CategoryMeta `json:"categories"`
 	}
 	if err := c.getJSON("/api/hub/categories", &out); err != nil {
 		return nil, err
+	}
+	if out.Categories == nil {
+		out.Categories = []CategoryMeta{}
 	}
 	return out.Categories, nil
 }

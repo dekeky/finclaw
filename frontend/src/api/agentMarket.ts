@@ -34,7 +34,15 @@ interface MarketTemplateListBody {
 }
 
 interface MarketCategoriesBody {
-  categories: string[];
+  categories: MarketCategory[];
+}
+
+export interface MarketCategory {
+  id: string;
+  label: string;
+  description?: string;
+  platforms?: string[];
+  requiredFile?: string;
 }
 
 interface MarketFileBody {
@@ -87,7 +95,7 @@ async function parseGinx<T>(res: Response): Promise<T> {
 }
 
 /** GET /api/v1/market/categories —— 市场支持的运行时类别。 */
-export async function listMarketCategories(): Promise<string[]> {
+export async function listMarketCategories(): Promise<MarketCategory[]> {
   const res = await fetch('/api/v1/market/categories', { headers: authHeaders() });
   const body = await parseGinx<MarketCategoriesBody | null>(res);
   return body?.categories ?? [];

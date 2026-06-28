@@ -18,13 +18,8 @@ export default function NewsPage() {
               <IconNews className="h-6 w-6 text-primary" />
             </div>
             <CardTitle>金融资讯即将上线</CardTitle>
-            <CardDescription className="space-y-2">
-              <p>即将提供 AI 驱动的金融资讯阅读体验：</p>
-              <ul className="list-inside list-disc space-y-1 text-left">
-                <li>多源财经 RSS 聚合</li>
-                <li>智能摘要与深度解读</li>
-                <li>待读列表与文章分析助手</li>
-              </ul>
+            <CardDescription>
+              <p>将提供 AI 驱动的金融资讯阅读体验</p>
             </CardDescription>
           </CardHeader>
         </Card>

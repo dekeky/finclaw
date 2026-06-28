@@ -5,7 +5,7 @@ import { useElapsedSeconds } from '../hooks/useElapsedSeconds';
 import {
   findCompleteReplyIndexInTurn,
   findLastProcessIndexInTurn,
-  isChatTaskActive,
+  isTaskTimingActive,
 } from '../utils/chatTaskState';
 import {
   collectActiveTaskSegments,
@@ -54,16 +54,37 @@ export function ChatContainer({
   const bottomRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
 
-  const taskActive = !readOnly && isChatTaskActive(messages, isTyping);
+  const taskActive = !readOnly && isTaskTimingActive(messages, isTyping, taskStartedAt);
 
   const lastUserIdx = findLastUserIndex(messages);
+  const completeReplyIdx = findCompleteReplyIndexInTurn(messages);
+  const lastProcessIdx = findLastProcessIndexInTurn(messages);
 
+  /** 当前轮次过程由流式面板统一渲染，不在消息列表里重复展示。 */
   function isProcessOutputActive(msg: ChatMessage, index: number): boolean {
-    if (!taskActive || index <= lastUserIdx) return false;
-    if (isProcessMessage(msg)) return true;
-    if (msg.role === 'assistant' && index === messages.length - 1) {
+    if (readOnly || index <= lastUserIdx) return false;
+
+    if (taskActive) {
+      if (isProcessMessage(msg)) return true;
+      if (msg.role === 'assistant') {
+        const { thought, body } = splitAssistantContent(msg.content);
+        if (thought && !body.trim()) return true;
+      }
+      return false;
+    }
+
+    if (isProcessMessage(msg)) {
+      return index !== lastProcessIdx;
+    }
+
+    if (
+      msg.role === 'assistant' &&
+      lastProcessIdx >= 0 &&
+      index === completeReplyIdx
+    ) {
       return Boolean(splitAssistantContent(msg.content).thought);
     }
+
     return false;
   }
 
@@ -74,9 +95,6 @@ export function ChatContainer({
     : null;
   const lastMsg = messages.length > 0 ? messages[messages.length - 1] : undefined;
   const activeTaskSegments = taskActive ? collectActiveTaskSegments(messages) : [];
-
-  const completeReplyIdx = findCompleteReplyIndexInTurn(messages);
-  const lastProcessIdx = findLastProcessIndexInTurn(messages);
 
   function sharesTaskTiming(msg: ChatMessage, index: number): boolean {
     if (!taskActive) {
@@ -186,7 +204,7 @@ export function ChatContainer({
           <ActiveTaskPanel
             seconds={taskTiming.seconds}
             segments={activeTaskSegments}
-            messageId={lastMsg?.id ?? 'task'}
+            messageId={`turn-${lastUserIdx}`}
           />
         </div>
       )}

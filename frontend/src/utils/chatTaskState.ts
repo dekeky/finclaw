@@ -52,3 +52,68 @@ export function isChatTaskActive(messages: ChatMessage[], isTyping: boolean): bo
   const last = messages[messages.length - 1];
   return last?.role === 'user';
 }
+
+/**
+ * 刷新后恢复任务计时/typing 状态（与 mount effect 共用，避免分支不一致）。
+ */
+export function resolveRestoredTaskState(
+  messages: ChatMessage[],
+  persistedStartMs: number | null,
+  persistedElapsedSec: number | null,
+): {
+  taskStartedAt: number | null;
+  completedTaskElapsedSec: number | null;
+  isTyping: boolean;
+  /** 需要把 restored start 写回 localStorage（仅 waitingForFirstReply 且无 persisted 时） */
+  persistStartMs: number | null;
+  /** 已完成对话：清除 localStorage 中可能残留的任务起点 */
+  clearPersistedStart: boolean;
+} {
+  const waitingForFirstReply = isChatTaskActive(messages, false);
+  const incomplete = isIncompleteChatTask(messages);
+
+  if (!incomplete && !waitingForFirstReply) {
+    return {
+      taskStartedAt: null,
+      completedTaskElapsedSec: persistedElapsedSec,
+      isTyping: false,
+      persistStartMs: null,
+      clearPersistedStart: persistedStartMs != null,
+    };
+  }
+
+  if (waitingForFirstReply) {
+    const start = persistedStartMs ?? Date.now();
+    return {
+      taskStartedAt: start,
+      completedTaskElapsedSec: null,
+      isTyping: true,
+      persistStartMs: persistedStartMs == null ? start : null,
+      clearPersistedStart: false,
+    };
+  }
+
+  // 有 process 草稿、等待后续助手输出：仅恢复已持久化的起点，禁止 refresh 时伪造新起点
+  return {
+    taskStartedAt: persistedStartMs,
+    completedTaskElapsedSec: null,
+    isTyping: false,
+    persistStartMs: null,
+    clearPersistedStart: false,
+  };
+}
+
+/**
+ * 工作过程计时是否应继续（含刷新后从 localStorage 恢复 taskStartedAt 的场景）。
+ * 与 isChatTaskActive 分离：后者控制过程消息的「进行中/已完成」展示，避免 reasoning 间隙误判；
+ * 计时则在「本轮未完成且已有起始时间」时延续总耗时。
+ */
+export function isTaskTimingActive(
+  messages: ChatMessage[],
+  isTyping: boolean,
+  taskStartedAtMs: number | null,
+): boolean {
+  if (hasCompleteReplyInTurn(messages)) return false;
+  if (isChatTaskActive(messages, isTyping)) return true;
+  return isIncompleteChatTask(messages) && taskStartedAtMs != null;
+}

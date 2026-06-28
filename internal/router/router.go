@@ -5,8 +5,10 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/finclaw/internal/auth"
+	"github.com/finclaw/internal/browser"
 	finclawconfig "github.com/finclaw/internal/config"
 	"github.com/finclaw/internal/rss"
 	"github.com/finclaw/internal/webui"
@@ -139,5 +141,41 @@ func (fr *FinClawRouter) authRouter() {
 // Run starts the HTTP server
 func (fr *FinClawRouter) Run(addr string) error {
 	log.Printf("🌐 Server starting on %s", addr)
+	fr.scheduleBrowserOpen(addr)
 	return fr.r.Run(addr)
+}
+
+func (fr *FinClawRouter) scheduleBrowserOpen(addr string) {
+	if !browser.ShouldOpen() {
+		return
+	}
+
+	url := browser.LocalURL(addr)
+	go func() {
+		if !waitForHealth(url) {
+			log.Printf("⚠️ Server not ready; open %s manually", url)
+			return
+		}
+		if err := browser.OpenURL(url); err != nil {
+			log.Printf("⚠️ Could not open browser: %v (visit %s manually)", err, url)
+			return
+		}
+		log.Printf("🌍 Opened browser at %s", url)
+	}()
+}
+
+func waitForHealth(baseURL string) bool {
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(baseURL + "/health")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return true
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
 }
