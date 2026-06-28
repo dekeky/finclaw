@@ -187,7 +187,7 @@ go build -o finclaw ./cmd/agent
 
 ## ⭐ Star 趋势
 
-[![Star 趋势](https://api.star-history.com/svg?repos=dekeky/finclaw&type=Date)](https://star-history.com/#dekeky/finclaw&Date)
+[![Star 趋势](https://api.star-history.com/svg?repos=dekeky/finclaw&type=Date&v=3)](https://star-history.com/#dekeky/finclaw&Date)
 
 ---
 

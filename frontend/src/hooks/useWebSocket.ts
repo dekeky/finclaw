@@ -245,8 +245,8 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     return next;
   }, [scheduleDraftSave]);
 
-  const flushDraftNow = useCallback(() => {
-    const agentId = persistAgentKeyRef.current;
+  const flushDraftNow = useCallback((agentIdOverride?: string | null) => {
+    const agentId = agentIdOverride ?? persistAgentKeyRef.current;
     if (!agentId) return;
     if (draftSaveTimerRef.current) {
       clearTimeout(draftSaveTimerRef.current);
@@ -256,8 +256,8 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     if (msgs.length > 0) saveDraft(agentId, msgs);
   }, []);
 
-  const flushTaskNow = useCallback(() => {
-    const agentId = persistAgentKeyRef.current;
+  const flushTaskNow = useCallback((agentIdOverride?: string | null) => {
+    const agentId = agentIdOverride ?? persistAgentKeyRef.current;
     if (!agentId) return;
     const start = taskStartedAtRef.current;
     if (start != null) {
@@ -329,9 +329,9 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     [setSessionForAgent],
   );
 
-  /** 将当前 agent 的 sessionId 刷入 localStorage。 */
-  const persistSessionId = useCallback(() => {
-    const agentId = persistAgentKeyRef.current;
+  /** 将指定 agent（默认当前）的 sessionId 刷入 localStorage。 */
+  const persistSessionId = useCallback((agentIdOverride?: string | null) => {
+    const agentId = agentIdOverride ?? persistAgentKeyRef.current;
     if (!agentId) return;
     const sid = sessionByAgentRef.current.get(agentId);
     if (sid) saveSessionId(agentId, sid);
@@ -1030,11 +1030,13 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     }
     return () => {
       console.log('[Finclaw WS] useEffect cleanup');
-      // 路由切换 / Agent 切换 / 组件卸载时立即落盘
-      if (persistAgentKey) {
-        flushDraftNow();
-        flushTaskNow();
-        persistSessionId();
+      // 路由切换 / Agent 切换 / 组件卸载时立即落盘。
+      // 必须用 effect 闭包里的 agentId：cleanup 运行时 persistAgentKeyRef 已指向新 Agent，
+      // 否则会误把旧会话草稿写入新 Agent，导致切换后聊天区不变化。
+      if (agentId) {
+        flushDraftNow(agentId);
+        flushTaskNow(agentId);
+        persistSessionId(agentId);
       }
       mountedRef.current = false;
       resetRef.current();
