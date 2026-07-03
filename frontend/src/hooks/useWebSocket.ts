@@ -23,10 +23,13 @@ import {
 } from '@/lib/chatPersistence';
 import { getToken, clearToken } from '../api/auth';
 import { normalizeSlashInput } from '@/components/ChatSlashHints';
+import { isMobileClient } from '@/lib/isMobileClient';
 
 const RECONNECT_DELAY = 2000;
 const MAX_RECONNECT = 5;
 const PING_INTERVAL = 30000;
+/** 移动端回前台时发 ping 探活；超时无服务端帧则判定幽灵 OPEN */
+const MOBILE_PROBE_TIMEOUT_MS = 1000;
 /** 长时间无助手回复时收起「正在思考」（避免一直转圈） */
 const TYPING_FALLBACK_MS = 120_000;
 /** 发送消息后等待服务端确认的超时时间；超时则判定连接已死并重连 */
@@ -209,12 +212,17 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   const typingFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sendConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mobileProbeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const urlRef = useRef<string | null>(url);
   /** 最近一次收到消息的时间戳，用于 visibility 恢复时检测静默断连（0 = 尚未收到任何消息） */
   const lastActivityRef = useRef(0);
   /** 防止并发 connect() 调用 */
   const connectingRef = useRef(false);
+  /** 当前 url/agent 下是否至少成功 onopen 过一次（区分「首连中」与「曾连上过」） */
+  const wsEverOpenedRef = useRef(false);
+  /** 页面是否曾进入 hidden（区分「刷新/首载」与「切后台再回前台」） */
+  const pageWasHiddenRef = useRef(false);
   /** 始终指向最新 messages，供卸载 cleanup / pagehide 同步落盘 */
   const messagesRef = useRef<ChatMessage[]>(messages);
   messagesRef.current = messages;
@@ -376,7 +384,15 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     }
   }, []);
 
+  const clearMobileProbe = useCallback(() => {
+    if (mobileProbeTimerRef.current) {
+      clearTimeout(mobileProbeTimerRef.current);
+      mobileProbeTimerRef.current = null;
+    }
+  }, []);
+
   const reset = useCallback(() => {
+    clearMobileProbe();
     if (typingFallbackRef.current) {
       clearTimeout(typingFallbackRef.current);
       typingFallbackRef.current = null;
@@ -410,7 +426,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       wsRef.current.close();
       wsRef.current = null;
     }
-  }, []);
+  }, [clearMobileProbe]);
 
   const clearSendConfirm = useCallback(() => {
     if (sendConfirmTimerRef.current) {
@@ -702,6 +718,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
 
       ws.onopen = () => {
         connectingRef.current = false;
+        wsEverOpenedRef.current = true;
         console.log('[Finclaw WS] onopen, mounted=', mountedRef.current);
         if (!mountedRef.current) return;
         reconnectCountRef.current = 0;
@@ -862,6 +879,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   );
 
   const reconnect = useCallback(() => {
+    clearMobileProbe();
     reconnectCountRef.current = 0;
     setIsTyping(false);
     // Restore sessionId from localStorage so reconnect can pull cached messages
@@ -871,7 +889,48 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     }
     reset();
     connect();
-  }, [reset, connect, persistAgentKey, getSessionForAgent, setSessionForAgent]);
+  }, [clearMobileProbe, reset, connect, persistAgentKey, getSessionForAgent, setSessionForAgent]);
+
+  /**
+   * 移动端：不信任 readyState===OPEN，发 ping 后若在窗口内收不到任何服务端帧则重连。
+   * 覆盖「切后台很短但 TCP 已被杀」的幽灵连接（静默时长 <10s 的旧逻辑会漏判）。
+   * 首连 / 刷新期间不探活，避免云上高延迟时 pageshow/online 打断 CONNECTING。
+   */
+  const probeConnectionAlive = useCallback(() => {
+    if (!wsEverOpenedRef.current) return;
+    clearMobileProbe();
+    const ws = wsRef.current;
+    if (!ws) {
+      reconnect();
+      return;
+    }
+    if (ws.readyState === WebSocket.CONNECTING) return;
+    if (ws.readyState !== WebSocket.OPEN) {
+      reconnect();
+      return;
+    }
+    const activityBefore = lastActivityRef.current;
+    const probeSentAt = Date.now();
+    try {
+      ws.send(JSON.stringify({ type: 'ping', id: genId() }));
+    } catch {
+      console.warn('[Finclaw WS] Mobile probe ping failed, reconnecting');
+      reconnect();
+      return;
+    }
+    mobileProbeTimerRef.current = setTimeout(() => {
+      mobileProbeTimerRef.current = null;
+      const wsNow = wsRef.current;
+      if (!wsNow || wsNow.readyState !== WebSocket.OPEN) {
+        reconnect();
+        return;
+      }
+      if (lastActivityRef.current <= activityBefore || lastActivityRef.current < probeSentAt) {
+        console.warn('[Finclaw WS] Mobile probe timed out (ghost OPEN?), reconnecting');
+        reconnect();
+      }
+    }, MOBILE_PROBE_TIMEOUT_MS);
+  }, [clearMobileProbe, reconnect]);
 
   // 心跳守护：定期检查连接是否仍有活动。只在 JS 层长时间未收到任何消息
   // 且 ping 也未收到 pong 响应时才触发重连（注意 lastActivityRef 在发送 ping 时
@@ -982,6 +1041,9 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     }
     const restoredSid = agentId ? getSessionForAgent(agentId) : null;
     reconnectCountRef.current = 0;
+    wsEverOpenedRef.current = false;
+    pageWasHiddenRef.current = false;
+    lastActivityRef.current = 0;
     setSendError(null);
     console.log('[Finclaw WS] useEffect mount:', { url, agentId, sessionId: restoredSid, sessions: loadSessionMap() });
     if (persistAgentKey && url) {
@@ -1044,14 +1106,25 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   }, [url, persistAgentKey, flushDraftNow, persistSessionId, getSessionForAgent]);
 
   // visibilitychange: when tab becomes visible again, reconnect if connection is dead.
-  // 幽灵连接检测：移动端 OS 切后台时会杀死 TCP 但 WebSocket 对象仍显示 OPEN，
-  // 此时 lastActivityRef（仅在收到消息时更新）能正确反映真实连通性。
-  // 超过 10 秒没有收到服务端消息即判定为死连接，直接重连。
-  // 误判代价极低（一次不必要重连 ≈ 50ms 握手 + 缓存消息去重重放），
-  // 但漏判代价极高（用户消息静默丢失，对话续不上）。
+  // 幽灵连接检测：移动端 OS 切后台时会杀死 TCP 但 WebSocket 对象仍显示 OPEN。
+  // 移动端回前台时发 ping 探活（不信任 OPEN / 静默时长）；桌面端仍用静默阈值。
+  // 必须曾进入 hidden 才处理 visible，避免刷新/首载时误触发（云上延迟下易打断首连）。
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState !== 'visible') return;
+      if (document.visibilityState === 'hidden') {
+        pageWasHiddenRef.current = true;
+        return;
+      }
+      if (!wsEverOpenedRef.current) return;
+      const wasHidden = pageWasHiddenRef.current;
+      pageWasHiddenRef.current = false;
+      // 桌面端仅在确实切过后台时处理；移动端允许 visible 先于 hidden 的 WebView 行为
+      if (!wasHidden && !isMobileClient()) return;
+
+      if (isMobileClient()) {
+        probeConnectionAlive();
+        return;
+      }
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         reconnect();
@@ -1068,39 +1141,47 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [reconnect]);
+  }, [reconnect, probeConnectionAlive]);
 
   // 移动端生命周期事件：补充 visibilitychange 无法覆盖的场景。
-  // - resume: iOS Safari 冻结页面后恢复时触发，部分 iOS 版本上 visibilitychange 可能延迟
   // - pageshow(persisted): 从 BFCache 恢复的页面，旧 WebSocket 对象必然已死
-  // - online: 网络从断开到恢复（电梯、飞行模式等）
+  // - pageshow(mobile): 部分 WebView visibility 不可靠，回前台时探活（非刷新/首载）
+  // - online: 网络恢复后探活（mobile）或重连（desktop）；跳过首连前的 online 事件
   useEffect(() => {
-    const handleResume = () => {
-      console.log('[Finclaw WS] Page resumed (lifecycle), reconnecting');
-      reconnect();
-    };
-
     const handlePageShow = (e: PageTransitionEvent) => {
       if (e.persisted) {
+        wsEverOpenedRef.current = false;
         console.log('[Finclaw WS] Page restored from BFCache, reconnecting');
         reconnect();
+        return;
+      }
+      // 刷新/首载由 useEffect connect() 负责，不在 pageshow 打断 CONNECTING
+      if (!wsEverOpenedRef.current) return;
+      if (!pageWasHiddenRef.current && !isMobileClient()) return;
+      pageWasHiddenRef.current = false;
+      if (isMobileClient()) {
+        probeConnectionAlive();
       }
     };
 
     const handleOnline = () => {
+      if (!wsEverOpenedRef.current) return;
+      if (isMobileClient()) {
+        console.log('[Finclaw WS] Network back online, probing connection');
+        probeConnectionAlive();
+        return;
+      }
       console.log('[Finclaw WS] Network back online, reconnecting');
       reconnect();
     };
 
-    document.addEventListener('resume', handleResume);
     window.addEventListener('pageshow', handlePageShow);
     window.addEventListener('online', handleOnline);
     return () => {
-      document.removeEventListener('resume', handleResume);
       window.removeEventListener('pageshow', handlePageShow);
       window.removeEventListener('online', handleOnline);
     };
-  }, [reconnect]);
+  }, [reconnect, probeConnectionAlive]);
 
   // 浏览器刷新/关闭前最后一次落盘：React 的 useEffect cleanup 在 F5 时不一定会跑，
   // 这里通过 pagehide / beforeunload 主动保 sessionId 与最新 draft。
