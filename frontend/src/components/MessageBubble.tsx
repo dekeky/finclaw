@@ -27,6 +27,7 @@ import {
   type ProcessActionGroup,
   type ToolIconName,
 } from '../utils/formatProcessDisplay';
+import { isAgentMetaNarrationLeak } from '../utils/filterAssistantNoise';
 import { splitAssistantContent } from '../utils/splitAssistantContent';
 import {
   ElapsedTimeBadge,
@@ -459,6 +460,7 @@ export function MessageBubble({
   });
 
   const isUser = message.role === 'user';
+  if (!isUser && isAgentMetaNarrationLeak(message.content)) return null;
   const isProcess = !isUser && isProcessMessage(message);
   const isLegacyTool =
     !isUser && !isProcess && (message.kind === 'tool' || isPicoclawToolFeedbackContent(message.content));

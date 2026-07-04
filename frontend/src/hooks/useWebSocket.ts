@@ -1,17 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import type { ChatMessage, ConnectionStatus, MessageKind, WSMessage } from '../types';
-import { foldConsecutiveProcessMessages, hasMessageId } from '../utils/foldProcessMessages';
+import { foldConsecutiveProcessMessages, hasMessageId, isProcessMessage } from '../utils/foldProcessMessages';
+import { findCompleteReplyIndexInTurn } from '../utils/chatTaskState';
+import { reorderMisplacedProcessInTurn } from '../utils/reorderTurnMessages';
 import { hasCompleteReplyInTurn, isChatTaskActive, isIncompleteChatTask, resolveRestoredTaskState } from '../utils/chatTaskState';
 import { isPicoclawToolFeedbackContent } from '../utils/foldPicoclawToolFeedback';
 import { isAssistantThoughtOnlyContent } from '../utils/splitAssistantContent';
 import { prepareStoredChatMessages } from '../utils/prepareStoredChatMessages';
-import {
-  genSessionId,
-  loadSessionId,
-  loadSessionMap,
-  saveSessionId,
-} from '@/lib/agentSessions';
 import {
   clearDraft,
   loadDraft,
@@ -23,6 +19,8 @@ import {
 } from '@/lib/chatPersistence';
 import { getToken, clearToken } from '../api/auth';
 import { normalizeSlashInput } from '@/components/ChatSlashHints';
+import { isPicoclawSlashCommandNoise } from '@/utils/picoclawSlashCommandAck';
+import { shouldDropAssistantInbound } from '@/utils/filterAssistantNoise';
 import { isMobileClient } from '@/lib/isMobileClient';
 
 const RECONNECT_DELAY = 2000;
@@ -34,6 +32,24 @@ const MOBILE_PROBE_TIMEOUT_MS = 1000;
 const TYPING_FALLBACK_MS = 120_000;
 /** 发送消息后等待服务端确认的超时时间；超时则判定连接已死并重连 */
 const SEND_CONFIRM_TIMEOUT = 10_000;
+/** 无用户消息/后端回复（ping、pong、connected 除外）时回收 WS */
+const IDLE_RECYCLE_MS = 10 * 60 * 1000;
+const IDLE_RECYCLE_CHECK_MS = 60_000;
+
+function isBusinessIncoming(msg: WSMessage): boolean {
+  switch (msg.type) {
+    case 'message.send':
+    case 'message_create':
+    case 'typing_start':
+    case 'typing_stop':
+    case 'error':
+      return true;
+    case 'history':
+      return Array.isArray(msg.payload?.messages) && msg.payload!.messages!.length > 0;
+    default:
+      return false;
+  }
+}
 
 function genId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
@@ -105,7 +121,15 @@ function upsertChatMessage(prev: ChatMessage[], incoming: ChatMessage): ChatMess
     };
     return foldChatMessages(next);
   }
-  return foldChatMessages([...prev, incoming]);
+  let next = [...prev, incoming];
+  if (
+    incoming.role === 'assistant' &&
+    isProcessMessage(incoming) &&
+    findCompleteReplyIndexInTurn(prev) >= 0
+  ) {
+    next = reorderMisplacedProcessInTurn(next);
+  }
+  return foldChatMessages(next);
 }
 
 /** 检测 picoclaw steering drain 误将用户输入以 assistant 角色回显的情况 */
@@ -145,15 +169,11 @@ export interface UseWebSocketReturn {
   send: (content: string, media?: string[]) => void;
   /** 收起「正在思考」指示（仅本地 UI，不中断服务端生成） */
   stop: () => void;
-  clearMessages: (opts?: { startNewSession?: boolean }) => void;
-  /**
-   * 将归档/历史消息载入当前会话并写入本地草稿。
-   * 传入 sessionId 时把活动会话切回该归档自己的 session（缺失则生成全新 session），
-   * 并重连让连接重新绑定，避免后端把「最新会话」的缓存补发到历史窗口。
-   */
-  restoreMessages: (messages: ChatMessage[], sessionId?: string | null) => void;
-  /** 读取当前活动会话的 sessionId（归档时记录用）。 */
-  getSessionId: () => string | null;
+  clearMessages: () => void;
+  /** 将消息载入本 session 的本地草稿（本 hook 绑定固定 sessionId，不切换连接）。 */
+  restoreMessages: (messages: ChatMessage[]) => void;
+  /** 本 WS 连接绑定的 sessionId（固定不变）。 */
+  getSessionId: () => string;
   reconnect: () => void;
   /**
    * 当前思考任务的起始时间（ms）。挂载时若 localStorage 中存有未完成任务，会被恢复，
@@ -165,48 +185,61 @@ export interface UseWebSocketReturn {
 }
 
 export interface UseWebSocketOptions {
-  /** 传入后将把当前会话草稿存入 localStorage（按 Agent 隔离），刷新后可恢复 */
-  persistAgentKey?: string | null;
+  /** Agent 标识，与 sessionId 一起用于按会话落盘草稿/任务状态 */
+  agentId: string | null;
+  /** 本连接固定绑定的 sessionId，每条 WS 对应一个 sessionId */
+  sessionId: string;
+  /** 状态变化时通知上层（多 session 池用于刷新当前视图） */
+  onStateChange?: () => void;
+  /** 业务空闲超时后 WS 已关闭，通知上层从活跃 session 列表移除 */
+  onIdleRecycle?: () => void;
 }
 
 /**
- * useWebSocket：维护一条与 Finclaw 后端的 WS 长连接。
+ * useWebSocket：维护一条与 Finclaw 后端的 WS 长连接，固定绑定一个 sessionId。
  *
- * 当 `url` 为 `null` 时表示尚未选定 Agent，hook 会保持 idle 状态、不发起连接，
- * 也会在 url 切换时主动断开旧连接并清空历史，避免不同 Agent 的消息串流。
+ * 当 `url` 为 `null` 时表示尚未选定 Agent，hook 会保持 idle 状态、不发起连接。
+ * 多 session 由 ChatSessionProvider 为每个 sessionId 挂载独立实例。
  */
-export function useWebSocket(url: string | null, options?: UseWebSocketOptions): UseWebSocketReturn {
-  const persistAgentKey = options?.persistAgentKey ?? null;
-  const persistAgentKeyRef = useRef(persistAgentKey);
-  persistAgentKeyRef.current = persistAgentKey;
+export function useWebSocket(url: string | null, options: UseWebSocketOptions): UseWebSocketReturn {
+  const agentId = options.agentId;
+  const sessionId = options.sessionId;
+  const onStateChange = options.onStateChange;
+  const onIdleRecycle = options.onIdleRecycle;
+  const agentIdRef = useRef(agentId);
+  agentIdRef.current = agentId;
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+  const onStateChangeRef = useRef(onStateChange);
+  onStateChangeRef.current = onStateChange;
+  const onIdleRecycleRef = useRef(onIdleRecycle);
+  onIdleRecycleRef.current = onIdleRecycle;
+  const persistReady = Boolean(agentId && sessionId.trim());
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
-    persistAgentKey ? loadDraft(persistAgentKey) : [],
+    persistReady ? loadDraft(agentId!, sessionId) : [],
   );
   const [status, setStatus] = useState<ConnectionStatus>('idle');
   const [isTyping, setIsTyping] = useState(() => {
-    if (!persistAgentKey) return false;
-    const restored = loadDraft(persistAgentKey);
-    // 仅「已发送、等待首条助手回复」时恢复 typing；有 process 草稿时不强开，避免 refresh 后误判
+    if (!persistReady) return false;
+    const restored = loadDraft(agentId!, sessionId);
     return isChatTaskActive(restored, false);
   });
   const [sendError, setSendError] = useState<string | null>(null);
   /** 当前思考任务的起始时间戳（ms）；null 表示无进行中任务 */
   // 初始化时直接从 persistence 读取，确保 ChatContainer 首帧就能拿到正确的时间戳
   const [taskStartedAt, setTaskStartedAt] = useState<number | null>(() => {
-    if (!persistAgentKey) return null;
-    const restored = loadDraft(persistAgentKey);
+    if (!persistReady) return null;
+    const restored = loadDraft(agentId!, sessionId);
     if (hasCompleteReplyInTurn(restored)) return null;
-    return loadTaskStart(persistAgentKey);
+    return loadTaskStart(agentId!, sessionId);
   });
   const [completedTaskElapsedSec, setCompletedTaskElapsedSec] = useState<number | null>(() => {
-    return persistAgentKey ? loadLastTaskElapsed(persistAgentKey) : null;
+    return persistReady ? loadLastTaskElapsed(agentId!, sessionId) : null;
   });
   /** 与 taskStartedAt 同步，用于在 callback 内避免重复 beginTask */
   const taskStartedAtRef = useRef<number | null>(null);
   taskStartedAtRef.current = taskStartedAt;
   const wsRef = useRef<WebSocket | null>(null);
-  /** 多 Agent：agentId -> sessionId（内存 map，与 localStorage sessions map 同步） */
-  const sessionByAgentRef = useRef<Map<string, string>>(new Map(Object.entries(loadSessionMap())));
   const reconnectCountRef = useRef(0);
   const pingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const typingFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -215,8 +248,11 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   const mobileProbeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const urlRef = useRef<string | null>(url);
-  /** 最近一次收到消息的时间戳，用于 visibility 恢复时检测静默断连（0 = 尚未收到任何消息） */
+  /** 最近一次收到服务端帧的时间戳（含 pong，用于连接存活检测） */
   const lastActivityRef = useRef(0);
+  /** 最近一次业务消息时间戳（用户发送或服务端回复，不含 ping/pong/connected） */
+  const lastBusinessActivityRef = useRef(0);
+  const idleRecycledRef = useRef(false);
   /** 防止并发 connect() 调用 */
   const connectingRef = useRef(false);
   /** 当前 url/agent 下是否至少成功 onopen 过一次（区分「首连中」与「曾连上过」） */
@@ -235,14 +271,15 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   >([]);
   const cacheFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleDraftSave = useCallback(() => {
-    const agentId = persistAgentKeyRef.current;
-    if (!agentId) return;
+    const aid = agentIdRef.current;
+    const sid = sessionIdRef.current;
+    if (!aid || !sid.trim()) return;
     if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
     draftSaveTimerRef.current = setTimeout(() => {
       draftSaveTimerRef.current = null;
-      if (persistAgentKeyRef.current !== agentId) return;
+      if (agentIdRef.current !== aid || sessionIdRef.current !== sid) return;
       const msgs = messagesRef.current;
-      if (msgs.length > 0) saveDraft(agentId, msgs);
+      if (msgs.length > 0) saveDraft(aid, sid, msgs);
     }, 150);
   }, []);
 
@@ -253,104 +290,46 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     return next;
   }, [scheduleDraftSave]);
 
-  const flushDraftNow = useCallback((agentIdOverride?: string | null) => {
-    const agentId = agentIdOverride ?? persistAgentKeyRef.current;
-    if (!agentId) return;
+  const flushDraftNow = useCallback((aidOverride?: string | null, sidOverride?: string | null) => {
+    const aid = aidOverride ?? agentIdRef.current;
+    const sid = sidOverride ?? sessionIdRef.current;
+    if (!aid || !sid?.trim()) return;
     if (draftSaveTimerRef.current) {
       clearTimeout(draftSaveTimerRef.current);
       draftSaveTimerRef.current = null;
     }
     const msgs = messagesRef.current;
-    if (msgs.length > 0) saveDraft(agentId, msgs);
+    if (msgs.length > 0) saveDraft(aid, sid, msgs);
   }, []);
 
-  const flushTaskNow = useCallback((agentIdOverride?: string | null) => {
-    const agentId = agentIdOverride ?? persistAgentKeyRef.current;
-    if (!agentId) return;
+  const flushTaskNow = useCallback((aidOverride?: string | null, sidOverride?: string | null) => {
+    const aid = aidOverride ?? agentIdRef.current;
+    const sid = sidOverride ?? sessionIdRef.current;
+    if (!aid || !sid?.trim()) return;
     const start = taskStartedAtRef.current;
     if (start != null) {
-      saveTaskStart(agentId, start);
+      saveTaskStart(aid, sid, start);
       return;
     }
     const msgs = messagesRef.current;
     if (!isIncompleteChatTask(msgs) && !isChatTaskActive(msgs, false)) {
-      saveTaskStart(agentId, null);
+      saveTaskStart(aid, sid, null);
     }
   }, []);
 
-  /** 读取指定 agent 的 sessionId（内存 map → localStorage sessions map）。 */
-  const getSessionForAgent = useCallback((agentId: string | null | undefined): string | null => {
-    if (!agentId) return null;
-    const cached = sessionByAgentRef.current.get(agentId);
-    if (cached) return cached;
-    const stored = loadSessionId(agentId);
-    if (stored) sessionByAgentRef.current.set(agentId, stored);
-    return stored;
-  }, []);
+  const getCurrentSessionId = useCallback((): string => sessionIdRef.current, []);
 
-  /** 写入指定 agent 的 sessionId 到内存 map 与 localStorage。 */
-  const setSessionForAgent = useCallback((agentId: string | null | undefined, sessionId: string | null) => {
-    if (!agentId) return;
-    const sid = sessionId?.trim() ?? '';
-    if (sid) {
-      sessionByAgentRef.current.set(agentId, sid);
-      saveSessionId(agentId, sid);
-    } else {
-      sessionByAgentRef.current.delete(agentId);
-      saveSessionId(agentId, null);
-    }
-  }, []);
-
-  const getCurrentSessionId = useCallback((): string | null => {
-    return getSessionForAgent(persistAgentKeyRef.current);
-  }, [getSessionForAgent]);
-
-  /**
-   * 读取指定 agent 的 sessionId；不存在则现场生成并持久化。
-   * 后端已不再生成 sessionId，因此（重）连接前必须保证本地已有一个。
-   */
-  const ensureSessionForAgent = useCallback(
-    (agentId: string | null | undefined): string | null => {
-      if (!agentId) return null;
-      const existing = getSessionForAgent(agentId);
-      if (existing) return existing;
-      const sid = genSessionId();
-      setSessionForAgent(agentId, sid);
-      return sid;
-    },
-    [getSessionForAgent, setSessionForAgent],
-  );
-
-  /** 将 connected 收到的 sessionId 写入当前 agent 的 map 条目。 */
-  const applySessionId = useCallback(
-    (incoming: string) => {
-      const agentId = persistAgentKeyRef.current;
-      const sid = incoming.trim();
-      if (!sid) return;
-      if (!agentId) {
-        console.warn('[Finclaw WS] sessionId received but persistAgentKey is null:', sid);
-        return;
-      }
-      setSessionForAgent(agentId, sid);
-      console.log('[Finclaw WS] sessionId persisted:', sid, 'agentId=', agentId);
-    },
-    [setSessionForAgent],
-  );
-
-  /** 将指定 agent（默认当前）的 sessionId 刷入 localStorage。 */
-  const persistSessionId = useCallback((agentIdOverride?: string | null) => {
-    const agentId = agentIdOverride ?? persistAgentKeyRef.current;
-    if (!agentId) return;
-    const sid = sessionByAgentRef.current.get(agentId);
-    if (sid) saveSessionId(agentId, sid);
+  const notifyStateChange = useCallback(() => {
+    onStateChangeRef.current?.();
   }, []);
 
   /** 开启一次思考任务：写入起始时间戳并持久化，刷新后可恢复。 */
   const beginTask = useCallback((opts?: { forceNew?: boolean }) => {
-    const agentId = persistAgentKeyRef.current;
+    const aid = agentIdRef.current;
+    const sid = sessionIdRef.current;
     if (!opts?.forceNew) {
       let resumed = taskStartedAtRef.current;
-      if (resumed == null && agentId) resumed = loadTaskStart(agentId);
+      if (resumed == null && aid && sid) resumed = loadTaskStart(aid, sid);
       if (resumed != null) {
         taskStartedAtRef.current = resumed;
         setTaskStartedAt(resumed);
@@ -361,26 +340,26 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     taskStartedAtRef.current = now;
     setTaskStartedAt(now);
     setCompletedTaskElapsedSec(null);
-    if (agentId) {
-      saveTaskStart(agentId, now);
-      saveLastTaskElapsed(agentId, null);
+    if (aid && sid) {
+      saveTaskStart(aid, sid, now);
+      saveLastTaskElapsed(aid, sid, null);
     }
   }, []);
 
   /** 关闭当前思考任务并清除持久化值。 */
   const endTask = useCallback(() => {
+    const aid = agentIdRef.current;
+    const sid = sessionIdRef.current;
     const start = taskStartedAtRef.current;
-    if (start != null) {
+    if (start != null && aid && sid) {
       const elapsed = Math.max(0, Math.floor((Date.now() - start) / 1000));
       setCompletedTaskElapsedSec(elapsed);
-      if (persistAgentKeyRef.current) {
-        saveLastTaskElapsed(persistAgentKeyRef.current, elapsed);
-      }
+      saveLastTaskElapsed(aid, sid, elapsed);
     }
     taskStartedAtRef.current = null;
     setTaskStartedAt(null);
-    if (persistAgentKeyRef.current) {
-      saveTaskStart(persistAgentKeyRef.current, null);
+    if (aid && sid) {
+      saveTaskStart(aid, sid, null);
     }
   }, []);
 
@@ -448,7 +427,12 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   }, []);
 
   const handleIncoming = useCallback((msg: WSMessage) => {
-    lastActivityRef.current = Date.now();
+    if (msg.type !== 'ping') {
+      lastActivityRef.current = Date.now();
+    }
+    if (isBusinessIncoming(msg)) {
+      lastBusinessActivityRef.current = Date.now();
+    }
     // 收到任何服务端消息 → 连接存活，清除发送确认超时
     clearSendConfirm();
     const clearTypingFallback = () => {
@@ -469,13 +453,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     switch (msg.type) {
       case 'connected': {
         const incoming = extractConnectedSessionId(msg);
-        if (incoming) {
-          applySessionId(incoming);
-        } else if (!getCurrentSessionId() && persistAgentKeyRef.current) {
-          const stored = loadSessionId(persistAgentKeyRef.current);
-          if (stored) applySessionId(stored);
-        }
-        console.log('[Finclaw WS] SessionID set to:', getCurrentSessionId());
+        console.log('[Finclaw WS] Connected, sessionId=', incoming ?? sessionIdRef.current);
         break;
       }
 
@@ -507,14 +485,25 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
           console.log('[Finclaw WS] Skipping echoed user message mislabeled as assistant:', content.slice(0, 64));
           break;
         }
-        const incoming = parseWsChatMessage(msg, content, role === 'user' ? 'user' : 'assistant');
-        const fromCache = (msg as any).from_cache === true;
+        if (isPicoclawSlashCommandNoise(content, role === 'user' ? 'user' : 'assistant')) {
+          console.log('[Finclaw WS] Skipping picoclaw slash command noise:', content.slice(0, 64));
+          break;
+        }
         const messageKind =
           typeof msg.payload?.message_kind === 'string' ? msg.payload.message_kind : undefined;
         const inProgress =
           messageKind === 'reasoning' ||
           isPicoclawToolFeedbackContent(content) ||
           isAssistantThoughtOnlyContent(content);
+        if (
+          role !== 'user' &&
+          shouldDropAssistantInbound(messagesRef.current, content, role, inProgress)
+        ) {
+          console.log('[Finclaw WS] Dropping assistant noise after reply:', content.slice(0, 64));
+          break;
+        }
+        const incoming = parseWsChatMessage(msg, content, role === 'user' ? 'user' : 'assistant');
+        const fromCache = (msg as any).from_cache === true;
 
         if (fromCache) {
           cacheInboxRef.current.push({ incoming, role, inProgress });
@@ -529,6 +518,17 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
                 let next = prev;
                 let changed = false;
                 for (const item of batch) {
+                  if (
+                    item.role !== 'user' &&
+                    shouldDropAssistantInbound(
+                      next,
+                      item.incoming.content,
+                      item.role,
+                      item.inProgress,
+                    )
+                  ) {
+                    continue;
+                  }
                   const updated = upsertChatMessage(next, item.incoming);
                   if (updated !== next) changed = true;
                   next = updated;
@@ -554,8 +554,9 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
                   }
                 }
 
-                const agentId = persistAgentKeyRef.current;
-                if (agentId) saveDraft(agentId, next);
+                const aid = agentIdRef.current;
+                const sid = sessionIdRef.current;
+                if (aid && sid) saveDraft(aid, sid, next);
 
                 console.log('[Finclaw WS] cache batch applied:', {
                   count: batch.length,
@@ -581,8 +582,9 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
               clearTypingFallback();
               setIsTyping(false);
               endTask();
-              const agentId = persistAgentKeyRef.current;
-              if (agentId && changed) saveDraft(agentId, next);
+              const aid = agentIdRef.current;
+              const sid = sessionIdRef.current;
+              if (aid && sid && changed) saveDraft(aid, sid, next);
             } else if (changed) {
               if (inProgress) {
                 setIsTyping(true);
@@ -659,7 +661,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         break;
       }
     }
-  }, [beginTask, endTask, applySessionId, getCurrentSessionId, clearSendConfirm, commitMessages]);
+  }, [beginTask, endTask, clearSendConfirm, commitMessages, notifyStateChange]);
 
   const connect = useCallback(() => {
     const target = urlRef.current;
@@ -684,9 +686,9 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       // sessionId 由前端持有：不存在则现场生成。后端不再兜底生成，
       // 因此每次（重）连接都必须带上 sessionId，保证会话连续性。
       let wsUrl = target;
-      const agentId = persistAgentKeyRef.current;
-      const sid = ensureSessionForAgent(agentId);
-      if (sid && agentId) {
+      const aid = agentIdRef.current;
+      const sid = sessionIdRef.current.trim();
+      if (sid && aid) {
         const sep = wsUrl.includes('?') ? '&' : '?';
         wsUrl = `${wsUrl}${sep}sessionId=${encodeURIComponent(sid)}`;
       }
@@ -695,20 +697,13 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         const sep = wsUrl.includes('?') ? '&' : '?';
         wsUrl = `${wsUrl}${sep}token=${encodeURIComponent(token)}`;
       }
-      // 诊断：dump localStorage 中的 agent bucket 内容
-      try { console.log('[Finclaw WS] connect: bucket=', JSON.parse(localStorage.getItem('finclaw.chat.v1') || '{}').agents?.[persistAgentKeyRef.current || '']); } catch {}
-      console.log('[Finclaw WS] connect(): creating WebSocket, sid=', sid, 'agentId=', agentId, 'urlHasSid=', wsUrl.includes('sessionId='), 'sessions=', loadSessionMap());
+      console.log('[Finclaw WS] connect(): creating WebSocket, sid=', sid, 'agentId=', aid);
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
-      // 必须最先注册 onmessage：connected 可能在 onopen 之前到达；sessionId 落盘不依赖 mountedRef
       ws.onmessage = (ev) => {
         try {
           const msg: WSMessage = JSON.parse(ev.data as string);
-          if (msg.type === 'connected') {
-            const sidFromConnected = extractConnectedSessionId(msg);
-            if (sidFromConnected) applySessionId(sidFromConnected);
-          }
           if (!mountedRef.current) return;
           handleIncoming(msg);
         } catch {
@@ -719,6 +714,10 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       ws.onopen = () => {
         connectingRef.current = false;
         wsEverOpenedRef.current = true;
+        idleRecycledRef.current = false;
+        const now = Date.now();
+        lastActivityRef.current = now;
+        lastBusinessActivityRef.current = now;
         console.log('[Finclaw WS] onopen, mounted=', mountedRef.current);
         if (!mountedRef.current) return;
         reconnectCountRef.current = 0;
@@ -730,11 +729,17 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
 
       ws.onclose = (ev) => {
         connectingRef.current = false;
-        console.log('[Finclaw WS] onclose, code=', ev.code, 'mounted=', mountedRef.current);
+        console.log('[Finclaw WS] onclose, code=', ev.code, 'reason=', ev.reason, 'mounted=', mountedRef.current);
         if (!mountedRef.current) return;
         if (pingTimerRef.current) {
           clearInterval(pingTimerRef.current);
           pingTimerRef.current = null;
+        }
+        if (ev.reason?.includes('idle_recycle') || idleRecycledRef.current) {
+          idleRecycledRef.current = true;
+          setStatus('idle');
+          onIdleRecycleRef.current?.();
+          return;
         }
         // Detect token expiration from close reason
         if (ev.reason && ev.reason.toLowerCase().includes('invalid or expired token')) {
@@ -808,14 +813,14 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       }
       setStatus('error');
     }
-  }, [startPing, handleIncoming, applySessionId, ensureSessionForAgent]);
+  }, [startPing, handleIncoming]);
 
   const connectRef = useRef(connect);
   connectRef.current = connect;
   const resetRef = useRef(reset);
   resetRef.current = reset;
 
-  const clearMessages = useCallback((opts?: { startNewSession?: boolean }) => {
+  const clearMessages = useCallback(() => {
     if (typingFallbackRef.current) {
       clearTimeout(typingFallbackRef.current);
       typingFallbackRef.current = null;
@@ -824,30 +829,18 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     setIsTyping(false);
     messagesRef.current = [];
     setMessages([]);
-    if (persistAgentKey) {
-      if (opts?.startNewSession) {
-        // 新对话：立即生成一个新的 sessionId 并重连，让后端绑定到全新会话
-        // （后端按连接绑定 session，必须重连新会话才会生效）。
-        setSessionForAgent(persistAgentKey, genSessionId());
-      } else {
-        setSessionForAgent(persistAgentKey, null);
-      }
-    }
     endTask();
     setCompletedTaskElapsedSec(null);
-    if (persistAgentKey) {
-      clearDraft(persistAgentKey);
-      saveLastTaskElapsed(persistAgentKey, null);
+    const aid = agentIdRef.current;
+    const sid = sessionIdRef.current;
+    if (aid && sid) {
+      clearDraft(aid, sid);
+      saveLastTaskElapsed(aid, sid, null);
     }
-    if (opts?.startNewSession) {
-      reconnectCountRef.current = 0;
-      reset();
-      connect();
-    }
-  }, [persistAgentKey, endTask, setSessionForAgent, clearSendConfirm, reset, connect]);
+  }, [endTask, clearSendConfirm]);
 
   const restoreMessages = useCallback(
-    (msgs: ChatMessage[], sessionId?: string | null) => {
+    (msgs: ChatMessage[]) => {
       if (typingFallbackRef.current) {
         clearTimeout(typingFallbackRef.current);
         typingFallbackRef.current = null;
@@ -859,37 +852,51 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       const folded = prepareStoredChatMessages(msgs);
       messagesRef.current = folded;
       setMessages(folded);
-      if (persistAgentKey) {
-        saveDraft(persistAgentKey, folded);
-        // 切换到该归档自己的 sessionId（旧归档无此字段则生成全新的），
-        // 避免继续复用「最新会话」的 session，让后端缓存串台到历史窗口。
-        const sid = sessionId?.trim() || genSessionId();
-        const prevSid = getSessionForAgent(persistAgentKey);
-        setSessionForAgent(persistAgentKey, sid);
-        // 仅当 session 真的变化时才重连：重连让后端连接重新绑定到该 session，
-        // 否则刷新前的旧连接仍按 prevSid 推送 / from_cache 补发。
-        if (sid !== prevSid) {
-          reconnectCountRef.current = 0;
-          reset();
-          connect();
-        }
+      const aid = agentIdRef.current;
+      const sid = sessionIdRef.current;
+      if (aid && sid) {
+        saveDraft(aid, sid, folded);
       }
     },
-    [persistAgentKey, endTask, clearSendConfirm, getSessionForAgent, setSessionForAgent, reset, connect],
+    [endTask, clearSendConfirm],
   );
 
   const reconnect = useCallback(() => {
     clearMobileProbe();
     reconnectCountRef.current = 0;
-    setIsTyping(false);
-    // Restore sessionId from localStorage so reconnect can pull cached messages
-    if (persistAgentKey) {
-      const sid = getSessionForAgent(persistAgentKey);
-      if (sid) setSessionForAgent(persistAgentKey, sid);
-    }
+    idleRecycledRef.current = false;
     reset();
     connect();
-  }, [clearMobileProbe, reset, connect, persistAgentKey, getSessionForAgent, setSessionForAgent]);
+  }, [clearMobileProbe, reset, connect]);
+
+  const recycleIdleConnection = useCallback(() => {
+    if (idleRecycledRef.current) return;
+    idleRecycledRef.current = true;
+    console.log(
+      '[Finclaw WS] Recycling idle connection (no business traffic for',
+      IDLE_RECYCLE_MS / 60_000,
+      'min), session=',
+      sessionIdRef.current,
+    );
+    if (pingTimerRef.current) {
+      clearInterval(pingTimerRef.current);
+      pingTimerRef.current = null;
+    }
+    const ws = wsRef.current;
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+      try {
+        ws.close(1000, 'idle_recycle');
+      } catch {
+        reset();
+        setStatus('idle');
+        onIdleRecycleRef.current?.();
+      }
+    } else {
+      reset();
+      setStatus('idle');
+      onIdleRecycleRef.current?.();
+    }
+  }, [reset]);
 
   /**
    * 移动端：不信任 readyState===OPEN，发 ping 后若在窗口内收不到任何服务端帧则重连。
@@ -951,6 +958,20 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     return () => clearInterval(timer);
   }, [reconnect]);
 
+  // 业务空闲回收：10 分钟内无用户消息/后端回复（ping、pong 不计）则关闭 WS，不重连
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      if (lastBusinessActivityRef.current === 0) return;
+      const idle = Date.now() - lastBusinessActivityRef.current;
+      if (idle >= IDLE_RECYCLE_MS) {
+        recycleIdleConnection();
+      }
+    }, IDLE_RECYCLE_CHECK_MS);
+    return () => clearInterval(timer);
+  }, [recycleIdleConnection]);
+
   const send = useCallback(
     (content: string, media?: string[]) => {
       const ws = wsRef.current;
@@ -960,6 +981,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       }
 
       setSendError(null);
+      lastBusinessActivityRef.current = Date.now();
 
       const mediaList = (media ?? []).filter((m) => typeof m === 'string' && m.trim());
       const slashCommand = normalizeSlashInput(content).trim();
@@ -967,27 +989,34 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
 
       if (isClearCommand) {
         clearMessages();
-      } else {
-        // 即时添加到本地消息列表，保证用户看到自己的消息（含本地图片预览）
-        const id = genId();
-        const attachments =
-          mediaList.length > 0
-            ? mediaList.map((dataUrl, i) => ({
-                type: 'image' as const,
-                url: dataUrl,
-                filename: `image-${i + 1}`,
-              }))
-            : undefined;
-        setMessages((prev) =>
-          commitMessages(
-            foldChatMessages([...prev, { id, role: 'user', content, timestamp: new Date(), attachments }]),
-          ),
+        ws.send(
+          JSON.stringify({
+            type: 'message.send',
+            id: genId(),
+            session_id: getCurrentSessionId(),
+            payload: { content: '/clear' },
+          }),
         );
-        flushDraftNow();
+        return;
       }
-      // 元宝式：发出后即显示「正在思考」，不依赖服务端 typing_start
+
+      // 即时添加到本地消息列表，保证用户看到自己的消息（含本地图片预览）
+      const id = genId();
+      const attachments =
+        mediaList.length > 0
+          ? mediaList.map((dataUrl, i) => ({
+              type: 'image' as const,
+              url: dataUrl,
+              filename: `image-${i + 1}`,
+            }))
+          : undefined;
+      setMessages((prev) =>
+        commitMessages(
+          foldChatMessages([...prev, { id, role: 'user', content, timestamp: new Date(), attachments }]),
+        ),
+      );
+      flushDraftNow();
       setIsTyping(true);
-      // 用户发送即视为新任务开始，记录起点并持久化（覆盖之前可能残留的值）
       beginTask({ forceNew: true });
       if (typingFallbackRef.current) {
         clearTimeout(typingFallbackRef.current);
@@ -997,19 +1026,15 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         setIsTyping(false);
       }, TYPING_FALLBACK_MS);
 
-      persistSessionId();
-
       const msg = {
         type: 'message.send',
         id: genId(),
-        session_id: getCurrentSessionId() || undefined,
+        session_id: getCurrentSessionId(),
         payload: mediaList.length > 0 ? { content, media: mediaList } : { content },
       };
       console.log('[Finclaw WS] Sending:', JSON.stringify(msg));
       ws.send(JSON.stringify(msg));
 
-      // 发送确认超时：如果在 SEND_CONFIRM_TIMEOUT 内没收到任何服务端响应，
-      // 判定连接已死（幽灵连接），主动重连。
       clearSendConfirm();
       sendConfirmTimerRef.current = setTimeout(() => {
         sendConfirmTimerRef.current = null;
@@ -1017,7 +1042,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         reconnect();
       }, SEND_CONFIRM_TIMEOUT);
     },
-    [beginTask, applySessionId, getCurrentSessionId, reconnect, clearSendConfirm, clearMessages, flushDraftNow],
+    [beginTask, getCurrentSessionId, reconnect, clearSendConfirm, clearMessages, flushDraftNow],
   );
 
   const stop = useCallback(() => {
@@ -1030,31 +1055,27 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     endTask();
   }, [endTask, clearSendConfirm]);
 
-  // url 变更或挂载/卸载时：重置连接；若有 persistAgentKey 则从本地恢复该 Agent 草稿
+  // url / agent / session 变更或挂载/卸载时：重置连接并从该 session 的草稿恢复
   useEffect(() => {
     mountedRef.current = true;
     urlRef.current = url;
-    const agentId = persistAgentKey;
-    if (agentId) {
-      const sid = loadSessionId(agentId);
-      if (sid) sessionByAgentRef.current.set(agentId, sid);
-    }
-    const restoredSid = agentId ? getSessionForAgent(agentId) : null;
+    const aid = agentId;
+    const sid = sessionId;
+    const restored = aid && sid && url ? loadDraft(aid, sid) : [];
     reconnectCountRef.current = 0;
     wsEverOpenedRef.current = false;
     pageWasHiddenRef.current = false;
     lastActivityRef.current = 0;
+    lastBusinessActivityRef.current = 0;
+    idleRecycledRef.current = false;
     setSendError(null);
-    console.log('[Finclaw WS] useEffect mount:', { url, agentId, sessionId: restoredSid, sessions: loadSessionMap() });
-    if (persistAgentKey && url) {
-      const restored = loadDraft(persistAgentKey);
+    console.log('[Finclaw WS] useEffect mount:', { url, agentId: aid, sessionId: sid });
+    if (aid && sid && url) {
       const taskState = resolveRestoredTaskState(
         restored,
-        loadTaskStart(persistAgentKey),
-        loadLastTaskElapsed(persistAgentKey),
+        loadTaskStart(aid, sid),
+        loadLastTaskElapsed(aid, sid),
       );
-      // 必须在 connect() 之前同步落盘到 state，否则本地/快速 WS 重连时
-      // from_cache 与实时消息会先写入 []，随后被异步 setMessages(restored) 覆盖而「中断」。
       messagesRef.current = restored;
       flushSync(() => {
         setMessages(restored);
@@ -1064,12 +1085,12 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         setIsTyping(taskState.isTyping);
       });
       if (taskState.persistStartMs != null) {
-        saveTaskStart(persistAgentKey, taskState.persistStartMs);
+        saveTaskStart(aid, sid, taskState.persistStartMs);
       }
       if (taskState.clearPersistedStart) {
-        saveTaskStart(persistAgentKey, null);
+        saveTaskStart(aid, sid, null);
       }
-      if (restored.length > 0) flushDraftNow();
+      if (restored.length > 0) flushDraftNow(aid, sid);
       if (taskState.isTyping) {
         if (typingFallbackRef.current) clearTimeout(typingFallbackRef.current);
         typingFallbackRef.current = setTimeout(() => {
@@ -1085,25 +1106,21 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       });
     }
     resetRef.current();
-    if (url) {
+    if (url && aid && sid) {
       connectRef.current();
     } else {
       setStatus('idle');
     }
     return () => {
-      console.log('[Finclaw WS] useEffect cleanup');
-      // 路由切换 / Agent 切换 / 组件卸载时立即落盘。
-      // 必须用 effect 闭包里的 agentId：cleanup 运行时 persistAgentKeyRef 已指向新 Agent，
-      // 否则会误把旧会话草稿写入新 Agent，导致切换后聊天区不变化。
-      if (agentId) {
-        flushDraftNow(agentId);
-        flushTaskNow(agentId);
-        persistSessionId(agentId);
+      console.log('[Finclaw WS] useEffect cleanup', sid);
+      if (aid && sid) {
+        flushDraftNow(aid, sid);
+        flushTaskNow(aid, sid);
       }
       mountedRef.current = false;
       resetRef.current();
     };
-  }, [url, persistAgentKey, flushDraftNow, persistSessionId, getSessionForAgent]);
+  }, [url, agentId, sessionId, flushDraftNow, flushTaskNow]);
 
   // visibilitychange: when tab becomes visible again, reconnect if connection is dead.
   // 幽灵连接检测：移动端 OS 切后台时会杀死 TCP 但 WebSocket 对象仍显示 OPEN。
@@ -1186,14 +1203,15 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   // 浏览器刷新/关闭前最后一次落盘：React 的 useEffect cleanup 在 F5 时不一定会跑，
   // 这里通过 pagehide / beforeunload 主动保 sessionId 与最新 draft。
   useEffect(() => {
-    if (!persistAgentKey) return;
+    const aid = agentId;
+    const sid = sessionId;
+    if (!aid || !sid) return;
     const flush = () => {
       try {
-        persistSessionId();
-        flushDraftNow();
-        flushTaskNow();
+        flushDraftNow(aid, sid);
+        flushTaskNow(aid, sid);
       } catch {
-        // 忽略 quota / privacy 错误
+        // ignore
       }
     };
     window.addEventListener('pagehide', flush);
@@ -1202,7 +1220,11 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       window.removeEventListener('pagehide', flush);
       window.removeEventListener('beforeunload', flush);
     };
-  }, [persistAgentKey, persistSessionId, flushDraftNow, flushTaskNow]);
+  }, [agentId, sessionId, flushDraftNow, flushTaskNow]);
+
+  useEffect(() => {
+    notifyStateChange();
+  }, [messages, status, isTyping, sendError, taskStartedAt, completedTaskElapsedSec, notifyStateChange]);
 
   return {
     messages,

@@ -20,10 +20,11 @@ import (
 )
 
 type FinChannelConfig struct {
-	ReadTimeout  time.Duration `toml:"readTimeout"`  // in seconds，默认60s，当客户端持续一段时间未发送消息时，会关闭连接
-	PingInterval time.Duration `toml:"pingInterval"` // in seconds，默认30s，用户探活
-	WriteWait    time.Duration `toml:"writeWait"`    // in seconds，默认10s，写超时，防止慢客户端阻塞
-	MaxConn      int           `toml:"maxConn"`      // 最大连接数，默认1000
+	ReadTimeout         time.Duration `toml:"readTimeout"`         // in seconds，默认60s，当客户端持续一段时间未发送消息时，会关闭连接
+	PingInterval        time.Duration `toml:"pingInterval"`        // in seconds，默认30s，用户探活
+	WriteWait           time.Duration `toml:"writeWait"`           // in seconds，默认10s，写超时，防止慢客户端阻塞
+	MaxConn             int           `toml:"maxConn"`             // 最大连接数，默认1000
+	IdleRecycleTimeout  time.Duration `toml:"idleRecycleTimeout"`  // in seconds，默认600s；无用户消息/后端回复（ping/pong 除外）则关闭 WS
 }
 
 func (config *FinChannelConfig) getReadTimeout() time.Duration {
@@ -52,6 +53,13 @@ func (config *FinChannelConfig) getMaxConn() int {
 		return 1000
 	}
 	return config.MaxConn
+}
+
+func (config *FinChannelConfig) getIdleRecycleTimeout() time.Duration {
+	if config.IdleRecycleTimeout <= 0 {
+		return 10 * time.Minute
+	}
+	return config.IdleRecycleTimeout * time.Second
 }
 
 type FinClawChannel struct {
@@ -123,7 +131,7 @@ func (fchannel *FinClawChannel) clearSessionBuffer(sessionID string) {
 }
 
 // flushSessionBuffer sends all cached messages to a reconnecting client.
-// After successful delivery, the buffer is cleared to avoid re-delivery.
+// Only removes messages that were successfully delivered.
 func (fchannel *FinClawChannel) flushSessionBuffer(sessionID string, fconn *finConn) {
 	buf := fchannel.getSessionBuffer(sessionID)
 	cached := buf.GetAll()
@@ -137,6 +145,7 @@ func (fchannel *FinClawChannel) flushSessionBuffer(sessionID string, fconn *finC
 		"conn_id":    fconn.id,
 	})
 
+	delivered := 0
 	for _, msg := range cached {
 		payload := map[string]any{
 			"content": msg.Content,
@@ -162,10 +171,16 @@ func (fchannel *FinClawChannel) flushSessionBuffer(sessionID string, fconn *finC
 			})
 			break
 		}
+		fconn.touchBusinessActivity()
+		delivered++
 	}
 
-	// Clear buffer after flush (messages either delivered or lost)
-	fchannel.clearSessionBuffer(sessionID)
+	if delivered > 0 {
+		buf.DropFirst(delivered)
+	}
+	if delivered == len(cached) {
+		fchannel.clearSessionBuffer(sessionID)
+	}
 }
 
 // handleWebSocket upgrades the HTTP connection and manages the WebSocket lifecycle.
@@ -270,8 +285,8 @@ func (fchannel *FinClawChannel) readLoop(fconn *finConn) {
 	}()
 
 	fconn.SetReadDeadline(fchannel.config.getReadTimeout())
-	// Start ping ticker
 	go fconn.pingLoop(fchannel.config.getPingInterval(), fchannel.Ctx.Done())
+	go fconn.idleRecycleLoop(fchannel.config.getIdleRecycleTimeout(), fchannel.Ctx.Done())
 
 	for {
 		select {
@@ -359,6 +374,7 @@ func (fchannel *FinClawChannel) handleMessage(fconn *finConn, msg FinMessage) {
 			"conn_id":    fconn.id,
 			"session_id": msg.SessionID,
 		})
+		fconn.touchBusinessActivity()
 		fchannel.handleMessageSend(fconn, msg)
 
 	default:
@@ -479,6 +495,23 @@ func (fchannel *FinClawChannel) isMisroutedUserEcho(sessionID, content string, m
 	return recent != "" && recent == trimmed
 }
 
+// isPicoclawSlashCommandAck 过滤 picoclaw slash 命令的确认回复，避免写入 session 缓存并在重连时重放。
+func isPicoclawSlashCommandAck(content string) bool {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return false
+	}
+	switch trimmed {
+	case "Chat history cleared!", "No active task to stop.", "Task stopped. Current task was canceled.":
+		return true
+	}
+	if strings.HasPrefix(trimmed, "Failed to clear chat history:") ||
+		strings.HasPrefix(trimmed, "Failed to stop task:") {
+		return true
+	}
+	return strings.HasPrefix(trimmed, "Task stopped. ") && strings.HasSuffix(trimmed, " was canceled.")
+}
+
 // republishMisroutedInbound 将 picoclaw steering drain 误发到 outbound 的用户消息重新入队到 inbound。
 func (fchannel *FinClawChannel) republishMisroutedInbound(sessionID string, agentMsg bus.OutboundMessage) {
 	if fchannel.msgBus == nil {
@@ -543,6 +576,9 @@ func (fchannel *FinClawChannel) ProcessAgentMessage(outbound <-chan bus.Outbound
 			fchannel.republishMisroutedInbound(sessionId, agentMsg)
 			continue
 		}
+		if isPicoclawSlashCommandAck(agentMsg.Content) {
+			continue
+		}
 		fchannel.connsMu.RLock()
 		conns := fchannel.sessionConns[sessionId]
 		fchannel.connsMu.RUnlock()
@@ -562,20 +598,19 @@ func (fchannel *FinClawChannel) ProcessAgentMessage(outbound <-chan bus.Outbound
 			"payload": payload,
 		}
 
-		// 异步发送给所有订阅该 session 的客户端，一个慢客户端不 block 消息循环
+		// 按 bus 出队顺序同步写入，避免 goroutine 抢锁导致过程/正文乱序到达前端。
 		for _, fconn := range conns {
-			go func(conn *finConn) {
-				if err := conn.writeJson(response); err != nil {
-					logger.WarnCF("fin", "Failed to deliver message to client, closing connection", map[string]any{
-						"conn_id":    conn.id,
-						"session_id": sessionId,
-						"error":      err.Error(),
-					})
-					conn.sendCloseFrame()
-					conn.close()
-					fchannel.removeConnection(conn.id)
-				}
-			}(fconn)
+			fconn.touchBusinessActivity()
+			if err := fconn.writeJson(response); err != nil {
+				logger.WarnCF("fin", "Failed to deliver message to client, closing connection", map[string]any{
+					"conn_id":    fconn.id,
+					"session_id": sessionId,
+					"error":      err.Error(),
+				})
+				fconn.sendCloseFrame()
+				fconn.close()
+				fchannel.removeConnection(fconn.id)
+			}
 		}
 
 		// Also cache the message so it can be delivered to reconnecting clients
@@ -602,15 +637,14 @@ func (fchannel *FinClawChannel) broadcastTypingFrame(sessionID string, frameType
 
 	frame := map[string]any{"type": frameType}
 	for _, fconn := range conns {
-		go func(conn *finConn) {
-			if err := conn.writeJson(frame); err != nil {
-				logger.DebugCF("fin", "Failed to deliver typing frame", map[string]any{
-					"conn_id":    conn.id,
-					"session_id": sessionID,
-					"error":      err.Error(),
-				})
-			}
-		}(fconn)
+		fconn.touchBusinessActivity()
+		if err := fconn.writeJson(frame); err != nil {
+			logger.DebugCF("fin", "Failed to deliver typing frame", map[string]any{
+				"conn_id":    fconn.id,
+				"session_id": sessionID,
+				"error":      err.Error(),
+			})
+		}
 	}
 }
 
@@ -702,18 +736,17 @@ func (fchannel *FinClawChannel) SendMedia(ctx context.Context, msg bus.OutboundM
 	fchannel.connsMu.RUnlock()
 
 	for _, fconn := range conns {
-		go func(conn *finConn) {
-			if err := conn.writeJson(response); err != nil {
-				logger.WarnCF("fin", "Failed to deliver media to client, closing connection", map[string]any{
-					"conn_id":    conn.id,
-					"session_id": sessionID,
-					"error":      err.Error(),
-				})
-				conn.sendCloseFrame()
-				conn.close()
-				fchannel.removeConnection(conn.id)
-			}
-		}(fconn)
+		fconn.touchBusinessActivity()
+		if err := fconn.writeJson(response); err != nil {
+			logger.WarnCF("fin", "Failed to deliver media to client, closing connection", map[string]any{
+				"conn_id":    fconn.id,
+				"session_id": sessionID,
+				"error":      err.Error(),
+			})
+			fconn.sendCloseFrame()
+			fconn.close()
+			fchannel.removeConnection(fconn.id)
+		}
 	}
 
 	fchannel.getSessionBuffer(sessionID).Push(&CachedMessage{

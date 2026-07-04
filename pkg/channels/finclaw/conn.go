@@ -25,7 +25,7 @@ type CachedMessage struct {
 
 // SessionBuffer is a ring buffer that stores recent messages for a session.
 type SessionBuffer struct {
-	mu      sync.Mutex
+	mu       sync.Mutex
 	messages []*CachedMessage
 	head     int
 	size     int

@@ -39,10 +39,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
-  archiveConversation,
   deleteArchived,
   listArchived,
-  persistedToMessages,
   type ArchivedChat,
 } from '@/lib/chatPersistence';
 import { prefetchModels } from '@/api/models';
@@ -73,12 +71,11 @@ export default function ChatPage() {
     isTyping,
     sendError,
     send,
-    clearMessages,
-    restoreMessages,
-    getSessionId,
     reconnect,
     taskStartedAt,
     completedTaskElapsedSec,
+    startNewChat,
+    restoreArchivedChat,
   } = useChatSession();
 
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -275,20 +272,16 @@ export default function ChatPage() {
   const bumpHistory = useCallback(() => setHistoryRev((n) => n + 1), []);
 
   const handleArchiveAndClear = useCallback(() => {
-    if (currentAgent && messages.length > 0) {
-      // 归档时记录当前会话的 sessionId，恢复时据此切回，避免缓存串台
-      archiveConversation(currentAgent, messages, getSessionId());
-      bumpHistory();
-    }
-    clearMessages({ startNewSession: true });
-  }, [currentAgent, messages, clearMessages, bumpHistory, getSessionId]);
+    startNewChat(messages);
+    if (messages.length > 0) bumpHistory();
+  }, [messages, startNewChat, bumpHistory]);
 
   const handleRestoreArchive = useCallback(
     (item: ArchivedChat) => {
-      restoreMessages(persistedToMessages(item.messages), item.sessionId ?? null);
+      restoreArchivedChat(item);
       setHistoryOpen(false);
     },
-    [restoreMessages],
+    [restoreArchivedChat],
   );
 
   const handleDeleteArchive = useCallback(
@@ -301,9 +294,8 @@ export default function ChatPage() {
   );
 
   const handleNewChat = useCallback(() => {
-    if (messages.length > 0) handleArchiveAndClear();
-    else clearMessages({ startNewSession: true });
-  }, [messages.length, handleArchiveAndClear, clearMessages]);
+    handleArchiveAndClear();
+  }, [handleArchiveAndClear]);
 
   const noAgents = agents.length === 0 && agentsLoadStatus === 'ready';
 
