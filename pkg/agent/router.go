@@ -22,14 +22,16 @@ type AgentManagerRouter struct {
 	agentManager   *AgentManager
 	r              *gin.Engine
 	authMiddleware gin.HandlerFunc
+	authStore      *auth.Store
 }
 
-func NewAgentManagerRouter(agentManager *AgentManager, r *gin.Engine, authMiddleware gin.HandlerFunc) *AgentManagerRouter {
-	return &AgentManagerRouter{agentManager: agentManager, r: r, authMiddleware: authMiddleware}
+func NewAgentManagerRouter(agentManager *AgentManager, r *gin.Engine, authMiddleware gin.HandlerFunc, authStore *auth.Store) *AgentManagerRouter {
+	return &AgentManagerRouter{agentManager: agentManager, r: r, authMiddleware: authMiddleware, authStore: authStore}
 }
 
 func (ar *AgentManagerRouter) ConfigRouter() {
 	group := ar.r.Group("/api/v1/agents", ar.authMiddleware)
+	group.POST("/:name/share", ar.createAssetShare)
 	group.GET("/:name/skills", ar.getAgentSkills)
 	group.DELETE("/:name/skills", ar.deleteSkill)
 	group.GET("/:name/skills/dir", ar.listSkillDir)
@@ -1240,6 +1242,56 @@ func renderDocErr(c *gin.Context, err error) {
 	default:
 		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
 	}
+}
+
+type createAssetShareReq struct {
+	Kind     string `json:"kind" binding:"required"`
+	Path     string `json:"path"`
+	Source   string `json:"source,omitempty"`
+	SkillDir string `json:"skill_dir,omitempty"`
+}
+
+type createAssetShareResp struct {
+	Token string `json:"token"`
+	URL   string `json:"url"`
+}
+
+// POST /api/v1/agents/:name/share — create a public share link for a doc or skill asset.
+func (ar *AgentManagerRouter) createAssetShare(c *gin.Context) {
+	userID := getUserID(c)
+	name := c.Param("name")
+	workspace, err := ar.resolveAgentWorkspace(userID, name)
+	if err != nil {
+		ginx.NewRender(c, http.StatusNotFound).Err(err)
+		return
+	}
+	var req createAssetShareReq
+	ginx.PanicIfNotNil(c.ShouldBindJSON(&req))
+	if err := ValidateShareAsset(workspace, req.Kind, req.Path, req.Source, req.SkillDir); err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+		return
+	}
+	share, err := ar.authStore.CreateAssetShare(&auth.AssetShare{
+		UserID:    userID,
+		AgentName: name,
+		Kind:      req.Kind,
+		Path:      req.Path,
+		Source:    req.Source,
+		SkillDir:  req.SkillDir,
+	})
+	if err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+		return
+	}
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+	if forwarded := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")); forwarded != "" {
+		scheme = strings.Split(forwarded, ",")[0]
+	}
+	url := fmt.Sprintf("%s://%s/share/%s", scheme, c.Request.Host, share.Token)
+	ginx.NewRender(c, http.StatusCreated).Data(createAssetShareResp{Token: share.Token, URL: url})
 }
 
 // Ensure config import is used (for FinclawHomePath in non-user contexts).

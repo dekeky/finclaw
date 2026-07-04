@@ -23,3 +23,17 @@ type EmailVerificationCode struct {
 }
 
 func (EmailVerificationCode) TableName() string { return "email_verification_codes" }
+
+// AssetShare is a public link to an agent document or skill asset.
+type AssetShare struct {
+	Token     string    `gorm:"primaryKey;size:64" json:"token"`
+	UserID    string    `gorm:"index;not null;size:64" json:"user_id"`
+	AgentName string    `gorm:"not null;size:128" json:"agent_name"`
+	Kind      string    `gorm:"not null;size:16" json:"kind"`
+	Path      string    `gorm:"not null;default:''" json:"path,omitempty"`
+	Source    string    `gorm:"size:32;default:''" json:"source,omitempty"`
+	SkillDir  string    `gorm:"size:128;default:''" json:"skill_dir,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (AssetShare) TableName() string { return "asset_shares" }

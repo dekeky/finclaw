@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { IconX, IconFileDescription, IconRefresh, IconLoader2, IconPencil, IconDeviceFloppy, IconList, IconDownload } from '@tabler/icons-react';
+import { IconX, IconFileDescription, IconRefresh, IconLoader2, IconPencil, IconDeviceFloppy, IconList, IconDownload, IconLink } from '@tabler/icons-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { DocTocSidebar, DocTocOverlay } from '@/components/DocTocSidebar';
@@ -515,6 +515,8 @@ interface DocReadingPanelProps {
   loadContent?: (agentName: string, filePath: string) => Promise<string>;
   /** 提供则显示「编辑」按钮，保存时调用。 */
   onSave?: (content: string) => Promise<void>;
+  /** 提供则显示「分享」按钮，点击时调用。 */
+  onShare?: () => void;
   /** 文档目录侧边栏默认是否折叠（无本地记录时生效）。 */
   defaultTocCollapsed?: boolean;
   /** 目录折叠状态的 localStorage key。 */
@@ -527,6 +529,7 @@ export function DocReadingPanel({
   onClose,
   loadContent,
   onSave,
+  onShare,
   defaultTocCollapsed,
   tocStorageKey,
 }: DocReadingPanelProps) {
@@ -888,6 +891,17 @@ export function DocReadingPanel({
               >
                 <IconList className="size-3.5" />
                 目录
+              </button>
+            )}
+            {!loading && !error && savedContent !== null && onShare && (
+              <button
+                type="button"
+                className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                onClick={onShare}
+                title="复制分享链接"
+                aria-label="复制分享链接"
+              >
+                <IconLink className="size-3.5" />
               </button>
             )}
             {!loading && !error && savedContent !== null && (

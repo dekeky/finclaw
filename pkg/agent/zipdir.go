@@ -102,6 +102,11 @@ func zipDownloadFilename(baseName string) string {
 	return safe + ".zip"
 }
 
+// AttachmentContentDisposition builds a Content-Disposition header with RFC 5987 UTF-8 filename*.
+func AttachmentContentDisposition(filename string) string {
+	return attachmentContentDisposition(filename)
+}
+
 // attachmentContentDisposition builds a Content-Disposition header with RFC 5987 UTF-8 filename*.
 func attachmentContentDisposition(filename string) string {
 	filename = strings.TrimSpace(filename)

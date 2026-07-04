@@ -22,6 +22,8 @@ interface DocFileTreeProps {
   onDelete?: (fullPath: string, isDir: boolean) => boolean | void | Promise<boolean | void>;
   /** 提供则在文件行显示下载按钮。 */
   onDownload?: (fullPath: string, isDir: boolean) => void;
+  /** 提供则在文件行显示分享按钮（文件夹不支持分享）。 */
+  onShare?: (fullPath: string, isDir: boolean) => void;
 }
 
 function sortFiles(files: DocFileEntry[]): DocFileEntry[] {
@@ -31,7 +33,7 @@ function sortFiles(files: DocFileEntry[]): DocFileEntry[] {
   });
 }
 
-export function DocFileTree({ agentName, refreshRev, onFileSelect, selectedDocPath, hideHeader, onDelete, onDownload }: DocFileTreeProps) {
+export function DocFileTree({ agentName, refreshRev, onFileSelect, selectedDocPath, hideHeader, onDelete, onDownload, onShare }: DocFileTreeProps) {
   const [treeCache, setTreeCache] = useState<Map<string, DocFileEntry[]>>(new Map());
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => loadExpandedDirs(agentName));
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
@@ -206,6 +208,7 @@ export function DocFileTree({ agentName, refreshRev, onFileSelect, selectedDocPa
               onRetryDir={fetchDir}
               onDelete={handleDelete}
               onDownload={onDownload}
+              onShare={onShare}
             />
           </div>
         )}
@@ -227,6 +230,7 @@ interface DirectoryNodeProps {
   onRetryDir: (dirPath: string) => void;
   onDelete?: (fullPath: string, isDir: boolean) => boolean | void | Promise<boolean | void>;
   onDownload?: (fullPath: string, isDir: boolean) => void;
+  onShare?: (fullPath: string, isDir: boolean) => void;
 }
 
 function DirectoryNode({
@@ -242,6 +246,7 @@ function DirectoryNode({
   onRetryDir,
   onDelete,
   onDownload,
+  onShare,
 }: DirectoryNodeProps) {
   const sorted = sortFiles(entries);
 
@@ -271,6 +276,7 @@ function DirectoryNode({
               onRetryDir={onRetryDir}
               onDelete={onDelete}
               onDownload={onDownload}
+              onShare={onShare}
             />
           );
         }
@@ -283,6 +289,7 @@ function DirectoryNode({
             selected={selectedDocPath === fullPath}
             title={fullPath}
             onClick={() => onFileSelect(fullPath)}
+            onShare={onShare ? () => onShare(fullPath, false) : undefined}
             onDownload={onDownload ? () => onDownload(fullPath, false) : undefined}
             onDelete={onDelete ? () => onDelete(fullPath, false) : undefined}
           />
@@ -310,6 +317,7 @@ interface DirItemProps {
   onRetryDir: (dirPath: string) => void;
   onDelete?: (fullPath: string, isDir: boolean) => boolean | void | Promise<boolean | void>;
   onDownload?: (fullPath: string, isDir: boolean) => void;
+  onShare?: (fullPath: string, isDir: boolean) => void;
 }
 
 function DirItem({
@@ -330,6 +338,7 @@ function DirItem({
   onRetryDir,
   onDelete,
   onDownload,
+  onShare,
 }: DirItemProps) {
   return (
     <Collapsible open={expanded} onOpenChange={onOpenChange}>
@@ -373,6 +382,7 @@ function DirItem({
             onRetryDir={onRetryDir}
             onDelete={onDelete}
             onDownload={onDownload}
+            onShare={onShare}
           />
         ) : null}
       </CollapsibleContent>

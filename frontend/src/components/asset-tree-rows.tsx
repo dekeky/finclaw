@@ -68,10 +68,12 @@ export function AssetTreeFileRow({
   title,
   meta,
   onClick,
+  onShare,
   onDownload,
   onDelete,
   deleteTitle = '删除文件',
   downloadTitle = '下载文件',
+  shareTitle = '复制分享链接',
 }: {
   name: string;
   depth: number;
@@ -79,20 +81,24 @@ export function AssetTreeFileRow({
   title?: string;
   meta?: string;
   onClick?: () => void;
+  onShare?: () => void;
   onDownload?: () => void;
   onDelete?: () => void;
   deleteTitle?: string;
   downloadTitle?: string;
+  shareTitle?: string;
 }) {
   return (
     <RowShell
       actions={
         <TreeRowActions
           meta={meta}
+          onShare={onShare}
           onDownload={onDownload}
           onDelete={onDelete}
           deleteTitle={deleteTitle}
           downloadTitle={downloadTitle}
+          shareTitle={shareTitle}
         />
       }
     >
@@ -116,7 +122,7 @@ export function AssetTreeFileRow({
   );
 }
 
-/** 目录行外壳：左侧 CollapsibleTrigger，右侧操作区。 */
+/** 目录行外壳：左侧 CollapsibleTrigger，右侧操作区（目录不支持分享）。 */
 export function AssetTreeDirRow({
   trigger,
   meta,

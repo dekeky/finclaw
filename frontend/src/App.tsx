@@ -11,6 +11,7 @@ const BacktestPage = lazy(() => import('./pages/BacktestPage'));
 const ChatPage = lazy(() => import('./pages/ChatPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const NewsPage = lazy(() => import('./pages/NewsPage'));
+const SharePage = lazy(() => import('./pages/SharePage'));
 const WeixinPage = lazy(() => import('./pages/WeixinPage'));
 
 function AuthLoading() {
@@ -52,6 +53,7 @@ export default function App() {
       <Suspense fallback={<PageFallback />}>
         <Routes>
           <Route path="/login" element={<GuestOnly><LoginPage /></GuestOnly>} />
+          <Route path="/share/:token" element={<SharePage />} />
           <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
             <Route path="/" element={<Navigate to="/chat" replace />} />
             <Route path="/chat" element={<ChatPage />} />

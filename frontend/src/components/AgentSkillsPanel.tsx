@@ -82,6 +82,7 @@ interface AgentSkillsPanelProps {
     skillName: string,
   ) => void;
   onDownloadSkillPath?: (source: string, skill: string, relPath: string) => void;
+  onShareSkillPath?: (source: string, skill: string, relPath: string, isDir?: boolean) => void;
   refreshRev?: number;
 }
 
@@ -98,6 +99,7 @@ interface OpenCtx {
     skillName: string,
   ) => void;
   onDownloadSkillPath?: (source: string, skill: string, relPath: string) => void;
+  onShareSkillPath?: (source: string, skill: string, relPath: string, isDir?: boolean) => void;
   refreshRev?: number;
 }
 
@@ -124,6 +126,16 @@ function makeDownloadPathHandler(
   if (!ctx.onDownloadSkillPath) return undefined;
   const dir = skill.dir || skill.name;
   return () => ctx.onDownloadSkillPath!(skill.source, dir, relPath);
+}
+
+function makeSharePathHandler(
+  ctx: OpenCtx,
+  skill: AgentSkillItem,
+  relPath: string,
+): (() => void) | undefined {
+  if (!ctx.onShareSkillPath) return undefined;
+  const dir = skill.dir || skill.name;
+  return () => ctx.onShareSkillPath!(skill.source, dir, relPath, false);
 }
 
 function makeDeletePathHandler(
@@ -235,6 +247,8 @@ function SkillDirNode({
             selected={isSelected(ctx, skill, fullPath)}
             title={`${skill.name}/${fullPath}`}
             onClick={makeOpen(ctx, skill, fullPath)}
+            onShare={makeSharePathHandler(ctx, skill, fullPath)}
+            onDownload={makeDownloadPathHandler(ctx, skill, fullPath)}
             onDelete={makeDeletePathHandler(ctx, skill, fullPath, false, onRefetchTree)}
           />
         );
@@ -545,6 +559,7 @@ export function AgentSkillsPanel({
   onDeleteSkill,
   onDeleteSkillPath,
   onDownloadSkillPath,
+  onShareSkillPath,
   refreshRev,
 }: AgentSkillsPanelProps) {
   const [loading, setLoading] = useState(false);
@@ -582,9 +597,10 @@ export function AgentSkillsPanel({
       onDeleteSkill,
       onDeleteSkillPath,
       onDownloadSkillPath,
+      onShareSkillPath,
       refreshRev,
     }),
-    [agentName, onOpenFile, activeFileKey, onDeleteSkill, onDeleteSkillPath, onDownloadSkillPath, refreshRev],
+    [agentName, onOpenFile, activeFileKey, onDeleteSkill, onDeleteSkillPath, onDownloadSkillPath, onShareSkillPath, refreshRev],
   );
 
   return (

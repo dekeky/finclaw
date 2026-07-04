@@ -29,6 +29,7 @@ import {
 import { ModelSwitcherMenu } from '@/components/ModelSwitcherMenu';
 import { AgentPersonaEditor } from '../components/AgentPersonaEditor';
 import { AgentSkillsPanel, skillFileKey, type SkillFileTarget } from '../components/AgentSkillsPanel';
+import { createAgentAssetShare } from '../api/agentAssets';
 import { DocReadingPanel } from '../components/DocReadingPanel';
 import { uploadAgentToMarket, generateMarketSummary } from '../api/agentMarket';
 import { useNavigationGuard } from '../state/navigationGuard';
@@ -41,6 +42,7 @@ import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { cn } from '@/lib/cn';
+import { toast } from 'sonner';
 import { PRIMARY_BUTTON_CLASS, PRIMARY_LIST_ITEM_SELECTED_CLASS, PRIMARY_TAB_ACTIVE_CLASS, PRIMARY_TAB_INACTIVE_HOVER_CLASS, PRIMARY_AI_PANEL_CLASS, PRIMARY_AI_PANEL_HOVER_CLASS, PRIMARY_ICON_GRADIENT_CLASS } from '@/lib/primaryButton';
 
 type FormState = { name: string };
@@ -305,6 +307,29 @@ export default function AgentsPage() {
         await downloadAgentSkillPath(detailName, source, skill, relPath);
       } catch (err) {
         window.alert(err instanceof Error ? err.message : '下载失败');
+      }
+    },
+    [detailName],
+  );
+
+  const handleShareSkillPath = useCallback(
+    async (source: string, skill: string, relPath: string, isDir?: boolean) => {
+      if (!detailName) return;
+      if (isDir || !relPath.trim()) {
+        toast.error('暂不支持分享文件夹');
+        return;
+      }
+      try {
+        const { url } = await createAgentAssetShare(detailName, {
+          kind: 'skill',
+          source,
+          skill_dir: skill,
+          path: relPath,
+        });
+        await navigator.clipboard.writeText(url);
+        toast.success('分享链接已复制到剪贴板');
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : '创建分享失败');
       }
     },
     [detailName],
@@ -645,19 +670,22 @@ export default function AgentsPage() {
                   onDirtyChange={setPersonaDirty}
                 />
               ) : detailTab === 'skills' ? (
-                <AgentSkillsPanel
-                  key={detailName}
-                  agentName={detailName}
-                  className="min-h-0 flex-1"
-                  onOpenFile={setSkillFile}
-                  activeFileKey={
-                    skillFile ? skillFileKey(skillFile.source, skillFile.skill, skillFile.file) : null
-                  }
-                  onDeleteSkill={handleDeleteSkill}
-                  onDeleteSkillPath={handleDeleteSkillPath}
-                  onDownloadSkillPath={handleDownloadSkillPath}
-                  refreshRev={skillsRefreshRev}
-                />
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <AgentSkillsPanel
+                    key={detailName}
+                    agentName={detailName}
+                    className="min-h-0 flex-1"
+                    onOpenFile={setSkillFile}
+                    activeFileKey={
+                      skillFile ? skillFileKey(skillFile.source, skillFile.skill, skillFile.file) : null
+                    }
+                    onDeleteSkill={handleDeleteSkill}
+                    onDeleteSkillPath={handleDeleteSkillPath}
+                    onDownloadSkillPath={handleDownloadSkillPath}
+                    onShareSkillPath={handleShareSkillPath}
+                    refreshRev={skillsRefreshRev}
+                  />
+                </div>
               ) : (
                 <ScrollArea className="flex-1">
                   <div className="max-w-3xl p-4 md:p-5">
@@ -698,6 +726,9 @@ export default function AgentsPage() {
           loadContent={loadSkillContent}
           onClose={() => setSkillFile(null)}
           onSave={saveSkillContent}
+          onShare={() =>
+            void handleShareSkillPath(skillFile.source, skillFile.skill, skillFile.file)
+          }
         />
       )}
 

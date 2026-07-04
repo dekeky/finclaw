@@ -303,6 +303,21 @@ func skillRootForSource(workspace, source string) (string, error) {
 	}
 }
 
+// ValidateSkillSegment rejects empty, relative or nested path segments.
+func ValidateSkillSegment(seg string) error {
+	return validateSkillSegment(seg)
+}
+
+// ValidateSkillRelPath rejects empty or traversal skill-relative paths.
+func ValidateSkillRelPath(name string) error {
+	return validateSkillRelPath(name)
+}
+
+// SkillDirWithinRoot resolves and confines a skill directory to its source root.
+func SkillDirWithinRoot(workspace, source, skillDir string) (string, error) {
+	return skillDirWithinRoot(workspace, source, skillDir)
+}
+
 // validateSkillSegment rejects empty, relative or nested path segments.
 func validateSkillSegment(seg string) error {
 	seg = strings.TrimSpace(seg)
@@ -528,6 +543,25 @@ func DeleteSkillPath(workspace, source, skillDir, relPath string) error {
 		return os.RemoveAll(path)
 	}
 	return os.Remove(path)
+}
+
+// ResolveSkillPath returns the absolute path for a file or directory inside a skill package.
+// relPath empty means the skill package root directory.
+func ResolveSkillPath(workspace, source, skillDir, relPath string) (string, error) {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return "", errWorkspaceRequired()
+	}
+	if err := validateSkillSegment(skillDir); err != nil {
+		return "", err
+	}
+	relPath = strings.TrimSpace(relPath)
+	if relPath != "" {
+		if err := validateSkillRelPath(relPath); err != nil {
+			return "", err
+		}
+	}
+	return skillRelPathWithinRoot(workspace, source, skillDir, relPath)
 }
 
 // ResolveSkillDownloadPath returns the absolute directory path for a skill folder download.
