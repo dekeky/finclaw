@@ -22,6 +22,7 @@ import {
 } from '../api/agents';
 import { writeAgentDocFile, deleteAgentDocPath, downloadAgentDocFile } from '../api/agentDocs';
 import { createAgentAssetShare } from '../api/agentAssets';
+import { copyToClipboard } from '../lib/clipboard';
 import { messageTouchesDocScanRoot } from '../lib/agentDocRoots';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -236,7 +237,7 @@ export default function ChatPage() {
     }
     try {
       const { url } = await createAgentAssetShare(currentAgent, { kind: 'doc', path: fullPath });
-      await navigator.clipboard.writeText(url);
+      await copyToClipboard(url);
       toast.success('分享链接已复制到剪贴板');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '创建分享失败');
@@ -257,7 +258,7 @@ export default function ChatPage() {
           skill_dir: skill,
           path: relPath,
         });
-        await navigator.clipboard.writeText(url);
+        await copyToClipboard(url);
         toast.success('分享链接已复制到剪贴板');
       } catch (err) {
         toast.error(err instanceof Error ? err.message : '创建分享失败');

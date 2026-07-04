@@ -5,6 +5,8 @@ import { cn } from '@/lib/cn';
 
 /** 与文档/Skills 树行右侧操作区同宽，保证操作图标纵向对齐。 */
 export const TREE_ACTION_COL_CLASS = 'w-[5.25rem]';
+/** RowShell 网格第二列宽度，须与 TREE_ACTION_COL_CLASS 一致。 */
+export const TREE_ACTION_GRID_COL_CLASS = 'grid-cols-[minmax(0,1fr)_5.25rem]';
 
 const actionBtnClass =
   'flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground';

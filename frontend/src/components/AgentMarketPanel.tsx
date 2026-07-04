@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { IconArrowLeft, IconRefresh, IconDownload, IconPackage, IconFileDescription } from '@tabler/icons-react';
 import {
-  listMarketCategories,
   listMarketTemplates,
   getMarketTemplate,
   getMarketTemplateFile,
@@ -9,7 +8,6 @@ import {
   type InstallTemplateRequest,
   type MarketTemplate,
   type MarketTemplateDetail,
-  type MarketCategory,
 } from '../api/agentMarket';
 import { AgentCreateDialog } from './AgentCreateDialog';
 import {
@@ -18,7 +16,6 @@ import {
 } from './AgentModelSetupSection';
 import { MarketFileTree } from './MarketFileTree';
 import { DocReadingPanel } from './DocReadingPanel';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -26,6 +23,7 @@ import { cn } from '@/lib/cn';
 import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 
 const LAST_MODEL_KEY = 'finclaw.market.lastModelProfile';
+const MARKET_CATEGORY = 'picoclaw';
 
 type InstallForm = { name: string };
 const EMPTY_INSTALL: InstallForm = { name: '' };
@@ -120,8 +118,6 @@ export function AgentMarketPanel({
   search: searchProp,
   onSearchChange,
 }: AgentMarketPanelProps) {
-  const [categories, setCategories] = useState<MarketCategory[]>([]);
-  const [activeCategory, setActiveCategory] = useState<string>('picoclaw');
   const [templates, setTemplates] = useState<MarketTemplate[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -147,11 +143,11 @@ export function AgentMarketPanel({
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
 
-  const loadTemplates = useCallback(async (category: string) => {
+  const loadTemplates = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const list = await listMarketTemplates(category || undefined);
+      const list = await listMarketTemplates(MARKET_CATEGORY);
       setTemplates(list);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -162,14 +158,8 @@ export function AgentMarketPanel({
   }, []);
 
   useEffect(() => {
-    listMarketCategories()
-      .then(setCategories)
-      .catch(() => setCategories([]));
-  }, []);
-
-  useEffect(() => {
-    void loadTemplates(activeCategory);
-  }, [activeCategory, loadTemplates]);
+    void loadTemplates();
+  }, [loadTemplates]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -304,37 +294,6 @@ export function AgentMarketPanel({
   );
 
   const searchQuery = search.trim();
-  const categoryPills = (
-    <>
-      <button
-        type="button"
-        onClick={() => setActiveCategory('')}
-        className={cn(
-          'shrink-0 rounded-full border px-3 py-1 text-xs transition-colors',
-          activeCategory === ''
-            ? 'border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-300'
-            : 'border-border bg-muted/40 text-muted-foreground hover:bg-muted',
-        )}
-      >
-        全部
-      </button>
-      {categories.map((cat) => (
-        <button
-          key={cat.id}
-          type="button"
-          onClick={() => setActiveCategory(cat.id)}
-          className={cn(
-            'shrink-0 rounded-full border px-3 py-1 text-xs transition-colors',
-            activeCategory === cat.id
-              ? 'border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-300'
-              : 'border-border bg-muted/40 text-muted-foreground hover:bg-muted',
-          )}
-        >
-          {cat.label || cat.id}
-        </button>
-      ))}
-    </>
-  );
 
   return (
     <>
@@ -346,33 +305,28 @@ export function AgentMarketPanel({
         {!searchInHeader && (
           <div className="relative mb-3">
             <Input
-              placeholder="搜索模板名称、描述或分类…"
+              placeholder="搜索模板名称或描述…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="h-9 w-full text-sm"
             />
           </div>
         )}
-        <div className="flex items-center gap-3">
-          <div className="min-w-0 flex-1 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <div className="flex w-max items-center gap-2">{categoryPills}</div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {!loading && !error && (
-              <span className="hidden text-[11px] tabular-nums text-muted-foreground sm:inline">
-                {searchQuery ? `找到 ${filtered.length} 个` : `共 ${filtered.length} 个`}
-              </span>
-            )}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8 shrink-0"
-              onClick={() => void loadTemplates(activeCategory)}
-              aria-label="刷新模板列表"
-            >
-              <IconRefresh className="size-4" stroke={1.75} />
-            </Button>
-          </div>
+        <div className="flex items-center justify-end gap-2">
+          {!loading && !error && (
+            <span className="text-[11px] tabular-nums text-muted-foreground">
+              {searchQuery ? `找到 ${filtered.length} 个` : `共 ${filtered.length} 个`}
+            </span>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            onClick={() => void loadTemplates()}
+            aria-label="刷新模板列表"
+          >
+            <IconRefresh className="size-4" stroke={1.75} />
+          </Button>
         </div>
       </div>
 
@@ -393,7 +347,7 @@ export function AgentMarketPanel({
                   <p className="text-sm text-foreground">
                     没有找到与「<span className="font-medium text-violet-600 dark:text-violet-300">{searchQuery}</span>」相关的模板
                   </p>
-                  <p className="mt-2 text-xs text-muted-foreground">试试更短的关键词，或切换上方分类浏览</p>
+                  <p className="mt-2 text-xs text-muted-foreground">试试更短的关键词</p>
                   <Button
                     type="button"
                     variant="outline"
@@ -423,9 +377,6 @@ export function AgentMarketPanel({
                     <span className="line-clamp-2 text-sm font-medium leading-snug text-foreground">
                       {tpl.displayName || tpl.agentName}
                     </span>
-                    <Badge variant="outline" className="shrink-0 text-[10px]">
-                      {tpl.category}
-                    </Badge>
                   </div>
                   <p className="line-clamp-3 text-xs leading-relaxed text-muted-foreground">
                     {tpl.summary || '暂无描述'}
@@ -455,9 +406,6 @@ export function AgentMarketPanel({
                 <span className="truncate text-sm font-semibold text-foreground">
                   {selected.displayName || selected.agentName}
                 </span>
-                <Badge variant="outline" className="h-5 shrink-0 text-[10px]">
-                  {selected.category}
-                </Badge>
                 {versions.length > 1 ? (
                   <select
                     value={version}

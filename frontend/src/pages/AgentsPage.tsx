@@ -30,6 +30,7 @@ import { ModelSwitcherMenu } from '@/components/ModelSwitcherMenu';
 import { AgentPersonaEditor } from '../components/AgentPersonaEditor';
 import { AgentSkillsPanel, skillFileKey, type SkillFileTarget } from '../components/AgentSkillsPanel';
 import { createAgentAssetShare } from '../api/agentAssets';
+import { copyToClipboard } from '../lib/clipboard';
 import { DocReadingPanel } from '../components/DocReadingPanel';
 import { uploadAgentToMarket, generateMarketSummary } from '../api/agentMarket';
 import { useNavigationGuard } from '../state/navigationGuard';
@@ -143,7 +144,7 @@ export default function AgentsPage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [showUploadToken, setShowUploadToken] = useState(false);
-  const [uploadForm, setUploadForm] = useState({ displayName: '', summary: '', category: 'picoclaw', uploadToken: '' });
+  const [uploadForm, setUploadForm] = useState({ displayName: '', summary: '', uploadToken: '' });
   const [summaryPolishOpen, setSummaryPolishOpen] = useState(false);
   const [summaryPolishPrompt, setSummaryPolishPrompt] = useState('');
   const [summaryPolishing, setSummaryPolishing] = useState(false);
@@ -326,7 +327,7 @@ export default function AgentsPage() {
           skill_dir: skill,
           path: relPath,
         });
-        await navigator.clipboard.writeText(url);
+        await copyToClipboard(url);
         toast.success('分享链接已复制到剪贴板');
       } catch (err) {
         toast.error(err instanceof Error ? err.message : '创建分享失败');
@@ -426,7 +427,7 @@ export default function AgentsPage() {
 
   const openUploadDialog = useCallback(() => {
     if (!detailName) return;
-    setUploadForm({ displayName: detailName, summary: '', category: 'picoclaw', uploadToken: loadCachedUploadToken() });
+    setUploadForm({ displayName: detailName, summary: '', uploadToken: loadCachedUploadToken() });
     setUploadError(null);
     setUploadSuccess(false);
     setShowUploadToken(false);
@@ -464,7 +465,7 @@ export default function AgentsPage() {
         agentName: detailName,
         displayName: uploadForm.displayName.trim() || undefined,
         summary: uploadForm.summary.trim() || undefined,
-        category: uploadForm.category || undefined,
+        category: 'picoclaw',
         uploadToken: uploadForm.uploadToken.trim() || undefined,
       });
       setUploadSuccess(true);
@@ -777,9 +778,9 @@ export default function AgentsPage() {
 
             {uploadSuccess ? (
               <div className="mt-4 rounded-lg border border-green-500/30 bg-green-500/10 p-4 text-center">
-                <p className="text-sm font-medium text-green-700 dark:text-green-300">✅ 上传成功！</p>
+                <p className="text-sm font-medium text-green-700 dark:text-green-300">✅ 提交成功！</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  该 Agent 已发布到 AgentHub 市场，其他用户可以搜索并安装。
+                  Agent 已提交至 AgentHub，待管理员审批通过后即可在市场展示，其他用户可搜索并安装。
                 </p>
                 <Button
                   type="button"
@@ -898,18 +899,6 @@ export default function AgentsPage() {
                     rows={3}
                     className="flex w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">分类</label>
-                  <select
-                    value={uploadForm.category}
-                    onChange={(e) => setUploadForm((s) => ({ ...s, category: e.target.value }))}
-                    disabled={uploading}
-                    className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground"
-                  >
-                    <option value="picoclaw">picoclaw</option>
-                    <option value="openclaw">openclaw</option>
-                  </select>
                 </div>
 
                 {uploadError && (

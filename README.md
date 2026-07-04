@@ -1,4 +1,4 @@
-# Finclaw
+# Finclaw · 多 Agent 投研平台
 
 <p align="center">
   <a href="http://159.75.51.78:8082/chat">
@@ -10,6 +10,7 @@
   <a href="http://159.75.51.78:8082/chat"><img src="https://img.shields.io/badge/在线体验-2468f2?style=for-the-badge&logo=googlechrome&logoColor=white" alt="在线体验" /></a>
   <a href="https://github.com/dekeky/finclaw/releases"><img src="https://img.shields.io/badge/下载%20Release-2ea44f?style=for-the-badge&logo=github&logoColor=white" alt="下载 Release" /></a>
   <a href="https://dekeky.github.io/finclaw"><img src="https://img.shields.io/badge/项目主页-1a1a2e?style=for-the-badge&logo=readthedocs&logoColor=white" alt="项目主页" /></a>
+  <a href="https://github.com/dekeky/finclaw"><img src="https://img.shields.io/badge/GitHub-dekeky%2Ffinclaw-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub" /></a>
 </p>
 
 <p align="center">
@@ -18,13 +19,24 @@
   <img src="https://img.shields.io/badge/平台-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square" alt="平台" />
 </p>
 
-> 🤖 **AI × 金融** · 面向金融与投研场景的多 Agent 平台。下载一个可执行文件即可本地运行，自带 Web 控制台；也支持接入微信，在手机上与你的 Agent 对话。
+**Finclaw** 是多 Agent 投研平台——AI 大能镇守你的投研链路。下载一个可执行文件即可本地运行，自带 Web 控制台；也支持接入微信，在手机上与 Agent 对话。
+
+> **灵根**（API Key）一绑，**金丹**（模型）一凝，分出多位 **Agent 化身**，各修一道、共参市场：  
+> 一尊看财报，一尊参市场，一尊算量化……
+>
+> 恭迎道友归队 👉 关注微信公众号 **finclaw实验室**。
+
+<p align="center">
+  <img src="assets/readme/wechat-official-account.jpg" alt="微信公众号 finclaw实验室" width="200" />
+  <br />
+  <sub>扫码关注微信公众号 <strong>finclaw实验室</strong></sub>
+</p>
 
 ---
 
-## ✨ 现已支持
+## ✨ 神通一览
 
-### 💬 对话
+### 💬 问道 · 对话
 
 - ⚡ 流式回复，展示推理过程与工具调用
 - 📝 支持 Markdown、代码高亮、Mermaid 图表与图片附件
@@ -36,16 +48,17 @@
   <img src="assets/readme/chat.jpg" alt="流式对话" width="720" />
 </p>
 
-### 🤖 Agent
+### 🤖 分身 · Agent
 
 - 🎭 创建、管理多个 Agent，自定义头像与人设
 - ✍️ 编辑角色定位、沟通风格与用户偏好；管理 Skills 与工作区文档，支持 AI 辅助生成与润色
+- 📊 各修一道：财报研读、行情跟踪、量化推演……按需分派，协同投研
 
 <p align="center">
   <img src="assets/readme/agent.jpg" alt="Agent 创建与管理" width="720" />
 </p>
 
-### 🏪 Agent 市场
+### 🏪 藏经阁 · Agent 市场
 
 - 已蒸馏多位投资大师的方法论，包括格雷厄姆、巴菲特等，一键安装即可拥有对应风格的投研助手
 - 也欢迎大家沉淀自己的 Agent，上传分享；从市场安装模板后，绑定模型即可开始对话
@@ -54,7 +67,7 @@
   <img src="assets/readme/agent-market.jpg" alt="Agent 市场" width="720" />
 </p>
 
-### 🧠 模型
+### 🧠 凝丹 · 模型
 
 - ⚙️ **模型中心**集中管理 API Key 与模型信息，多个 Agent 可复用同一份配置
 - 🔄 对话页顶栏随时切换当前 Agent 使用的模型
@@ -64,33 +77,34 @@
   <img src="assets/readme/model.jpg" alt="模型中心" width="720" />
 </p>
 
-### 📱 微信
+### 📱 传音 · 微信
 
-- 📲 扫码绑定微信，指定 Agent 自动回复消息
+- 📲 扫码绑定微信，指定 Agent 自动回复消息——分身随身，路上不断线
 
 <p align="center">
   <img src="assets/readme/weixin.jpg" alt="微信绑定" width="720" />
 </p>
 
-### 🔐 账号
+### 🔐 道籍 · 账号
 
-- 📧 支持多租户，邮箱注册 / 登录，每位用户数据相互隔离
+- 📧 支持多租户，邮箱注册 / 登录，每位道友数据相互隔离
 
 <p align="center">
   <img src="assets/readme/account.jpg" alt="多账户登录与数据隔离" width="720" />
 </p>
+
 ---
 
-## 🚀 即将上线
+## 🚀 即将破境 · 未来开发计划
 
-| | 功能 | 说明 |
+| | 神通 | 说明 |
 |:---:|:---|:---|
 | 📰 | **金融资讯** | 行业研报、公司财报、实时热点与要闻，支持行业追踪与 AI 分析 |
 | 📈 | **量化回测** | AI 辅助生成量化策略并完成回测验证 |
 
 ---
 
-## 📦 如何使用
+## 📦 入道指南
 
 ### ⬇️ 1. 下载
 
@@ -130,17 +144,17 @@ chmod +x finclaw
 http://127.0.0.1:8082
 ```
 
-### 🧭 4. 建议上手流程
+### 🧭 4. 飞升流程
 
-| 步骤 | 操作 |
-|:---:|:---|
-| 1️⃣ | **注册并登录** |
-| 2️⃣ | 进入 **模型**，添加你使用的 LLM（如 DeepSeek、OpenAI 兼容接口等），做一次连通性检测 |
-| 3️⃣ | 进入 **Agent**，新建 Agent，或从 **Agent 市场** 安装格雷厄姆、巴菲特等大师模板，并绑定刚配置的模型 |
-| 4️⃣ | 进入 **对话**，选择 Agent 开始聊天 |
-| 5️⃣ | （可选）在 **微信** 页扫码绑定，在微信里与你的 Agent 对话 |
+| 步骤 | 修行 | 操作 |
+|:---:|:---|:---|
+| 1️⃣ | **立籍** | 注册并登录 |
+| 2️⃣ | **绑灵根 · 凝金丹** | 进入 **模型**，添加 LLM（如 DeepSeek、OpenAI 兼容接口等），配置 API Key 并做连通性检测 |
+| 3️⃣ | **分化身** | 进入 **Agent**，新建 Agent，或从 **Agent 市场** 安装格雷厄姆、巴菲特等大师模板，并绑定刚配置的模型 |
+| 4️⃣ | **问道** | 进入 **对话**，选择 Agent 开始问道 |
+| 5️⃣ | **传音随身**（可选） | 在 **微信** 页扫码绑定，在微信里与 Agent 对话 |
 
-### 💾 5. 数据与升级
+### 💾 5. 洞府与升级
 
 - 📁 数据目录：默认 `~/.finclaw`（Windows 为 `C:\Users\<用户名>\.finclaw`）
 - 🔧 可通过环境变量 `FINCLAW_HOME` 指定其他目录
@@ -149,7 +163,7 @@ http://127.0.0.1:8082
 
 ---
 
-## ❓ 常见问题
+## ❓ 渡劫 FAQ
 
 <details>
 <summary><strong>🔌 端口被占用</strong></summary>

@@ -45,7 +45,7 @@ export default function AgentMarketPage() {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜索模板名称、描述或分类…"
+            placeholder="搜索模板名称或描述…"
             className={cn(
               'h-9 w-full border-transparent bg-muted/50 pl-9 text-sm shadow-none transition-colors placeholder:text-muted-foreground/60 focus-visible:border-violet-500/35 focus-visible:bg-background focus-visible:ring-violet-500/25',
               search ? 'pr-9' : 'pr-3',

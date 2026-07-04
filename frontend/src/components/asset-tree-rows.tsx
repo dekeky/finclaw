@@ -1,7 +1,7 @@
 import { IconFileDescription, IconFolder, IconLoader2 } from '@tabler/icons-react';
 import { cn } from '@/lib/cn';
 import { filePaddingLeft, rowPaddingLeft, TreeChevron, TreeChevronSlot } from '@/components/asset-tree-layout';
-import { TreeRowActions, TREE_ACTION_COL_CLASS } from '@/components/TreeRowActions';
+import { TreeRowActions, TREE_ACTION_COL_CLASS, TREE_ACTION_GRID_COL_CLASS } from '@/components/TreeRowActions';
 
 export function isMarkdownFile(name: string): boolean {
   const lower = name.toLowerCase();
@@ -20,7 +20,7 @@ function RowShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="group/row grid w-full min-w-0 grid-cols-[minmax(0,1fr)_4rem] items-center">
+    <div className={cn('group/row grid w-full min-w-0 items-center', TREE_ACTION_GRID_COL_CLASS)}>
       {children}
       {actions ?? <span className={cn(TREE_ACTION_COL_CLASS, 'shrink-0')} aria-hidden />}
     </div>
