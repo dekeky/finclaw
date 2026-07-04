@@ -7,10 +7,8 @@
 </p>
 
 <p align="center">
-  <a href="http://159.75.51.78:8082/chat"><img src="https://img.shields.io/badge/在线体验-2468f2?style=for-the-badge&logo=googlechrome&logoColor=white" alt="在线体验" /></a>
-  <a href="https://github.com/dekeky/finclaw/releases"><img src="https://img.shields.io/badge/下载%20Release-2ea44f?style=for-the-badge&logo=github&logoColor=white" alt="下载 Release" /></a>
-  <a href="https://dekeky.github.io/finclaw"><img src="https://img.shields.io/badge/项目主页-1a1a2e?style=for-the-badge&logo=readthedocs&logoColor=white" alt="项目主页" /></a>
-  <a href="https://github.com/dekeky/finclaw"><img src="https://img.shields.io/badge/GitHub-dekeky%2Ffinclaw-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub" /></a>
+  <a href="http://159.75.51.78:8082/chat" style="display:inline-block;padding:10px 26px;margin:0 8px;background-color:#18181b;color:#fafafa;font-size:15px;font-weight:600;text-decoration:none;border-radius:8px;border:1px solid #18181b;">在线体验</a>
+  <a href="https://dekeky.github.io/finclaw" style="display:inline-block;padding:10px 26px;margin:0 8px;background-color:#fafafa;color:#18181b;font-size:15px;font-weight:600;text-decoration:none;border-radius:8px;border:1px solid #e4e4e7;">项目主页</a>
 </p>
 
 <p align="center">
@@ -19,12 +17,10 @@
   <img src="https://img.shields.io/badge/平台-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square" alt="平台" />
 </p>
 
-**Finclaw** 是多 Agent 投研平台——AI 大能镇守你的投研链路。下载一个可执行文件即可本地运行，自带 Web 控制台；也支持接入微信，在手机上与 Agent 对话。
-
-> **灵根**（API Key）一绑，**金丹**（模型）一凝，分出多位 **Agent 化身**，各修一道、共参市场：  
-> 一尊看财报，一尊参市场，一尊算量化……
->
-> 恭迎道友归队 👉 关注微信公众号 **finclaw实验室**。
+Finclaw — AI+金融多 Agent 投研平台，致力于让投资更智能。
+绑定 灵根（API Key），凝聚 金丹（模型），化身多位 Agent 分身，各修一道、共参市场：
+一尊览财报，一尊观大势，一尊算量化……
+道友，归队的时候到了 👉 关注微信公众号 finclaw实验室
 
 <p align="center">
   <img src="assets/readme/wechat-official-account.jpg" alt="微信公众号 finclaw实验室" width="200" />
