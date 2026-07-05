@@ -50,7 +50,7 @@ function ModelFieldHint() {
   return (
     <p className="mt-1 text-[11px] text-muted-foreground">
       格式为 <span className="font-mono">服务商/模型名</span>，例如{' '}
-      <span className="font-mono">deepseek/deepseek-chat</span>。
+      <span className="font-mono">deepseek/deepseek-v4-flash</span>。
     </p>
   );
 }
@@ -166,7 +166,12 @@ export default function ModelsPage() {
   }, [creating, form, displayNameConflict, detail]);
 
   const applyPreset = (preset: (typeof AGENT_MODEL_PRESETS)[number]) =>
-    setForm((s) => ({ ...s, model: preset.model, apiBase: preset.apiBase }));
+    setForm((s) => ({
+      ...s,
+      model: preset.model,
+      apiBase: preset.apiBase,
+      ...(creating || !s.displayName.trim() ? { displayName: preset.label } : {}),
+    }));
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -374,7 +379,7 @@ export default function ModelsPage() {
                       <Input
                         value={form.model}
                         onChange={(e) => setForm((s) => ({ ...s, model: e.target.value }))}
-                        placeholder="deepseek/deepseek-chat"
+                        placeholder="deepseek/deepseek-v4-flash"
                         className="font-mono text-sm"
                         disabled={submitting}
                       />
