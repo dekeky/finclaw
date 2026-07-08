@@ -13,7 +13,6 @@ import {
   isProcessMessage,
 } from '../utils/foldProcessMessages';
 import { splitAssistantContent } from '../utils/splitAssistantContent';
-import { isAgentMetaNarrationLeak } from '../utils/filterAssistantNoise';
 import { ChatMascot } from './ChatMascot';
 
 const DOCK_QUICK_PROMPTS = [
@@ -64,12 +63,6 @@ export function ChatContainer({
   /** 当前轮次过程由流式面板统一渲染，不在消息列表里重复展示。 */
   function isProcessOutputActive(msg: ChatMessage, index: number): boolean {
     if (readOnly || index <= lastUserIdx) return false;
-
-    // 正文已完成后的迟到过程/自省，不单独展示
-    if (completeReplyIdx >= 0 && index > completeReplyIdx) {
-      if (isProcessMessage(msg)) return true;
-      if (msg.role === 'assistant' && isAgentMetaNarrationLeak(msg.content)) return true;
-    }
 
     if (taskActive) {
       if (isProcessMessage(msg)) return true;

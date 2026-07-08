@@ -27,7 +27,6 @@ import {
   type ProcessActionGroup,
   type ToolIconName,
 } from '../utils/formatProcessDisplay';
-import { isAgentMetaNarrationLeak } from '../utils/filterAssistantNoise';
 import { splitAssistantContent } from '../utils/splitAssistantContent';
 import {
   ElapsedTimeBadge,
@@ -394,6 +393,9 @@ function AgentProcessPanel({
     });
   };
 
+  // 无任何实际过程内容（思考 / 工具）时不渲染空的「工作过程」面板
+  if (actionCount === 0) return null;
+
   return (
     <div className={`${PROCESS_PANEL_SHELL_CLASS} overflow-hidden`}>
       <button
@@ -460,7 +462,6 @@ export function MessageBubble({
   });
 
   const isUser = message.role === 'user';
-  if (!isUser && isAgentMetaNarrationLeak(message.content)) return null;
   const isProcess = !isUser && isProcessMessage(message);
   const isLegacyTool =
     !isUser && !isProcess && (message.kind === 'tool' || isPicoclawToolFeedbackContent(message.content));
@@ -476,6 +477,8 @@ export function MessageBubble({
   if (isProcess || isLegacyTool) {
     if (processOutputActive) return null;
     const segments = isProcess ? getProcessSegments(message) : [{ type: 'tool' as const, content: message.content }];
+    // 过程内容为空时整条消息都不展示，避免出现只有时间戳的空「工作过程」
+    if (groupProcessSegmentsIntoActions(segments).length === 0) return null;
     return (
       <div className="flex min-w-0 w-full flex-col gap-1">
         <AgentProcessPanel
@@ -507,15 +510,14 @@ export function MessageBubble({
           </div>
         ) : (
           <div className="flex w-full flex-col gap-2">
-            {!processOutputActive &&
-              (thought || (taskElapsedCompleted && taskElapsedSeconds !== undefined)) && (
-                <AgentProcessPanel
-                  segments={thought ? [{ type: 'thought', content: thought }] : []}
-                  messageId={`${message.id}-thinking`}
-                  taskElapsedSeconds={taskElapsedSeconds}
-                  completed={taskElapsedCompleted}
-                />
-              )}
+            {!processOutputActive && thought && (
+              <AgentProcessPanel
+                segments={[{ type: 'thought', content: thought }]}
+                messageId={`${message.id}-thinking`}
+                taskElapsedSeconds={taskElapsedSeconds}
+                completed={taskElapsedCompleted}
+              />
+            )}
             {body && (
               <div className="min-w-0 max-w-full overflow-hidden rounded-2xl rounded-tl-sm border border-border/60 bg-card px-4 py-3 text-[15px] leading-relaxed text-foreground">
                 {renderMarkdown(body, '-body')}

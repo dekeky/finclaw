@@ -1,11 +1,21 @@
 import type { ChatMessage, MessageKind, MessageRole, ProcessSegment } from '@/types';
 import { prepareStoredChatMessages } from '@/utils/prepareStoredChatMessages';
+import { genSessionId, loadSessionId, saveSessionId } from '@/lib/agentSessions';
 
-const STORAGE_KEY = 'finclaw.chat.v1';
+/**
+ * 对话持久化 v2：所有对话（包括当前进行中的）统一按 conversationId 存储。
+ *
+ * conversationId 就是该对话的 sessionId；「当前对话」由 agentSessions 中的
+ * agentId -> sessionId 指针决定。切换/恢复历史对话 = 移动指针，不复制消息数组，
+ * 因此结构上不存在「当前对话与历史对话合并」的可能。
+ */
+
+const STORAGE_KEY = 'finclaw.chat.v2';
+const LEGACY_STORAGE_KEY = 'finclaw.chat.v1';
+const LEGACY_SESSION_DRAFT_PREFIX = 'finclaw.chat.session.draft.';
 const TASK_STORAGE_KEY = 'finclaw.chat.task.v1';
-const SESSION_DRAFT_PREFIX = 'finclaw.chat.session.draft.';
-const STORAGE_VERSION = 1 as const;
-const MAX_ARCHIVED_PER_AGENT = 48;
+const STORAGE_VERSION = 2 as const;
+const MAX_CONVERSATIONS_PER_AGENT = 48;
 
 interface AgentTaskState {
   taskStartMs?: number;
@@ -23,38 +33,39 @@ export interface PersistedMessage {
   processSegments?: ProcessSegment[];
 }
 
-export interface ArchivedChat {
+export interface ConversationRecord {
+  /** conversationId == 该对话的 sessionId */
   id: string;
+  agentId: string;
   title: string;
+  createdAt: string;
   updatedAt: string;
-  /**
-   * 归档时所属的会话 sessionId。恢复历史对话时据此把活动会话切回该 session，
-   * 避免复用「最新会话」的 sessionId 导致后端缓存（from_cache）串台到历史窗口。
-   * 旧归档可能没有此字段（恢复时回退为生成全新 sessionId）。
-   */
-  sessionId?: string;
   messages: PersistedMessage[];
 }
 
-interface AgentBucket {
-  draft: PersistedMessage[];
-  archived: ArchivedChat[];
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  updatedAt: string;
+  messageCount: number;
 }
 
 interface PersistRoot {
   v: typeof STORAGE_VERSION;
-  agents: Record<string, AgentBucket>;
+  conversations: Record<string, ConversationRecord>;
 }
 
-function emptyBucket(): AgentBucket {
-  return { draft: [], archived: [] };
+function emptyRoot(): PersistRoot {
+  return { v: STORAGE_VERSION, conversations: {} };
 }
 
 function safeParse(raw: string | null): PersistRoot | null {
   if (!raw) return null;
   try {
     const data = JSON.parse(raw) as PersistRoot;
-    if (data?.v !== STORAGE_VERSION || typeof data.agents !== 'object' || !data.agents) return null;
+    if (data?.v !== STORAGE_VERSION || typeof data.conversations !== 'object' || !data.conversations) {
+      return null;
+    }
     return data;
   } catch {
     return null;
@@ -62,11 +73,11 @@ function safeParse(raw: string | null): PersistRoot | null {
 }
 
 function readRoot(): PersistRoot {
-  if (typeof localStorage === 'undefined') {
-    return { v: STORAGE_VERSION, agents: {} };
-  }
+  if (typeof localStorage === 'undefined') return emptyRoot();
   const parsed = safeParse(localStorage.getItem(STORAGE_KEY));
-  return parsed ?? { v: STORAGE_VERSION, agents: {} };
+  if (parsed) return parsed;
+  const migrated = migrateFromV1();
+  return migrated ?? emptyRoot();
 }
 
 function writeRoot(root: PersistRoot): void {
@@ -77,6 +88,150 @@ function writeRoot(root: PersistRoot): void {
     // quota / private mode — ignore
   }
 }
+
+// ── v1 迁移 ──
+
+interface LegacyArchivedChat {
+  id: string;
+  title?: string;
+  updatedAt?: string;
+  sessionId?: string;
+  messages?: PersistedMessage[];
+}
+
+interface LegacyAgentBucket {
+  draft?: PersistedMessage[];
+  archived?: LegacyArchivedChat[];
+}
+
+function readLegacySessionDraft(agentId: string): PersistedMessage[] {
+  if (typeof sessionStorage === 'undefined') return [];
+  try {
+    const raw = sessionStorage.getItem(`${LEGACY_SESSION_DRAFT_PREFIX}${agentId}`);
+    if (!raw) return [];
+    const rows = JSON.parse(raw) as PersistedMessage[];
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return [];
+  }
+}
+
+function cleanupLegacySessionDrafts(): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    const stale: string[] = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
+      if (key?.startsWith(LEGACY_SESSION_DRAFT_PREFIX)) stale.push(key);
+    }
+    for (const key of stale) sessionStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
+
+function rowsContentLength(rows: PersistedMessage[]): number {
+  return rows.reduce((n, row) => n + row.content.length, 0);
+}
+
+/** 一次性迁移 finclaw.chat.v1（draft/archived 结构）到 v2（统一对话表）。 */
+function migrateFromV1(): PersistRoot | null {
+  if (typeof localStorage === 'undefined') return null;
+  let rawLegacy: string | null = null;
+  try {
+    rawLegacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+  if (!rawLegacy) return null;
+
+  try {
+    const legacy = JSON.parse(rawLegacy) as { v?: number; agents?: Record<string, LegacyAgentBucket> };
+    if (!legacy?.agents || typeof legacy.agents !== 'object') return null;
+
+    // task 字段的旧版迁移依赖 v1 root，先确保它已完成
+    readTaskRoot();
+
+    const conversations: Record<string, ConversationRecord> = {};
+    const now = new Date().toISOString();
+
+    for (const [agentId, bucket] of Object.entries(legacy.agents)) {
+      const archived = Array.isArray(bucket?.archived) ? bucket.archived : [];
+      // v1 archived 列表 newest-first；从旧到新写入，id 冲突时保留较新的
+      for (const entry of [...archived].reverse()) {
+        if (!Array.isArray(entry?.messages) || entry.messages.length === 0) continue;
+        const convId = entry.sessionId?.trim() || entry.id;
+        conversations[convId] = {
+          id: convId,
+          agentId,
+          title: entry.title || inferTitleFromRows(entry.messages),
+          createdAt: entry.updatedAt || now,
+          updatedAt: entry.updatedAt || now,
+          messages: entry.messages,
+        };
+      }
+
+      // v1 的 draft（localStorage）与 session draft（sessionStorage）可能因历史 bug
+      // 分别属于两个不同对话：id 完全不重叠时拆成两条独立对话记录。
+      const localDraft = Array.isArray(bucket?.draft) ? bucket.draft : [];
+      const sessionDraft = readLegacySessionDraft(agentId);
+      const localIds = new Set(localDraft.map((r) => r.id));
+      const disjoint =
+        localDraft.length > 0 &&
+        sessionDraft.length > 0 &&
+        sessionDraft.every((r) => !localIds.has(r.id));
+
+      let activeRows: PersistedMessage[];
+      if (disjoint) {
+        // sessionStorage 那份是本 tab 最后展示的对话 → 作为当前对话；
+        // localStorage 那份是被覆盖失败的另一个对话 → 存成独立历史记录。
+        activeRows = sessionDraft;
+        const orphanId = genSessionId();
+        conversations[orphanId] = {
+          id: orphanId,
+          agentId,
+          title: inferTitleFromRows(localDraft),
+          createdAt: now,
+          updatedAt: now,
+          messages: localDraft,
+        };
+      } else {
+        activeRows =
+          rowsContentLength(localDraft) >= rowsContentLength(sessionDraft) ? localDraft : sessionDraft;
+      }
+
+      if (activeRows.length > 0) {
+        let convId = loadSessionId(agentId);
+        if (!convId) {
+          convId = genSessionId();
+          saveSessionId(agentId, convId);
+        }
+        conversations[convId] = {
+          id: convId,
+          agentId,
+          title: inferTitleFromRows(activeRows),
+          createdAt: conversations[convId]?.createdAt ?? now,
+          updatedAt: now,
+          messages: activeRows,
+        };
+      }
+    }
+
+    const root: PersistRoot = { v: STORAGE_VERSION, conversations };
+    writeRoot(root);
+    try {
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+    cleanupLegacySessionDrafts();
+    return root;
+  } catch {
+    return null;
+  }
+}
+
+// ── task 状态存储（独立 key，按 agent） ──
 
 function readTaskRoot(): TaskRoot {
   if (typeof localStorage === 'undefined') return {};
@@ -100,24 +255,26 @@ function writeTaskRoot(root: TaskRoot): void {
   }
 }
 
-/** 从 finclaw.chat.v1 bucket 迁移 task 字段到独立 key（一次性）。 */
+/** 从 v1 bucket 迁移 task 字段到独立 key（一次性；直接读 legacy key，不依赖 v1 root 结构）。 */
 function migrateLegacyTaskFields(): TaskRoot {
   const migrated: TaskRoot = {};
-  const root = readRoot();
-  for (const [agentId, bucket] of Object.entries(root.agents)) {
-    const legacy = bucket as AgentBucket & Partial<AgentTaskState>;
-    if (legacy.taskStartMs != null || legacy.lastTaskElapsedSec != null) {
-      migrated[agentId] = {
-        taskStartMs: legacy.taskStartMs,
-        lastTaskElapsedSec: legacy.lastTaskElapsedSec,
-      };
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LEGACY_STORAGE_KEY) : null;
+    if (raw) {
+      const root = JSON.parse(raw) as { agents?: Record<string, Partial<AgentTaskState>> };
+      for (const [agentId, bucket] of Object.entries(root?.agents ?? {})) {
+        if (bucket?.taskStartMs != null || bucket?.lastTaskElapsedSec != null) {
+          migrated[agentId] = {
+            taskStartMs: bucket.taskStartMs,
+            lastTaskElapsedSec: bucket.lastTaskElapsedSec,
+          };
+        }
+      }
     }
+  } catch {
+    // ignore corrupt legacy root
   }
-  if (Object.keys(migrated).length > 0) {
-    writeTaskRoot(migrated);
-  } else {
-    writeTaskRoot({});
-  }
+  writeTaskRoot(migrated);
   return migrated;
 }
 
@@ -135,6 +292,8 @@ function patchTaskState(agentId: string, patch: Partial<AgentTaskState>): void {
   writeTaskRoot(root);
 }
 
+// ── 消息序列化 ──
+
 function msgToPersisted(m: ChatMessage): PersistedMessage {
   const row: PersistedMessage = {
     id: m.id,
@@ -147,7 +306,7 @@ function msgToPersisted(m: ChatMessage): PersistedMessage {
   return row;
 }
 
-export function persistedToMessages(rows: PersistedMessage[]): ChatMessage[] {
+function persistedToMessages(rows: PersistedMessage[]): ChatMessage[] {
   return rows.map((m) => ({
     id: m.id,
     role: m.role,
@@ -158,127 +317,18 @@ export function persistedToMessages(rows: PersistedMessage[]): ChatMessage[] {
   }));
 }
 
-function sessionDraftKey(agentId: string): string {
-  return `${SESSION_DRAFT_PREFIX}${agentId}`;
-}
-
-function readSessionDraftRows(agentId: string): PersistedMessage[] {
-  if (typeof sessionStorage === 'undefined') return [];
-  try {
-    const raw = sessionStorage.getItem(sessionDraftKey(agentId));
-    if (!raw) return [];
-    const rows = JSON.parse(raw) as PersistedMessage[];
-    return Array.isArray(rows) ? rows : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeSessionDraftRows(agentId: string, rows: PersistedMessage[]): void {
-  if (typeof sessionStorage === 'undefined') return;
-  try {
-    const key = sessionDraftKey(agentId);
-    if (rows.length === 0) sessionStorage.removeItem(key);
-    else sessionStorage.setItem(key, JSON.stringify(rows));
-  } catch {
-    // quota / private mode — ignore
-  }
-}
-
-function rowsFromPrepared(msgs: ChatMessage[]): PersistedMessage[] {
-  return prepareStoredChatMessages(msgs).map(msgToPersisted);
-}
-
-/** 按 id 合并两份草稿；先折叠再比内容量，避免条数多但未折叠的那份覆盖完整过程。 */
-function mergeDraftRows(a: PersistedMessage[], b: PersistedMessage[]): PersistedMessage[] {
-  if (a.length === 0) return b;
-  if (b.length === 0) return a;
-
-  const rowsA = rowsFromPrepared(persistedToMessages(a));
-  const rowsB = rowsFromPrepared(persistedToMessages(b));
-  const richer = draftContentLength(rowsA) >= draftContentLength(rowsB) ? rowsA : rowsB;
-  const poorer = richer === rowsA ? rowsB : rowsA;
-
-  const byId = new Map<string, PersistedMessage>();
-  for (const row of [...poorer, ...richer]) {
-    const prev = byId.get(row.id);
-    if (!prev || row.content.length >= prev.content.length) {
-      byId.set(row.id, row);
-    }
-  }
-
-  const seen = new Set<string>();
-  const merged: PersistedMessage[] = [];
-  for (const row of richer) {
-    merged.push(byId.get(row.id) ?? row);
-    seen.add(row.id);
-  }
-  for (const row of poorer) {
-    if (!seen.has(row.id)) {
-      merged.push(byId.get(row.id)!);
-      seen.add(row.id);
-    }
-  }
-  return merged;
-}
-
-function draftContentLength(rows: PersistedMessage[]): number {
-  return rows.reduce((n, row) => n + row.content.length, 0);
-}
-
-/**
- * 拒绝明显过期的写回：旧页面 pagehide 与新页面 mount 并发时，
- * 可能用更短的 draft 覆盖刚落盘的完整对话（远程网络慢时更易复现）。
- * 折叠 process 消息会减少条数但内容量不变，因此不能只看 length。
- */
-function isStaleDraftWrite(prev: PersistedMessage[], next: PersistedMessage[]): boolean {
-  if (next.length === 0) return true;
-  if (prev.length === 0) return false;
-  const nextIds = new Set(next.map((r) => r.id));
-  if (prev.every((r) => nextIds.has(r.id))) return false;
-  if (draftContentLength(next) >= draftContentLength(prev)) return false;
-  return next.length <= prev.length;
-}
-
-export function loadDraft(agentId: string): ChatMessage[] {
-  const root = readRoot();
-  const fromLocal = root.agents[agentId]?.draft ?? [];
-  const fromSession = readSessionDraftRows(agentId);
-  const merged = mergeDraftRows(fromLocal, fromSession);
-  if (!merged.length) return [];
-  return prepareStoredChatMessages(persistedToMessages(merged));
-}
-
-export function saveDraft(agentId: string, messages: ChatMessage[]): void {
-  if (messages.length === 0) return;
-  const rows = prepareStoredChatMessages(messages).map(msgToPersisted);
-  writeSessionDraftRows(agentId, rows);
-
-  const root = readRoot();
-  const prev = root.agents[agentId] ?? emptyBucket();
-  const prevDraft = prev.draft ?? [];
-  if (isStaleDraftWrite(prevDraft, rows)) return;
-
-  root.agents[agentId] = {
-    ...prev,
-    draft: rows,
-  };
-  writeRoot(root);
-}
-
-export function clearDraft(agentId: string): void {
-  writeSessionDraftRows(agentId, []);
-  const root = readRoot();
-  const prev = root.agents[agentId];
-  if (!prev) return;
-  root.agents[agentId] = { ...prev, draft: [] };
-  writeRoot(root);
-}
-
 function inferTitle(messages: ChatMessage[]): string {
   const firstUser = messages.find((m) => m.role === 'user');
-  const raw = firstUser?.content?.trim() ?? '';
-  const oneLine = raw.replace(/\s+/g, ' ');
+  return titleFromContent(firstUser?.content);
+}
+
+function inferTitleFromRows(rows: PersistedMessage[]): string {
+  const firstUser = rows.find((m) => m.role === 'user');
+  return titleFromContent(firstUser?.content);
+}
+
+function titleFromContent(raw: string | undefined): string {
+  const oneLine = (raw ?? '').trim().replace(/\s+/g, ' ');
   if (!oneLine) {
     return `对话 · ${new Date().toLocaleString()}`;
   }
@@ -286,45 +336,100 @@ function inferTitle(messages: ChatMessage[]): string {
   return oneLine.length <= max ? oneLine : `${oneLine.slice(0, max).trimEnd()}…`;
 }
 
-export function archiveConversation(
-  agentId: string,
-  messages: ChatMessage[],
-  sessionId?: string | null,
-): void {
-  if (messages.length === 0) return;
+/** 超过上限时淘汰该 agent 最旧的对话（按 updatedAt）。 */
+function pruneAgentConversations(root: PersistRoot, agentId: string): void {
+  const mine = Object.values(root.conversations)
+    .filter((c) => c.agentId === agentId)
+    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+  for (const stale of mine.slice(MAX_CONVERSATIONS_PER_AGENT)) {
+    delete root.conversations[stale.id];
+  }
+}
+
+// ── 对话读写（唯一入口） ──
+
+/** 读取指定对话的消息。 */
+export function loadConversation(convId: string | null | undefined): ChatMessage[] {
+  if (!convId) return [];
+  const rec = readRoot().conversations[convId];
+  if (!rec?.messages?.length) return [];
+  return prepareStoredChatMessages(persistedToMessages(rec.messages));
+}
+
+/** 读取指定 agent 当前活动对话（由 agentSessions 指针决定）的消息。 */
+export function loadActiveConversation(agentId: string): ChatMessage[] {
+  return loadConversation(loadSessionId(agentId));
+}
+
+/** 清空指定对话的消息内容，但保留该条历史记录本身（不删除 conversation 条目）。 */
+export function clearConversationContent(agentId: string, convId: string | null | undefined): void {
+  if (!convId) return;
   const root = readRoot();
-  const prev = root.agents[agentId] ?? emptyBucket();
-  const entry: ArchivedChat = {
-    id: `arch-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-    title: inferTitle(messages),
-    updatedAt: new Date().toISOString(),
-    messages: messages.map(msgToPersisted),
-  };
-  const sid = sessionId?.trim();
-  if (sid) entry.sessionId = sid;
-  const archived = [entry, ...prev.archived].slice(0, MAX_ARCHIVED_PER_AGENT);
-  root.agents[agentId] = {
-    ...prev,
-    archived,
+  const prev = root.conversations[convId];
+  const now = new Date().toISOString();
+  root.conversations[convId] = {
+    id: convId,
+    agentId,
+    title: prev?.title ?? `对话 · ${new Date().toLocaleString()}`,
+    createdAt: prev?.createdAt ?? now,
+    updatedAt: now,
+    messages: [],
   };
   writeRoot(root);
 }
 
-export function listArchived(agentId: string): ArchivedChat[] {
+/** 写入指定对话的消息（对话不存在则创建；每次全量覆盖该对话自己的记录）。 */
+export function saveConversation(
+  agentId: string,
+  convId: string | null | undefined,
+  messages: ChatMessage[],
+): void {
+  if (!convId || messages.length === 0) return;
+  const rows = prepareStoredChatMessages(messages).map(msgToPersisted);
   const root = readRoot();
-  return [...(root.agents[agentId]?.archived ?? [])];
+  const prev = root.conversations[convId];
+  const now = new Date().toISOString();
+  root.conversations[convId] = {
+    id: convId,
+    agentId,
+    title: inferTitle(messages),
+    createdAt: prev?.createdAt ?? now,
+    updatedAt: now,
+    messages: rows,
+  };
+  pruneAgentConversations(root, agentId);
+  writeRoot(root);
 }
 
-export function deleteArchived(agentId: string, archiveId: string): boolean {
+/** 写入指定 agent 当前活动对话的消息。 */
+export function saveActiveConversation(agentId: string, messages: ChatMessage[]): void {
+  saveConversation(agentId, loadSessionId(agentId), messages);
+}
+
+/** 删除指定对话。 */
+export function deleteConversation(convId: string): boolean {
   const root = readRoot();
-  const prev = root.agents[agentId];
-  if (!prev?.archived?.length) return false;
-  const next = prev.archived.filter((a) => a.id !== archiveId);
-  if (next.length === prev.archived.length) return false;
-  root.agents[agentId] = { ...prev, archived: next };
+  if (!root.conversations[convId]) return false;
+  delete root.conversations[convId];
   writeRoot(root);
   return true;
 }
+
+/** 列出指定 agent 的全部对话（含当前对话），按最近更新排序。 */
+export function listConversations(agentId: string): ConversationSummary[] {
+  const root = readRoot();
+  return Object.values(root.conversations)
+    .filter((c) => c.agentId === agentId)
+    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+    .map((c) => ({
+      id: c.id,
+      title: c.title,
+      updatedAt: c.updatedAt,
+      messageCount: c.messages.length,
+    }));
+}
+
+// ── 任务计时状态 ──
 
 /** 读取当前正在进行的思考任务起始时间（ms）；无任务时返回 null。 */
 export function loadTaskStart(agentId: string): number | null {

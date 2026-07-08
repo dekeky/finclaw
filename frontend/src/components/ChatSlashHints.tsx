@@ -3,7 +3,7 @@ import type { KeyboardEvent } from 'react';
 
 export const CHAT_SLASH_COMMANDS = [
   { command: '/stop', description: '中止当前回复' },
-  { command: '/clear', description: '清空对话历史' },
+  { command: '/clear', description: '清空当前对话内容' },
 ] as const;
 
 export type SlashCommand = (typeof CHAT_SLASH_COMMANDS)[number];

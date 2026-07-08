@@ -21,8 +21,6 @@ import {
   downloadAgentSkillPath,
 } from '../api/agents';
 import { writeAgentDocFile, deleteAgentDocPath, downloadAgentDocFile } from '../api/agentDocs';
-import { createAgentAssetShare } from '../api/agentAssets';
-import { copyToClipboard } from '../lib/clipboard';
 import { messageTouchesDocScanRoot } from '../lib/agentDocRoots';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -33,15 +31,15 @@ import { useDocViewer } from '@/state/docViewer';
 import { buildAnalysisUserMessage } from '@/utils/analysisPrompt';
 import { rssScopedItemKey } from '@/utils/rssScopedKey';
 import { Button } from '@/components/ui/button';
-import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
-  deleteArchived,
-  listArchived,
-  type ArchivedChat,
+  deleteConversation,
+  listConversations,
+  loadConversation,
+  type ConversationSummary,
 } from '@/lib/chatPersistence';
 import { prefetchModels } from '@/api/models';
 import { getAgent } from '@/api/agents';
@@ -71,11 +69,12 @@ export default function ChatPage() {
     isTyping,
     sendError,
     send,
+    clearMessages,
+    restoreMessages,
+    getSessionId,
     reconnect,
     taskStartedAt,
     completedTaskElapsedSec,
-    startNewChat,
-    restoreArchivedChat,
   } = useChatSession();
 
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -226,76 +225,44 @@ export default function ChatPage() {
     [currentAgent, skillFile, confirm],
   );
 
-  const handleShareDoc = useCallback(async (fullPath: string, isDir?: boolean) => {
-    if (!currentAgent) return;
-    if (isDir) {
-      toast.error('暂不支持分享文件夹');
-      return;
-    }
-    try {
-      const { url } = await createAgentAssetShare(currentAgent, { kind: 'doc', path: fullPath });
-      await copyToClipboard(url);
-      toast.success('分享链接已复制到剪贴板');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '创建分享失败');
-    }
-  }, [currentAgent]);
-
-  const handleShareSkillPath = useCallback(
-    async (source: string, skill: string, relPath: string, isDir?: boolean) => {
-      if (!currentAgent) return;
-      if (isDir || !relPath.trim()) {
-        toast.error('暂不支持分享文件夹');
-        return;
-      }
-      try {
-        const { url } = await createAgentAssetShare(currentAgent, {
-          kind: 'skill',
-          source,
-          skill_dir: skill,
-          path: relPath,
-        });
-        await copyToClipboard(url);
-        toast.success('分享链接已复制到剪贴板');
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : '创建分享失败');
-      }
-    },
-    [currentAgent],
-  );
-
-  const archivedList = useMemo(() => {
+  // 历史对话列表（含当前对话）：打开面板或数据变更时刷新
+  const conversationList = useMemo(() => {
     if (!currentAgent) return [];
-    return listArchived(currentAgent);
-  }, [currentAgent, historyRev]);
+    return listConversations(currentAgent);
+  }, [currentAgent, historyRev, historyOpen]);
+
+  const activeConversationId = getSessionId();
 
   const bumpHistory = useCallback(() => setHistoryRev((n) => n + 1), []);
 
-  const handleArchiveAndClear = useCallback(() => {
-    startNewChat(messages);
-    if (messages.length > 0) bumpHistory();
-  }, [messages, startNewChat, bumpHistory]);
+  // 新对话：当前对话持续落盘、本身就是历史记录，直接切换到新会话即可
+  const handleNewChat = useCallback(() => {
+    clearMessages({ startNewSession: true });
+    bumpHistory();
+  }, [clearMessages, bumpHistory]);
 
-  const handleRestoreArchive = useCallback(
-    (item: ArchivedChat) => {
-      restoreArchivedChat(item);
+  const handleRestoreConversation = useCallback(
+    (item: ConversationSummary) => {
+      restoreMessages(loadConversation(item.id), item.id);
       setHistoryOpen(false);
     },
-    [restoreArchivedChat],
+    [restoreMessages],
   );
 
-  const handleDeleteArchive = useCallback(
-    (e: MouseEvent, archiveId: string) => {
+  const handleDeleteConversation = useCallback(
+    (e: MouseEvent, convId: string) => {
       e.stopPropagation();
       if (!currentAgent) return;
-      if (deleteArchived(currentAgent, archiveId)) bumpHistory();
+      if (convId === getSessionId()) {
+        // 删除的是当前对话：清空聊天区并丢弃记录，切换到新会话
+        clearMessages({ startNewSession: true, discard: true });
+        bumpHistory();
+        return;
+      }
+      if (deleteConversation(convId)) bumpHistory();
     },
-    [currentAgent, bumpHistory],
+    [currentAgent, bumpHistory, getSessionId, clearMessages],
   );
-
-  const handleNewChat = useCallback(() => {
-    handleArchiveAndClear();
-  }, [handleArchiveAndClear]);
 
   const noAgents = agents.length === 0 && agentsLoadStatus === 'ready';
 
@@ -468,7 +435,6 @@ export default function ChatPage() {
                   hideHeader
                   onDelete={handleDeleteDoc}
                   onDownload={handleDownloadDoc}
-                  onShare={handleShareDoc}
                 />
               ) : (
                 <AgentSkillsPanel
@@ -482,7 +448,6 @@ export default function ChatPage() {
                   onDeleteSkill={handleDeleteSkill}
                   onDeleteSkillPath={handleDeleteSkillPath}
                   onDownloadSkillPath={handleDownloadSkillPath}
-                  onShareSkillPath={handleShareSkillPath}
                   refreshRev={skillsRefreshRev}
                 />
               )}
@@ -496,7 +461,7 @@ export default function ChatPage() {
                   <ChatContainer
                     messages={messages}
                     isTyping={isTyping}
-                    onClear={handleArchiveAndClear}
+                    onClear={handleNewChat}
                     agentName={currentAgent}
                     taskStartedAt={taskStartedAt}
                     completedTaskElapsedSec={completedTaskElapsedSec}
@@ -620,7 +585,6 @@ export default function ChatPage() {
           filePath={selectedDocPath}
           onClose={() => setSelectedDocPath(null)}
           onSave={saveDocContent}
-          onShare={() => void handleShareDoc(selectedDocPath)}
         />
       )}
 
@@ -633,9 +597,6 @@ export default function ChatPage() {
           loadContent={loadSkillContent}
           onClose={() => setSkillFile(null)}
           onSave={saveSkillContent}
-          onShare={() =>
-            void handleShareSkillPath(skillFile.source, skillFile.skill, skillFile.file)
-          }
         />
       )}
 
@@ -646,7 +607,7 @@ export default function ChatPage() {
           <SheetHeader className="border-b border-border/60 px-4 py-4 text-left">
             <SheetTitle className="text-base">历史对话</SheetTitle>
             <SheetDescription className="text-xs">
-              点击记录载入主聊天区；点击删除图标可移除该条归档。仅保存在本机浏览器。
+              所有对话（含当前）自动保存在这里；点击记录载入主聊天区，点击删除图标可移除该条对话。仅保存在本机浏览器。
             </SheetDescription>
           </SheetHeader>
 
@@ -654,22 +615,29 @@ export default function ChatPage() {
             <ScrollArea className="h-[calc(100vh-8rem)] px-2 py-2">
               {!currentAgent ? (
                 <p className="px-3 py-8 text-center text-xs text-muted-foreground">请先选择 Agent</p>
-              ) : archivedList.length === 0 ? (
+              ) : conversationList.length === 0 ? (
                 <p className="px-3 py-8 text-center text-xs text-muted-foreground">
-                  暂无归档。发起对话后点击 Agent 旁的新对话按钮即可保存本轮记录。
+                  暂无历史对话。发送消息后会自动保存到这里。
                 </p>
               ) : (
                 <ul className="flex flex-col gap-1">
-                  {archivedList.map((item) => (
+                  {conversationList.map((item) => (
                     <li key={item.id} className="group relative">
                       <button
                         type="button"
                         className="flex w-full flex-col gap-0.5 rounded-lg border border-transparent py-2.5 pl-3 pr-10 text-left text-sm transition-colors hover:bg-muted/80 hover:border-border/60"
-                        onClick={() => handleRestoreArchive(item)}
+                        onClick={() => handleRestoreConversation(item)}
                       >
-                        <span className="line-clamp-2 font-medium leading-snug">{item.title}</span>
+                        <span className="flex items-start gap-1.5">
+                          <span className="line-clamp-2 min-w-0 font-medium leading-snug">{item.title}</span>
+                          {item.id === activeConversationId && (
+                            <Badge variant="secondary" className="mt-px shrink-0 px-1.5 text-[10px]">
+                              当前
+                            </Badge>
+                          )}
+                        </span>
                         <span className="text-[11px] text-muted-foreground">
-                          {new Date(item.updatedAt).toLocaleString()} · {item.messages.length} 条消息
+                          {new Date(item.updatedAt).toLocaleString()} · {item.messageCount} 条消息
                         </span>
                       </button>
                       <Button
@@ -679,7 +647,7 @@ export default function ChatPage() {
                         className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
                         aria-label="删除此条历史对话"
                         title="删除"
-                        onClick={(e) => handleDeleteArchive(e, item.id)}
+                        onClick={(e) => handleDeleteConversation(e, item.id)}
                       >
                         <IconTrash size={16} />
                       </Button>
