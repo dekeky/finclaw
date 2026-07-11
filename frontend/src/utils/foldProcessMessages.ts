@@ -61,15 +61,19 @@ export function findLastUserIndex(messages: ChatMessage[]): number {
   return -1;
 }
 
-/** 当前轮次（最后一条用户消息之后）的思考/工具片段，供进行中面板展示 */
-export function collectActiveTaskSegments(messages: ChatMessage[]): ProcessSegment[] {
-  const last = messages[messages.length - 1];
-  if (!last || last.role === 'user') return [];
+/** 指定用户轮次内（下一条 user 之前）的全部思考/工具片段，供已完成面板聚合展示。 */
+export function collectProcessSegmentsForTurn(
+  messages: ChatMessage[],
+  afterUserIndex: number,
+): ProcessSegment[] {
+  if (afterUserIndex < 0) return [];
 
-  const turnMessages = messages.slice(findLastUserIndex(messages) + 1);
+  const turnMessages = messages.slice(afterUserIndex + 1);
+  const nextUserOffset = turnMessages.findIndex((m) => m.role === 'user');
+  const slice = nextUserOffset < 0 ? turnMessages : turnMessages.slice(0, nextUserOffset);
+
   let segments: ProcessSegment[] = [];
-
-  for (const m of turnMessages) {
+  for (const m of slice) {
     if (isProcessMessage(m)) {
       for (const seg of getProcessSegments(m)) {
         segments = mergeSegment(segments, seg);
@@ -85,6 +89,13 @@ export function collectActiveTaskSegments(messages: ChatMessage[]): ProcessSegme
   }
 
   return segments;
+}
+
+/** 当前轮次（最后一条用户消息之后）的思考/工具片段，供进行中面板展示 */
+export function collectActiveTaskSegments(messages: ChatMessage[]): ProcessSegment[] {
+  const last = messages[messages.length - 1];
+  if (!last || last.role === 'user') return [];
+  return collectProcessSegmentsForTurn(messages, findLastUserIndex(messages));
 }
 
 /** 判断给定 msgId 是否已经存在于 messages 中（包括被折叠到 process 段里的 sourceIds）。 */

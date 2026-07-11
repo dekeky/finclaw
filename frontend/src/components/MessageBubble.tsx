@@ -23,7 +23,6 @@ import {
   formatToolFeedback,
   groupProcessSegmentsIntoActions,
   splitProcessParts,
-  summarizeProcessPreview,
   type ProcessActionGroup,
   type ToolIconName,
 } from '../utils/formatProcessDisplay';
@@ -38,10 +37,6 @@ import {
 interface MessageBubbleProps {
   message: ChatMessage;
   variant?: 'default' | 'dock';
-  processOutputActive?: boolean;
-  /** 由 ChatContainer 统一计时，避免首个工具到达时重置 */
-  taskElapsedSeconds?: number;
-  taskElapsedCompleted?: boolean;
 }
 
 function AssistantMarkdownBody({ messageId, content }: { messageId: string; content: string }) {
@@ -195,7 +190,7 @@ function ToolGroupBody({ items }: { items: string[] }) {
   );
 }
 
-/** 轮次内：思考正文 → 分隔线 → 工具列表，不再单独占行的「思考/执行」标题 */
+/** 一轮行动：思考正文 → 工具列表 */
 function ProcessActionBlock({
   action,
   actionIndex,
@@ -352,21 +347,17 @@ export function getActiveProcessSegments(message: ChatMessage): ProcessSegment[]
   return [];
 }
 
-function AgentProcessPanel({
+export function TurnProcessPanel({
   segments,
   messageId,
   taskElapsedSeconds,
-  completed = false,
 }: {
   segments: ProcessSegment[];
   messageId: string;
   taskElapsedSeconds?: number;
-  completed?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const userPinnedRef = useRef(false);
   const [open, setOpen] = useState(false);
-  const contentKey = segments.map((s) => s.content).join('\u0000');
   const actions = groupProcessSegmentsIntoActions(segments);
   const actionCount = actions.length;
   const thoughtCount = actions.reduce((n, a) => n + a.thoughts.length, 0);
@@ -375,25 +366,14 @@ function AgentProcessPanel({
   useLayoutEffect(() => {
     if (!open) return;
     const el = scrollRef.current;
-    if (!el || userPinnedRef.current) return;
-    el.scrollTop = el.scrollHeight;
-  }, [contentKey, open]);
-
-  const handleScroll = () => {
-    const el = scrollRef.current;
     if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
-    userPinnedRef.current = !atBottom;
-  };
+    el.scrollTop = 0;
+  }, [open]);
 
   const handleToggle = () => {
-    setOpen((v) => {
-      if (!v) userPinnedRef.current = false;
-      return !v;
-    });
+    setOpen((v) => !v);
   };
 
-  // 无任何实际过程内容（思考 / 工具）时不渲染空的「工作过程」面板
   if (actionCount === 0) return null;
 
   return (
@@ -408,7 +388,7 @@ function AgentProcessPanel({
           stroke={2}
         />
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-violet-700/90 dark:text-violet-300/90">
-          {completed ? '工作过程' : summarizeProcessPreview(segments)}
+          工作过程
         </span>
         <div className="flex shrink-0 items-center gap-1.5">
           {actionCount > 0 && (
@@ -442,7 +422,6 @@ function AgentProcessPanel({
           segments={segments}
           messageId={messageId}
           scrollRef={scrollRef}
-          onScroll={handleScroll}
           className="border-t border-violet-500/15 px-3 py-2"
         />
       )}
@@ -450,23 +429,17 @@ function AgentProcessPanel({
   );
 }
 
-export function MessageBubble({
-  message,
-  processOutputActive,
-  taskElapsedSeconds,
-  taskElapsedCompleted,
-}: MessageBubbleProps) {
+export function MessageBubble({ message }: MessageBubbleProps) {
   const time = message.timestamp.toLocaleTimeString('zh-CN', {
     hour: '2-digit',
     minute: '2-digit',
   });
 
   const isUser = message.role === 'user';
-  const isProcess = !isUser && isProcessMessage(message);
   const isLegacyTool =
-    !isUser && !isProcess && (message.kind === 'tool' || isPicoclawToolFeedbackContent(message.content));
+    !isUser && (message.kind === 'tool' || isPicoclawToolFeedbackContent(message.content));
   const { thought, body } =
-    !isUser && !isLegacyTool && !isProcess
+    !isUser && !isLegacyTool
       ? splitAssistantContent(message.content)
       : { thought: null as string | null, body: message.content };
 
@@ -474,18 +447,14 @@ export function MessageBubble({
     <AssistantMarkdownBody messageId={`${message.id}${suffix}`} content={content} />
   );
 
-  if (isProcess || isLegacyTool) {
-    if (processOutputActive) return null;
-    const segments = isProcess ? getProcessSegments(message) : [{ type: 'tool' as const, content: message.content }];
-    // 过程内容为空时整条消息都不展示，避免出现只有时间戳的空「工作过程」
-    if (groupProcessSegmentsIntoActions(segments).length === 0) return null;
+  if (isLegacyTool) {
+    const segments = [{ type: 'tool' as const, content: message.content }];
     return (
       <div className="flex min-w-0 w-full flex-col gap-1">
-        <AgentProcessPanel
+        <TurnProcessPanel
           segments={segments}
           messageId={`${message.id}-process`}
-          taskElapsedSeconds={taskElapsedSeconds}
-          completed={taskElapsedCompleted}
+          taskElapsedSeconds={message.taskElapsedSec}
         />
         <span className="px-1 font-mono text-[10px] text-muted-foreground/60">{time}</span>
       </div>
@@ -510,12 +479,11 @@ export function MessageBubble({
           </div>
         ) : (
           <div className="flex w-full flex-col gap-2">
-            {!processOutputActive && thought && (
-              <AgentProcessPanel
+            {thought && (
+              <TurnProcessPanel
                 segments={[{ type: 'thought', content: thought }]}
                 messageId={`${message.id}-thinking`}
-                taskElapsedSeconds={taskElapsedSeconds}
-                completed={taskElapsedCompleted}
+                taskElapsedSeconds={message.taskElapsedSec}
               />
             )}
             {body && (

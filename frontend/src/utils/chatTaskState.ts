@@ -2,27 +2,118 @@ import type { ChatMessage } from '../types';
 import { findLastUserIndex, isProcessMessage } from './foldProcessMessages';
 import { splitAssistantContent } from './splitAssistantContent';
 
-/** 当前轮次内最后一条工作过程消息（折叠后的 process / thought / tool） */
-export function findLastProcessIndexInTurn(messages: ChatMessage[]): number {
-  const start = findLastUserIndex(messages) + 1;
-  let lastIdx = -1;
+/** 指定用户消息之后、下一条用户消息之前（或列表末尾）的轮次区间。 */
+export function getTurnRange(
+  messages: ChatMessage[],
+  afterUserIndex: number,
+): { start: number; end: number } {
+  const start = afterUserIndex + 1;
+  let end = messages.length;
   for (let i = start; i < messages.length; i++) {
+    if (messages[i].role === 'user') {
+      end = i;
+      break;
+    }
+  }
+  return { start, end };
+}
+
+/** 某条消息所属轮次的用户消息下标（向前找最近一条 user）。 */
+export function findOwningUserIndex(messages: ChatMessage[], messageIndex: number): number {
+  for (let i = messageIndex; i >= 0; i--) {
+    if (messages[i].role === 'user') return i;
+  }
+  return -1;
+}
+
+/** 指定用户轮次内最后一条工作过程消息（折叠后的 process / thought / tool） */
+export function findLastProcessIndexAfterUser(
+  messages: ChatMessage[],
+  afterUserIndex: number,
+): number {
+  const { start, end } = getTurnRange(messages, afterUserIndex);
+  let lastIdx = -1;
+  for (let i = start; i < end; i++) {
     if (isProcessMessage(messages[i])) lastIdx = i;
   }
   return lastIdx;
 }
 
-/** 当前轮次内最后一条带正文的助手回复（含 thought+body 拆分后的 body） */
-export function findCompleteReplyIndexInTurn(messages: ChatMessage[]): number {
-  const start = findLastUserIndex(messages) + 1;
+/** 指定用户轮次内最后一条带正文的助手回复（含 thought+body 拆分后的 body） */
+export function findCompleteReplyIndexAfterUser(
+  messages: ChatMessage[],
+  afterUserIndex: number,
+): number {
+  const { start, end } = getTurnRange(messages, afterUserIndex);
   let lastIdx = -1;
-  for (let i = start; i < messages.length; i++) {
+  for (let i = start; i < end; i++) {
     const m = messages[i];
     if (m.role !== 'assistant' || isProcessMessage(m)) continue;
     const { body } = splitAssistantContent(m.content);
     if (body.trim()) lastIdx = i;
   }
   return lastIdx;
+}
+
+export function hasCompleteReplyAfterUser(messages: ChatMessage[], afterUserIndex: number): boolean {
+  return findCompleteReplyIndexAfterUser(messages, afterUserIndex) >= 0;
+}
+
+/** 当前轮次内最后一条工作过程消息（折叠后的 process / thought / tool） */
+export function findLastProcessIndexInTurn(messages: ChatMessage[]): number {
+  const userIdx = findLastUserIndex(messages);
+  if (userIdx < 0) return -1;
+  return findLastProcessIndexAfterUser(messages, userIdx);
+}
+
+/** 当前轮次内最后一条带正文的助手回复（含 thought+body 拆分后的 body） */
+export function findCompleteReplyIndexInTurn(messages: ChatMessage[]): number {
+  const userIdx = findLastUserIndex(messages);
+  if (userIdx < 0) return -1;
+  return findCompleteReplyIndexAfterUser(messages, userIdx);
+}
+
+/** 轮次是否已有可展示内容且尚未写入 taskElapsedSec。 */
+export function turnNeedsElapsedStamp(messages: ChatMessage[], afterUserIndex: number): boolean {
+  const processIdx = findLastProcessIndexAfterUser(messages, afterUserIndex);
+  const replyIdx = findCompleteReplyIndexAfterUser(messages, afterUserIndex);
+  const targetIdx = processIdx >= 0 ? processIdx : replyIdx;
+  if (targetIdx < 0) return false;
+  return messages[targetIdx].taskElapsedSec == null;
+}
+
+/** 用消息时间戳估算某轮耗时（迟到的回复无法使用当前计时器时的兜底）。 */
+export function estimateTurnElapsedSec(messages: ChatMessage[], afterUserIndex: number): number | null {
+  const user = messages[afterUserIndex];
+  if (!user?.timestamp) return null;
+  const userMs =
+    user.timestamp instanceof Date ? user.timestamp.getTime() : new Date(user.timestamp).getTime();
+  const replyIdx = findCompleteReplyIndexAfterUser(messages, afterUserIndex);
+  const processIdx = findLastProcessIndexAfterUser(messages, afterUserIndex);
+  const anchorIdx = replyIdx >= 0 ? replyIdx : processIdx;
+  if (anchorIdx < 0) return null;
+  const anchor = messages[anchorIdx];
+  if (!anchor?.timestamp) return null;
+  const anchorMs =
+    anchor.timestamp instanceof Date ? anchor.timestamp.getTime() : new Date(anchor.timestamp).getTime();
+  return Math.max(0, Math.floor((anchorMs - userMs) / 1000));
+}
+
+/**
+ * 把总耗时写在指定轮的「工作过程」消息上（无独立过程消息时落到该轮正文回复）。
+ */
+export function stampTaskElapsedForTurn(
+  msgs: ChatMessage[],
+  elapsedSec: number,
+  afterUserIndex: number,
+): ChatMessage[] {
+  const processIdx = findLastProcessIndexAfterUser(msgs, afterUserIndex);
+  const targetIdx = processIdx >= 0 ? processIdx : findCompleteReplyIndexAfterUser(msgs, afterUserIndex);
+  if (targetIdx < 0) return msgs;
+  if (msgs[targetIdx].taskElapsedSec === elapsedSec) return msgs;
+  const next = [...msgs];
+  next[targetIdx] = { ...next[targetIdx], taskElapsedSec: elapsedSec };
+  return next;
 }
 
 export function hasCompleteReplyInTurn(messages: ChatMessage[]): boolean {
@@ -59,10 +150,8 @@ export function isChatTaskActive(messages: ChatMessage[], isTyping: boolean): bo
 export function resolveRestoredTaskState(
   messages: ChatMessage[],
   persistedStartMs: number | null,
-  persistedElapsedSec: number | null,
 ): {
   taskStartedAt: number | null;
-  completedTaskElapsedSec: number | null;
   isTyping: boolean;
   /** 需要把 restored start 写回 localStorage（仅 waitingForFirstReply 且无 persisted 时） */
   persistStartMs: number | null;
@@ -75,7 +164,6 @@ export function resolveRestoredTaskState(
   if (!incomplete && !waitingForFirstReply) {
     return {
       taskStartedAt: null,
-      completedTaskElapsedSec: persistedElapsedSec,
       isTyping: false,
       persistStartMs: null,
       clearPersistedStart: persistedStartMs != null,
@@ -86,7 +174,6 @@ export function resolveRestoredTaskState(
     const start = persistedStartMs ?? Date.now();
     return {
       taskStartedAt: start,
-      completedTaskElapsedSec: null,
       isTyping: true,
       persistStartMs: persistedStartMs == null ? start : null,
       clearPersistedStart: false,
@@ -96,7 +183,6 @@ export function resolveRestoredTaskState(
   // 有 process 草稿、等待后续助手输出：仅恢复已持久化的起点，禁止 refresh 时伪造新起点
   return {
     taskStartedAt: persistedStartMs,
-    completedTaskElapsedSec: null,
     isTyping: false,
     persistStartMs: null,
     clearPersistedStart: false,

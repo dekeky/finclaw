@@ -1,8 +1,18 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import type { ChatMessage, ConnectionStatus, MessageKind, WSMessage } from '../types';
-import { foldConsecutiveProcessMessages, hasMessageId } from '../utils/foldProcessMessages';
-import { hasCompleteReplyInTurn, isChatTaskActive, isIncompleteChatTask, resolveRestoredTaskState } from '../utils/chatTaskState';
+import { foldConsecutiveProcessMessages, findLastUserIndex, hasMessageId } from '../utils/foldProcessMessages';
+import {
+  estimateTurnElapsedSec,
+  findOwningUserIndex,
+  hasCompleteReplyAfterUser,
+  hasCompleteReplyInTurn,
+  isChatTaskActive,
+  isIncompleteChatTask,
+  resolveRestoredTaskState,
+  stampTaskElapsedForTurn,
+  turnNeedsElapsedStamp,
+} from '../utils/chatTaskState';
 import { isPicoclawToolFeedbackContent } from '../utils/foldPicoclawToolFeedback';
 import { isAssistantThoughtOnlyContent } from '../utils/splitAssistantContent';
 import { prepareStoredChatMessages } from '../utils/prepareStoredChatMessages';
@@ -19,8 +29,6 @@ import {
   saveConversation,
   loadTaskStart,
   saveTaskStart,
-  loadLastTaskElapsed,
-  saveLastTaskElapsed,
 } from '@/lib/chatPersistence';
 import { getToken, clearToken } from '../api/auth';
 import { normalizeSlashInput } from '@/components/ChatSlashHints';
@@ -76,6 +84,25 @@ function parseWsChatMessage(msg: WSMessage, content: string, role: 'user' | 'ass
 
 function foldChatMessages(msgs: ChatMessage[]): ChatMessage[] {
   return foldConsecutiveProcessMessages(msgs);
+}
+
+/**
+ * 结算指定用户轮次的耗时并写入消息；默认结算当前（最后）一轮。
+ * 非当前轮的迟到回复用消息时间戳估算耗时，避免误用新一轮计时器。
+ */
+function settleTurnElapsed(msgs: ChatMessage[], forUserIndex: number, startMs: number | null): ChatMessage[] {
+  if (forUserIndex < 0 || !turnNeedsElapsedStamp(msgs, forUserIndex)) return msgs;
+
+  let elapsed: number | null = null;
+  const lastUserIdx = findLastUserIndex(msgs);
+  if (forUserIndex === lastUserIdx && startMs != null) {
+    elapsed = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+  }
+  if (elapsed == null) {
+    elapsed = estimateTurnElapsedSec(msgs, forUserIndex);
+  }
+  if (elapsed == null) return msgs;
+  return stampTaskElapsedForTurn(msgs, elapsed, forUserIndex);
 }
 
 function upsertChatMessage(prev: ChatMessage[], incoming: ChatMessage): ChatMessage[] {
@@ -165,8 +192,6 @@ export interface UseWebSocketReturn {
    * 用于让计时器跨刷新延续显示总耗时；任务结束时置 null 并清除持久化值。
    */
   taskStartedAt: number | null;
-  /** 上一轮已完成任务的总耗时（秒），刷新后供工作过程面板展示。 */
-  completedTaskElapsedSec: number | null;
 }
 
 export interface UseWebSocketOptions {
@@ -202,9 +227,6 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     const restored = loadActiveConversation(persistAgentKey);
     if (hasCompleteReplyInTurn(restored)) return null;
     return loadTaskStart(persistAgentKey);
-  });
-  const [completedTaskElapsedSec, setCompletedTaskElapsedSec] = useState<number | null>(() => {
-    return persistAgentKey ? loadLastTaskElapsed(persistAgentKey) : null;
   });
   /** 与 taskStartedAt 同步，用于在 callback 内避免重复 beginTask */
   const taskStartedAtRef = useRef<number | null>(null);
@@ -368,29 +390,74 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     const now = Date.now();
     taskStartedAtRef.current = now;
     setTaskStartedAt(now);
-    setCompletedTaskElapsedSec(null);
     if (agentId) {
       saveTaskStart(agentId, now);
-      saveLastTaskElapsed(agentId, null);
     }
   }, []);
 
-  /** 关闭当前思考任务并清除持久化值。 */
+  /**
+   * 关闭当前思考任务并清除计时持久化值。
+   * 耗时不再存全局，而是由 completeTurn() 在结算时写入当轮消息。
+   */
   const endTask = useCallback(() => {
-    const start = taskStartedAtRef.current;
-    if (start != null) {
-      const elapsed = Math.max(0, Math.floor((Date.now() - start) / 1000));
-      setCompletedTaskElapsedSec(elapsed);
-      if (persistAgentKeyRef.current) {
-        saveLastTaskElapsed(persistAgentKeyRef.current, elapsed);
-      }
-    }
     taskStartedAtRef.current = null;
     setTaskStartedAt(null);
     if (persistAgentKeyRef.current) {
       saveTaskStart(persistAgentKeyRef.current, null);
     }
   }, []);
+
+  /**
+   * 一轮任务完成：把耗时结算并写入当轮消息，随后清理计时状态。
+   * 返回带耗时标记的消息数组，供调用方作为最终 next。
+   */
+  const completeTurn = useCallback(
+    (msgs: ChatMessage[], forUserIndex?: number): ChatMessage[] => {
+      const userIdx = forUserIndex ?? findLastUserIndex(msgs);
+      if (userIdx < 0) return msgs;
+      const start = taskStartedAtRef.current;
+      let next = settleTurnElapsed(msgs, userIdx, start);
+      const lastUserIdx = findLastUserIndex(msgs);
+      if (userIdx === lastUserIdx) {
+        endTask();
+      }
+      return next;
+    },
+    [endTask],
+  );
+
+  /** 助手消息到达后：结算所属轮次（含迟到回复），并更新 typing。 */
+  const settleAssistantTurns = useCallback(
+    (
+      msgs: ChatMessage[],
+      incoming: ChatMessage,
+      opts: { inProgress: boolean },
+    ): { next: ChatMessage[]; settledLastTurn: boolean } => {
+      const incomingIdx = msgs.findIndex((m) => m.id === incoming.id);
+      const ownerUserIdx =
+        incomingIdx >= 0 ? findOwningUserIndex(msgs, incomingIdx) : findLastUserIndex(msgs);
+      const lastUserIdx = findLastUserIndex(msgs);
+      let next = msgs;
+      let settledLastTurn = false;
+
+      if (ownerUserIdx >= 0 && hasCompleteReplyAfterUser(next, ownerUserIdx)) {
+        next = completeTurn(next, ownerUserIdx);
+        settledLastTurn = ownerUserIdx === lastUserIdx;
+      } else if (ownerUserIdx >= 0 && ownerUserIdx < lastUserIdx && turnNeedsElapsedStamp(next, ownerUserIdx)) {
+        // 迟到的过程/工具消息：尽量用时间戳兜底，不干扰当前轮计时器
+        next = settleTurnElapsed(next, ownerUserIdx, null);
+      }
+
+      if (settledLastTurn) {
+        return { next, settledLastTurn: true };
+      }
+      if (opts.inProgress) {
+        return { next, settledLastTurn: false };
+      }
+      return { next, settledLastTurn: false };
+    },
+    [completeTurn],
+  );
 
   const clearMobileProbe = useCallback(() => {
     if (mobileProbeTimerRef.current) {
@@ -548,10 +615,18 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
 
                 const last = batch[batch.length - 1]!;
                 if (last.role !== 'user') {
-                  if (hasCompleteReplyInTurn(next)) {
+                  let settledLastTurn = false;
+                  for (const item of batch) {
+                    if (item.role === 'user') continue;
+                    const settled = settleAssistantTurns(next, item.incoming, {
+                      inProgress: item.inProgress,
+                    });
+                    next = settled.next;
+                    if (settled.settledLastTurn) settledLastTurn = true;
+                  }
+                  if (settledLastTurn) {
                     clearTypingFallback();
                     setIsTyping(false);
-                    endTask();
                   } else if (last.inProgress) {
                     setIsTyping(true);
                     armTypingFallback();
@@ -582,21 +657,22 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         // 统一走 upsert：已经被折叠到 process 段中的 sourceId 会被识别并跳过，
         // 避免「from_cache 重放」覆盖刷新前已合并的多段内容。
         setMessages((prev) => {
-          const next = upsertChatMessage(prev, incoming);
+          let next = upsertChatMessage(prev, incoming);
           const changed = next !== prev;
 
           if (role !== 'user') {
-            if (hasCompleteReplyInTurn(next)) {
-              clearTypingFallback();
-              setIsTyping(false);
-              endTask();
-              const agentId = persistAgentKeyRef.current;
-              if (agentId && changed) {
-                const sid = sessionByAgentRef.current.get(agentId) ?? loadSessionId(agentId);
-                if (sid) saveConversation(agentId, sid, next);
-              }
-            } else if (changed) {
-              if (inProgress) {
+            if (changed) {
+              const settled = settleAssistantTurns(next, incoming, { inProgress });
+              next = settled.next;
+              if (settled.settledLastTurn) {
+                clearTypingFallback();
+                setIsTyping(false);
+                const agentId = persistAgentKeyRef.current;
+                if (agentId) {
+                  const sid = sessionByAgentRef.current.get(agentId) ?? loadSessionId(agentId);
+                  if (sid) saveConversation(agentId, sid, next);
+                }
+              } else if (inProgress) {
                 setIsTyping(true);
                 armTypingFallback();
                 if (!taskStartedAtRef.current) beginTask();
@@ -671,7 +747,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         break;
       }
     }
-  }, [beginTask, endTask, applySessionId, getCurrentSessionId, clearSendConfirm, commitMessages]);
+  }, [beginTask, endTask, completeTurn, settleAssistantTurns, applySessionId, getCurrentSessionId, clearSendConfirm, commitMessages]);
 
   const connect = useCallback(() => {
     const target = urlRef.current;
@@ -856,10 +932,6 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     messagesRef.current = [];
     setMessages([]);
     endTask();
-    setCompletedTaskElapsedSec(null);
-    if (persistAgentKey) {
-      saveLastTaskElapsed(persistAgentKey, null);
-    }
     if (opts?.startNewSession) {
       reconnectCountRef.current = 0;
       reset();
@@ -1019,8 +1091,6 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         setMessages([]);
         setIsTyping(false);
         endTask();
-        setCompletedTaskElapsedSec(null);
-        if (agentId) saveLastTaskElapsed(agentId, null);
 
         const clearMsg = {
           type: 'message.send',
@@ -1033,6 +1103,16 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         return;
       }
 
+      // 发送新轮次前：先把上一轮耗时写入对应消息，避免 beginTask 重置计时器后丢失
+      let base = messagesRef.current;
+      const prevUserIdx = findLastUserIndex(base);
+      let settledPreviousTurn = false;
+      if (prevUserIdx >= 0 && taskStartedAtRef.current != null && turnNeedsElapsedStamp(base, prevUserIdx)) {
+        const elapsed = Math.max(0, Math.floor((Date.now() - taskStartedAtRef.current) / 1000));
+        base = stampTaskElapsedForTurn(base, elapsed, prevUserIdx);
+        settledPreviousTurn = true;
+      }
+
       // 即时添加到本地消息列表，保证用户看到自己的消息（含本地图片预览）
       const id = genId();
       const attachments =
@@ -1043,15 +1123,17 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
               filename: `image-${i + 1}`,
             }))
           : undefined;
-      setMessages((prev) =>
-        commitMessages(
-          foldChatMessages([...prev, { id, role: 'user', content, timestamp: new Date(), attachments }]),
-        ),
-      );
+      const next = foldChatMessages([
+        ...base,
+        { id, role: 'user', content, timestamp: new Date(), attachments },
+      ]);
+      messagesRef.current = next;
+      setMessages(commitMessages(next));
       flushDraftNow();
       // 元宝式：发出后即显示「正在思考」，不依赖服务端 typing_start
       setIsTyping(true);
-      // 用户发送即视为新任务开始，记录起点并持久化（覆盖之前可能残留的值）
+      if (settledPreviousTurn) endTask();
+      // 用户发送即视为新任务开始，记录起点并持久化
       beginTask({ forceNew: true });
       if (typingFallbackRef.current) {
         clearTimeout(typingFallbackRef.current);
@@ -1081,7 +1163,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         reconnect();
       }, SEND_CONFIRM_TIMEOUT);
     },
-    [beginTask, applySessionId, getCurrentSessionId, reconnect, clearSendConfirm, flushDraftNow, getSessionForAgent, endTask],
+    [beginTask, endTask, applySessionId, getCurrentSessionId, reconnect, clearSendConfirm, flushDraftNow, getSessionForAgent],
   );
 
   const stop = useCallback(() => {
@@ -1112,11 +1194,8 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     console.log('[Finclaw WS] useEffect mount:', { url, agentId, sessionId: restoredSid, sessions: loadSessionMap() });
     if (persistAgentKey && url) {
       const restored = loadActiveConversation(persistAgentKey);
-      const taskState = resolveRestoredTaskState(
-        restored,
-        loadTaskStart(persistAgentKey),
-        loadLastTaskElapsed(persistAgentKey),
-      );
+      // 已完成轮次的耗时现随消息一起持久化（taskElapsedSec），无需再恢复全局值。
+      const taskState = resolveRestoredTaskState(restored, loadTaskStart(persistAgentKey));
       // 必须在 connect() 之前同步落盘到 state，否则本地/快速 WS 重连时
       // from_cache 与实时消息会先写入 []，随后被异步 setMessages(restored) 覆盖而「中断」。
       messagesRef.current = restored;
@@ -1124,7 +1203,6 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         setMessages(restored);
         taskStartedAtRef.current = taskState.taskStartedAt;
         setTaskStartedAt(taskState.taskStartedAt);
-        setCompletedTaskElapsedSec(taskState.completedTaskElapsedSec);
         setIsTyping(taskState.isTyping);
       });
       if (taskState.persistStartMs != null) {
@@ -1279,6 +1357,5 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     getSessionId: getCurrentSessionId,
     reconnect,
     taskStartedAt,
-    completedTaskElapsedSec,
   };
 }

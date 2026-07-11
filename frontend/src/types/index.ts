@@ -32,6 +32,11 @@ export interface ChatMessage {
   processSegments?: ProcessSegment[];
   /** 媒体附件（图片 / 音频 / 视频 / 文件） */
   attachments?: Attachment[];
+  /**
+   * 本轮任务完成时的总耗时（秒），结算时写在该轮的「工作过程」/正文消息上。
+   * 每条消息各自持有，避免用会话级单值导致历史轮耗时被新一轮覆盖。
+   */
+  taskElapsedSec?: number;
 }
 
 export interface WSMessage {

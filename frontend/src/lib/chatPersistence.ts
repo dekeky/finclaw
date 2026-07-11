@@ -31,6 +31,7 @@ export interface PersistedMessage {
   timestamp: string;
   kind?: MessageKind;
   processSegments?: ProcessSegment[];
+  taskElapsedSec?: number;
 }
 
 export interface ConversationRecord {
@@ -303,6 +304,7 @@ function msgToPersisted(m: ChatMessage): PersistedMessage {
   };
   if (m.kind) row.kind = m.kind;
   if (m.processSegments?.length) row.processSegments = m.processSegments;
+  if (typeof m.taskElapsedSec === 'number') row.taskElapsedSec = m.taskElapsedSec;
   return row;
 }
 
@@ -314,6 +316,7 @@ function persistedToMessages(rows: PersistedMessage[]): ChatMessage[] {
     timestamp: new Date(m.timestamp),
     kind: m.kind,
     processSegments: m.processSegments,
+    taskElapsedSec: m.taskElapsedSec,
   }));
 }
 

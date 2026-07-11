@@ -1,18 +1,18 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import type { ChatMessage } from '../types';
-import { ActiveTaskPanel, MessageBubble } from './MessageBubble';
+import { ActiveTaskPanel, MessageBubble, TurnProcessPanel } from './MessageBubble';
 import { useElapsedSeconds } from '../hooks/useElapsedSeconds';
 import {
+  findCompleteReplyIndexAfterUser,
   findCompleteReplyIndexInTurn,
-  findLastProcessIndexInTurn,
+  findLastProcessIndexAfterUser,
   isTaskTimingActive,
 } from '../utils/chatTaskState';
 import {
-  collectActiveTaskSegments,
+  collectProcessSegmentsForTurn,
   findLastUserIndex,
   isProcessMessage,
 } from '../utils/foldProcessMessages';
-import { splitAssistantContent } from '../utils/splitAssistantContent';
 import { ChatMascot } from './ChatMascot';
 
 const DOCK_QUICK_PROMPTS = [
@@ -35,8 +35,18 @@ interface ChatContainerProps {
   readOnly?: boolean;
   /** 当前思考任务的起始时间（ms）；用于刷新后让计时延续 */
   taskStartedAt?: number | null;
-  /** 上一轮已完成任务的总耗时（秒）；刷新后供工作过程面板展示 */
-  completedTaskElapsedSec?: number | null;
+}
+
+function getTurnElapsedSec(messages: ChatMessage[], userIdx: number): number | undefined {
+  const processIdx = findLastProcessIndexAfterUser(messages, userIdx);
+  if (processIdx >= 0 && messages[processIdx].taskElapsedSec != null) {
+    return messages[processIdx].taskElapsedSec;
+  }
+  const replyIdx = findCompleteReplyIndexAfterUser(messages, userIdx);
+  if (replyIdx >= 0 && messages[replyIdx].taskElapsedSec != null) {
+    return messages[replyIdx].taskElapsedSec;
+  }
+  return undefined;
 }
 
 export function ChatContainer({
@@ -49,74 +59,67 @@ export function ChatContainer({
   quickPrompts = DOCK_QUICK_PROMPTS,
   readOnly = false,
   taskStartedAt = null,
-  completedTaskElapsedSec = null,
 }: ChatContainerProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
-  const userScrolledUpRef = useRef(false);
+  /** 上次已跟随滚动的正文回复快照；过程消息更新不触发视口滚动 */
+  const lastReplyScrollKeyRef = useRef<string | null>(null);
 
   const taskActive = !readOnly && isTaskTimingActive(messages, isTyping, taskStartedAt);
-
   const lastUserIdx = findLastUserIndex(messages);
-  const completeReplyIdx = findCompleteReplyIndexInTurn(messages);
-  const lastProcessIdx = findLastProcessIndexInTurn(messages);
-
-  /** 当前轮次过程由流式面板统一渲染，不在消息列表里重复展示。 */
-  function isProcessOutputActive(msg: ChatMessage, index: number): boolean {
-    if (readOnly || index <= lastUserIdx) return false;
-
-    if (taskActive) {
-      if (isProcessMessage(msg)) return true;
-      if (msg.role === 'assistant') {
-        const { thought, body } = splitAssistantContent(msg.content);
-        if (thought && !body.trim()) return true;
-      }
-      return false;
-    }
-
-    if (isProcessMessage(msg)) {
-      return index !== lastProcessIdx;
-    }
-
-    if (
-      msg.role === 'assistant' &&
-      lastProcessIdx >= 0 &&
-      index === completeReplyIdx
-    ) {
-      return Boolean(splitAssistantContent(msg.content).thought);
-    }
-
-    return false;
-  }
-
   const taskTiming = useElapsedSeconds(taskActive, { startedAtMs: taskStartedAt });
-  const finishedElapsedSec = !taskActive
-    ? (completedTaskElapsedSec ??
-        (taskTiming.completed || taskTiming.seconds > 0 ? taskTiming.seconds : null))
-    : null;
-  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : undefined;
-  const activeTaskSegments = taskActive ? collectActiveTaskSegments(messages) : [];
-
-  function sharesTaskTiming(msg: ChatMessage, index: number): boolean {
-    if (!taskActive) {
-      // 完成后把总耗时挂在「工作过程」面板上（独立 process 消息）
-      if (lastProcessIdx >= 0) return index === lastProcessIdx;
-      // 无独立过程消息时挂在本轮正文回复（思考块可能已合并进正文）
-      if (completeReplyIdx >= 0) return index === completeReplyIdx;
-      return false;
-    }
-    if (index !== messages.length - 1) return false;
-    return isProcessOutputActive(msg, index) || lastMsg?.role === 'user';
-  }
+  const activeTaskSegments = taskActive
+    ? collectProcessSegmentsForTurn(messages, lastUserIdx)
+    : [];
 
   useEffect(() => {
-    const el = bottomRef.current?.parentElement;
-    if (!el) return;
-    const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-    userScrolledUpRef.current = !isAtBottom;
-    if (!userScrolledUpRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const replyIdx = findCompleteReplyIndexInTurn(messages);
+    if (replyIdx < 0) return;
+
+    const reply = messages[replyIdx];
+    const scrollKey = `${reply.id}:${reply.content.length}`;
+    if (scrollKey === lastReplyScrollKeyRef.current) return;
+    lastReplyScrollKeyRef.current = scrollKey;
+
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [messages]);
+
+  function renderTurnMessages(): ReactNode[] {
+    const userIndices: number[] = [];
+    messages.forEach((m, i) => {
+      if (m.role === 'user') userIndices.push(i);
+    });
+
+    const nodes: ReactNode[] = [];
+    for (let t = 0; t < userIndices.length; t++) {
+      const userIdx = userIndices[t];
+      const turnEnd = userIndices[t + 1] ?? messages.length;
+      const isCurrentTurn = userIdx === lastUserIdx;
+      const turnSegments = collectProcessSegmentsForTurn(messages, userIdx);
+      const showTurnProcess = turnSegments.length > 0 && !(taskActive && isCurrentTurn);
+
+      nodes.push(<MessageBubble key={messages[userIdx].id} message={messages[userIdx]} />);
+
+      if (showTurnProcess) {
+        nodes.push(
+          <div key={`turn-process-${userIdx}`} className="flex min-w-0 w-full flex-col gap-1">
+            <TurnProcessPanel
+              segments={turnSegments}
+              messageId={`turn-${userIdx}`}
+              taskElapsedSeconds={getTurnElapsedSec(messages, userIdx)}
+            />
+          </div>,
+        );
+      }
+
+      for (let i = userIdx + 1; i < turnEnd; i++) {
+        const msg = messages[i];
+        if (isProcessMessage(msg)) continue;
+
+        nodes.push(<MessageBubble key={msg.id} message={msg} />);
+      }
     }
-  }, [messages, isTyping]);
+    return nodes;
+  }
 
   if (messages.length === 0) {
     if (variant === 'dock') {
@@ -180,24 +183,7 @@ export function ChatContainer({
         </div>
       )}
 
-      {messages.map((msg, index) => {
-        const attachTaskTiming = sharesTaskTiming(msg, index);
-        return (
-          <MessageBubble
-            key={msg.id}
-            message={msg}
-            processOutputActive={isProcessOutputActive(msg, index)}
-            taskElapsedSeconds={
-              attachTaskTiming
-                ? taskActive
-                  ? taskTiming.seconds
-                  : (finishedElapsedSec ?? undefined)
-                : undefined
-            }
-            taskElapsedCompleted={attachTaskTiming && !taskActive}
-          />
-        );
-      })}
+      {renderTurnMessages()}
 
       {taskActive && (
         <div className="flex w-full items-start">

@@ -74,7 +74,6 @@ export default function ChatPage() {
     getSessionId,
     reconnect,
     taskStartedAt,
-    completedTaskElapsedSec,
   } = useChatSession();
 
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -464,7 +463,6 @@ export default function ChatPage() {
                     onClear={handleNewChat}
                     agentName={currentAgent}
                     taskStartedAt={taskStartedAt}
-                    completedTaskElapsedSec={completedTaskElapsedSec}
                   />
                 </ErrorBoundary>
               </div>
