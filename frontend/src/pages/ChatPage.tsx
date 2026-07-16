@@ -21,7 +21,9 @@ import {
   downloadAgentSkillPath,
 } from '../api/agents';
 import { writeAgentDocFile, deleteAgentDocPath, downloadAgentDocFile } from '../api/agentDocs';
+import { createAgentAssetShare } from '../api/agentAssets';
 import { messageTouchesDocScanRoot } from '../lib/agentDocRoots';
+import { copyToClipboard } from '../lib/clipboard';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { useChatSession } from '@/state/chatSession';
@@ -31,6 +33,7 @@ import { useDocViewer } from '@/state/docViewer';
 import { buildAnalysisUserMessage } from '@/utils/analysisPrompt';
 import { rssScopedItemKey } from '@/utils/rssScopedKey';
 import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -222,6 +225,44 @@ export default function ChatPage() {
       }
     },
     [currentAgent, skillFile, confirm],
+  );
+
+  const handleShareDoc = useCallback(async (fullPath: string, isDir?: boolean) => {
+    if (!currentAgent) return;
+    if (isDir) {
+      toast.error('暂不支持分享文件夹');
+      return;
+    }
+    try {
+      const { url } = await createAgentAssetShare(currentAgent, { kind: 'doc', path: fullPath });
+      await copyToClipboard(url);
+      toast.success('分享链接已复制到剪贴板');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '创建分享失败');
+    }
+  }, [currentAgent]);
+
+  const handleShareSkillPath = useCallback(
+    async (source: string, skill: string, relPath: string, isDir?: boolean) => {
+      if (!currentAgent) return;
+      if (isDir || !relPath.trim()) {
+        toast.error('暂不支持分享文件夹');
+        return;
+      }
+      try {
+        const { url } = await createAgentAssetShare(currentAgent, {
+          kind: 'skill',
+          source,
+          skill_dir: skill,
+          path: relPath,
+        });
+        await copyToClipboard(url);
+        toast.success('分享链接已复制到剪贴板');
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : '创建分享失败');
+      }
+    },
+    [currentAgent],
   );
 
   // 历史对话列表（含当前对话）：打开面板或数据变更时刷新
@@ -434,6 +475,7 @@ export default function ChatPage() {
                   hideHeader
                   onDelete={handleDeleteDoc}
                   onDownload={handleDownloadDoc}
+                  onShare={handleShareDoc}
                 />
               ) : (
                 <AgentSkillsPanel
@@ -447,6 +489,7 @@ export default function ChatPage() {
                   onDeleteSkill={handleDeleteSkill}
                   onDeleteSkillPath={handleDeleteSkillPath}
                   onDownloadSkillPath={handleDownloadSkillPath}
+                  onShareSkillPath={handleShareSkillPath}
                   refreshRev={skillsRefreshRev}
                 />
               )}
@@ -583,6 +626,7 @@ export default function ChatPage() {
           filePath={selectedDocPath}
           onClose={() => setSelectedDocPath(null)}
           onSave={saveDocContent}
+          onShare={() => void handleShareDoc(selectedDocPath)}
         />
       )}
 
@@ -595,6 +639,9 @@ export default function ChatPage() {
           loadContent={loadSkillContent}
           onClose={() => setSkillFile(null)}
           onSave={saveSkillContent}
+          onShare={() =>
+            void handleShareSkillPath(skillFile.source, skillFile.skill, skillFile.file)
+          }
         />
       )}
 
