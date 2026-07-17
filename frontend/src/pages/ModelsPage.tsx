@@ -375,7 +375,7 @@ export default function ModelsPage() {
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-xs text-muted-foreground">模型 *</label>
+                      <label className="mb-1 block text-xs text-muted-foreground">模型标识 *</label>
                       <Input
                         value={form.model}
                         onChange={(e) => setForm((s) => ({ ...s, model: e.target.value }))}
