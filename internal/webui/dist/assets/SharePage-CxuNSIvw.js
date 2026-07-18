@@ -1,4 +1,4 @@
-import{j as e}from"./radix-CbEPGcFZ.js";import{a as n,v as j}from"./react-vendor-DN2CTUzv.js";import{i as N,f as z,p as w}from"./agentAssets-C5vFtRTT.js";import{u as S,d as C,D as I,f as M,M as E,c as v}from"./useTocHeadings-DQgFGLSR.js";import{aq as A,a as k,M as R,B as D,au as L}from"./index-Dw6wkmx3.js";import{S as O}from"./scroll-area-CHZVSTyh.js";import{I as T}from"./IconExternalLink-B9XzWeBj.js";import"./IconTrash-Bfhdvvx0.js";import"./syntax-highlighter-B8gEV188.js";import"./markdown-KTwjix2b.js";const _=`
+import{j as e}from"./radix-CbEPGcFZ.js";import{a as n,v as j}from"./react-vendor-DN2CTUzv.js";import{i as N,f as z,p as w}from"./agentAssets-B_IgtjsL.js";import{u as S,d as C,D as I,f as M,M as E,c as v}from"./useTocHeadings-DAvfvvQd.js";import{aq as A,a as k,M as R,B as D,au as L}from"./index-C86Kv1Oh.js";import{S as O}from"./scroll-area-KbnFATRk.js";import{I as T}from"./IconExternalLink-CW1aqFf6.js";import"./IconTrash-CV_Kt8I8.js";import"./syntax-highlighter-B8gEV188.js";import"./markdown-KTwjix2b.js";const _=`
 .doc-share-body {
   position: relative;
   display: flex;
