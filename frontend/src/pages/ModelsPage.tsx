@@ -28,6 +28,7 @@ import { SecretInput } from '@/components/ui/secret-input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
+import { HintTooltip } from '@/components/HintTooltip';
 import { AGENT_MODEL_PRESETS } from '@/lib/agentModelPresets';
 import { cn } from '@/lib/cn';
 import {
@@ -46,12 +47,23 @@ type FormState = {
 
 const EMPTY_FORM: FormState = { displayName: '', model: '', apiBase: '', apiKey: '' };
 
-function ModelFieldHint() {
+function FieldLabel({
+  label,
+  hint,
+  required,
+}: {
+  label: string;
+  hint?: string;
+  required?: boolean;
+}) {
   return (
-    <p className="mt-1 text-[11px] text-muted-foreground">
-      格式为 <span className="font-mono">服务商/模型名</span>，例如{' '}
-      <span className="font-mono">deepseek/deepseek-v4-flash</span>。
-    </p>
+    <div className="mb-1 flex items-center gap-1">
+      <label className="text-xs text-muted-foreground">
+        {label}
+        {required ? ' *' : ''}
+      </label>
+      {hint ? <HintTooltip text={hint} side="top" /> : null}
+    </div>
   );
 }
 
@@ -345,7 +357,11 @@ export default function ModelsPage() {
                 ) : (
                   <form onSubmit={onSubmit} className="flex flex-col gap-4">
                     <div>
-                      <label className="mb-1 block text-xs text-muted-foreground">显示名称 *</label>
+                      <FieldLabel
+                        label="显示名称"
+                        required
+                        hint="仅用于 FinClaw 平台内展示与 Agent 选择，作为该模型配置的唯一标识。"
+                      />
                       <Input
                         value={form.displayName}
                         onChange={(e) => setForm((s) => ({ ...s, displayName: e.target.value }))}
@@ -355,27 +371,34 @@ export default function ModelsPage() {
                       {displayNameConflict && (
                         <p className="mt-1 text-[11px] text-destructive">已存在同名模型。</p>
                       )}
-                      <p className="mt-1 text-[11px] text-muted-foreground">
-                        仅用于 FinClaw 平台内展示与 Agent 选择，作为该模型配置的唯一标识。
-                      </p>
                     </div>
 
-                    <div className="flex flex-wrap gap-1.5">
-                      {AGENT_MODEL_PRESETS.map((p) => (
-                        <button
-                          key={p.label}
-                          type="button"
-                          onClick={() => applyPreset(p)}
-                          disabled={submitting}
-                          className="rounded-full border border-violet-500/20 bg-violet-500/5 px-2.5 py-0.5 text-[11px] text-violet-600 hover:bg-violet-500/10"
-                        >
-                          {p.label}
-                        </button>
-                      ))}
+                    <div className="space-y-2">
+                      <FieldLabel
+                        label="常用模板"
+                        hint="点击填入模型标识与 Coding Plan 默认 Base URL；DeepSeek、MiniMax 无独立 Coding Plan 端点时使用通用地址。"
+                      />
+                      <div className="flex flex-wrap gap-1.5">
+                        {AGENT_MODEL_PRESETS.map((p) => (
+                          <button
+                            key={p.label}
+                            type="button"
+                            onClick={() => applyPreset(p)}
+                            disabled={submitting}
+                            className="rounded-full border border-violet-500/20 bg-violet-500/5 px-2.5 py-0.5 text-[11px] text-violet-600 hover:bg-violet-500/10"
+                          >
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-xs text-muted-foreground">模型标识 *</label>
+                      <FieldLabel
+                        label="模型标识"
+                        required
+                        hint="格式为「服务商/模型名」，例如 deepseek/deepseek-v4-flash。"
+                      />
                       <Input
                         value={form.model}
                         onChange={(e) => setForm((s) => ({ ...s, model: e.target.value }))}
@@ -383,11 +406,14 @@ export default function ModelsPage() {
                         className="font-mono text-sm"
                         disabled={submitting}
                       />
-                      <ModelFieldHint />
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-xs text-muted-foreground">api_base *</label>
+                      <FieldLabel
+                        label="api_base"
+                        required
+                        hint="请与 API Key 来源保持一致。Coding Plan 与按量计费的 Base URL 通常不同，混用会导致鉴权失败或额外扣费。"
+                      />
                       <Input
                         value={form.apiBase}
                         onChange={(e) => setForm((s) => ({ ...s, apiBase: e.target.value }))}
@@ -396,9 +422,15 @@ export default function ModelsPage() {
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-xs text-muted-foreground">
-                        api_key {creating || !detail?.has_api_key ? '*' : '（可选）'}
-                      </label>
+                      <FieldLabel
+                        label={`api_key${creating || !detail?.has_api_key ? '' : '（可选）'}`}
+                        required={creating || !detail?.has_api_key}
+                        hint={
+                          creating || !detail?.has_api_key
+                            ? '新建时必填，请填写与 Base URL 匹配的套餐密钥。'
+                            : '编辑时留空则沿用已保存的密钥。'
+                        }
+                      />
                       <SecretInput
                         key={creating ? 'create' : selectedName ?? 'edit'}
                         value={form.apiKey}

@@ -53,6 +53,7 @@ func (ar *AgentManagerRouter) ConfigRouter() {
 	group.PUT("/:name/avatar", ar.putAgentAvatar)
 	group.DELETE("/:name/avatar", ar.deleteAgentAvatar)
 	group.PATCH("/:name/profile", ar.patchAgentProfile)
+	group.PATCH("/:name/llm-settings", ar.patchAgentLLMSettings)
 	group.POST("/:name/market-summary/generate", ar.generateMarketSummary)
 	group.GET("/:name", ar.getAgent)
 	group.GET("", ar.listAgents)
@@ -102,12 +103,50 @@ type agentModelProviderInfo struct {
 	HasApiKey bool   `json:"has_api_key"`
 }
 
+type agentLLMSettingsResp struct {
+	Temperature     *float64 `json:"temperature,omitempty"`
+	ThinkingEnabled bool     `json:"thinking_enabled"`
+	ThinkingLevel   string   `json:"thinking_level,omitempty"`
+}
+
 type agentDetailResp struct {
 	Name          string                 `json:"name"`
 	HasAvatar     bool                   `json:"has_avatar"`
 	Workspace     string                 `json:"workspace,omitempty"`
 	ModelProfile  string                 `json:"model_profile,omitempty"`
 	ModelProvider agentModelProviderInfo `json:"model_provider"`
+	LLMSettings   agentLLMSettingsResp   `json:"llm_settings"`
+}
+
+func agentLLMSettingsFromConfig(cfg *picoclawconfig.Config) agentLLMSettingsResp {
+	read := picoclaw.ReadAgentLLMSettings(cfg)
+	return agentLLMSettingsResp{
+		Temperature:     read.Temperature,
+		ThinkingEnabled: read.ThinkingEnabled,
+		ThinkingLevel:   read.ThinkingLevel,
+	}
+}
+
+func loadAgentConfigForUser(am *AgentManager, userID, name string) (*picoclawconfig.Config, error) {
+	if loop, err := am.getAgentLoop(userID, name); err == nil && loop != nil {
+		if cfg := loop.GetConfig(); cfg != nil {
+			return cfg, nil
+		}
+	}
+	return picoclaw.LoadAgentConfig(agentHomeDir(userID), name)
+}
+
+func (am *AgentManager) getAgentLoop(userID, name string) (*picoagent.AgentLoop, error) {
+	internalKey := AgentKey(userID, name)
+	a, ok := am.Get(internalKey)
+	if !ok {
+		return nil, fmt.Errorf("agent %q not found", name)
+	}
+	loop, ok := a.(*picoagent.AgentLoop)
+	if !ok || loop == nil {
+		return nil, fmt.Errorf("agent %q is not a picoclaw loop", name)
+	}
+	return loop, nil
 }
 
 // GET /api/v1/agents/:name — runtime config summary for one agent (no secrets).
@@ -126,12 +165,20 @@ func (ar *AgentManagerRouter) getAgent(c *gin.Context) {
 	meta, _ := readAgentMeta(home, name)
 	loop, ok := a.(*picoagent.AgentLoop)
 	if !ok || loop == nil {
-		ginx.NewRender(c).Data(agentDetailResp{Name: name, HasAvatar: hasAvatar, ModelProfile: meta.ModelProfile})
+		resp := agentDetailResp{Name: name, HasAvatar: hasAvatar, ModelProfile: meta.ModelProfile}
+		if cfg, err := picoclaw.LoadAgentConfig(home, name); err == nil {
+			resp.LLMSettings = agentLLMSettingsFromConfig(cfg)
+		}
+		ginx.NewRender(c).Data(resp)
 		return
 	}
 	cfg := loop.GetConfig()
 	if cfg == nil {
-		ginx.NewRender(c).Data(agentDetailResp{Name: name, HasAvatar: hasAvatar, ModelProfile: meta.ModelProfile})
+		resp := agentDetailResp{Name: name, HasAvatar: hasAvatar, ModelProfile: meta.ModelProfile}
+		if diskCfg, err := picoclaw.LoadAgentConfig(home, name); err == nil {
+			resp.LLMSettings = agentLLMSettingsFromConfig(diskCfg)
+		}
+		ginx.NewRender(c).Data(resp)
 		return
 	}
 	modelAlias := strings.TrimSpace(cfg.Agents.Defaults.ModelName)
@@ -151,7 +198,55 @@ func (ar *AgentManagerRouter) getAgent(c *gin.Context) {
 		Workspace:     strings.TrimSpace(cfg.Agents.Defaults.Workspace),
 		ModelProfile:  meta.ModelProfile,
 		ModelProvider: info,
+		LLMSettings:   agentLLMSettingsFromConfig(cfg),
 	})
+}
+
+type patchAgentLLMSettingsRequest struct {
+	Temperature     *float64 `json:"temperature"`
+	ThinkingEnabled bool     `json:"thinking_enabled"`
+	ThinkingLevel   string   `json:"thinking_level,omitempty"`
+}
+
+// PATCH /api/v1/agents/:name/llm-settings — update temperature and thinking options.
+func (ar *AgentManagerRouter) patchAgentLLMSettings(c *gin.Context) {
+	userID := getUserID(c)
+	name := strings.TrimSpace(c.Param("name"))
+	if err := validateAgentName(name); err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+		return
+	}
+	var req patchAgentLLMSettingsRequest
+	ginx.PanicIfNotNil(c.ShouldBindJSON(&req))
+	if req.Temperature == nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(fmt.Errorf("temperature is required"))
+		return
+	}
+	loop, err := ar.agentManager.getAgentLoop(userID, name)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			ginx.NewRender(c, http.StatusNotFound).Err(err)
+			return
+		}
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	settings := picoclaw.AgentLLMSettings{
+		Temperature:     req.Temperature,
+		ThinkingEnabled: req.ThinkingEnabled,
+		ThinkingLevel:   req.ThinkingLevel,
+	}
+	home := agentHomeDir(userID)
+	if err := picoclaw.ReloadAgentLLMSettings(loop, home, name, settings); err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+		return
+	}
+	cfg, err := loadAgentConfigForUser(ar.agentManager, userID, name)
+	if err != nil {
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	ginx.NewRender(c).Data(agentLLMSettingsFromConfig(cfg))
 }
 
 type createAgentRequest struct {

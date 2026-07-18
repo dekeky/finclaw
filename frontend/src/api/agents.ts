@@ -83,12 +83,28 @@ export interface AgentModelProviderInfo {
 }
 
 /** GET /api/v1/agents/:name — 与后端 agentDetailResp 对齐。 */
+export interface AgentLLMSettings {
+  /** 未配置时后端省略，前端展示默认 0.7。 */
+  temperature?: number;
+  thinking_enabled: boolean;
+  /** off 时通常省略；开启时为 low | medium | high | xhigh | adaptive。 */
+  thinking_level?: string;
+}
+
+/** GET /api/v1/agents/:name — 与后端 agentDetailResp 对齐。 */
 export interface AgentDetailBody {
   name: string;
   has_avatar: boolean;
   workspace?: string;
   model_profile?: string;
   model_provider: AgentModelProviderInfo;
+  llm_settings?: AgentLLMSettings;
+}
+
+export interface PatchAgentLLMSettingsRequest {
+  temperature: number;
+  thinking_enabled: boolean;
+  thinking_level?: string;
 }
 
 /** PicoClaw 工作区人设文件（AGENT.md / SOUL.md / USER.md）。 */
@@ -247,6 +263,21 @@ export async function getAgent(name: string): Promise<AgentDetailBody> {
     throw new Error('empty body');
   }
   return json.body;
+}
+
+/** PATCH /agents/:name/llm-settings —— 更新 Agent 温度与思考配置。 */
+export async function patchAgentLLMSettings(
+  name: string,
+  req: PatchAgentLLMSettingsRequest,
+): Promise<AgentLLMSettings> {
+  const res = await fetch(`${AGENTS_API}/${encodeURIComponent(name)}/llm-settings`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(req),
+  });
+  const body = await parseGinx<AgentLLMSettings | null>(res);
+  if (!body.body) throw new Error('empty body');
+  return body.body;
 }
 
 /** POST /agents —— 创建一个 Agent。 */

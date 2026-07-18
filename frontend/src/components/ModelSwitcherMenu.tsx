@@ -40,12 +40,15 @@ export interface ModelSwitcherMenuProps {
   variant?: 'toolbar' | 'panel';
   /** panel 模式下是否激活（用于懒加载模型列表）。 */
   active?: boolean;
+  /** 模型切换成功后回调。 */
+  onModelSwitched?: () => void;
 }
 
 export function ModelSwitcherMenu({
   agentName,
   variant = 'toolbar',
   active = true,
+  onModelSwitched,
 }: ModelSwitcherMenuProps) {
   const { updateAgent } = useAgents();
   const [currentModel, setCurrentModel] = useState<string | null>(null);
@@ -108,6 +111,7 @@ export function ModelSwitcherMenu({
         window.setTimeout(() => setJustSwitched(false), 2000);
         modelSwitchToastSuccess(toastId, displayName);
         setOpen(false);
+        onModelSwitched?.();
       } catch (err) {
         modelSwitchToastError(
           toastId,
@@ -117,7 +121,7 @@ export function ModelSwitcherMenu({
         setSwitching(false);
       }
     },
-    [agentName, currentModel, switching, updateAgent],
+    [agentName, currentModel, onModelSwitched, switching, updateAgent],
   );
 
   const menuBody = (

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Dialog } from 'radix-ui';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
-import { IconCpu, IconChevronDown, IconEye, IconEyeOff, IconFileDescription, IconMessageCircle, IconPuzzle, IconSparkles, IconTrash, IconUpload, IconUser } from '@tabler/icons-react';
+import { IconAdjustmentsHorizontal, IconChevronDown, IconEye, IconEyeOff, IconFileDescription, IconMessageCircle, IconPuzzle, IconSparkles, IconTrash, IconUpload, IconUser } from '@tabler/icons-react';
 import { PanelResizeHandle } from '@/components/PanelResizeHandle';
 import { useHorizontalResize } from '@/hooks/useHorizontalResize';
 import {
@@ -26,7 +26,7 @@ import {
   isAgentModelSetupValid,
   type AgentModelsMeta,
 } from '../components/AgentModelSetupSection';
-import { ModelSwitcherMenu } from '@/components/ModelSwitcherMenu';
+import { AgentRuntimeSettingsPanel } from '@/components/AgentRuntimeSettingsPanel';
 import { AgentPersonaEditor } from '../components/AgentPersonaEditor';
 import { AgentSkillsPanel, skillFileKey, type SkillFileTarget } from '../components/AgentSkillsPanel';
 import { createAgentAssetShare } from '../api/agentAssets';
@@ -84,7 +84,7 @@ const DETAIL_TABS: Array<{
   { id: 'profile', label: '基本资料', icon: IconUser },
   { id: 'persona', label: '人设', icon: IconFileDescription },
   { id: 'skills', label: 'Skills', icon: IconPuzzle },
-  { id: 'config', label: '模型', icon: IconCpu },
+  { id: 'config', label: '运行时设置', icon: IconAdjustmentsHorizontal },
 ];
 
 function loadDetailTab(): DetailTab {
@@ -148,6 +148,7 @@ export default function AgentsPage() {
   const [summaryPolishOpen, setSummaryPolishOpen] = useState(false);
   const [summaryPolishPrompt, setSummaryPolishPrompt] = useState('');
   const [summaryPolishing, setSummaryPolishing] = useState(false);
+  const [runtimeSettingsRev, setRuntimeSettingsRev] = useState(0);
   const [summaryPolishError, setSummaryPolishError] = useState<string | null>(null);
 
   const setDetailTab = useCallback((tab: DetailTab) => {
@@ -694,15 +695,12 @@ export default function AgentsPage() {
                       <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-destructive">⚠️ {agentRuntimeError}</div>
                     )}
 
-                    <p className="mb-4 text-xs text-muted-foreground">
-                      点击按钮选择模型即可热切换，当前对话与历史将保留。接入参数请在左侧栏「模型」页面管理。
-                    </p>
-
                     {detailName && (
-                      <ModelSwitcherMenu
+                      <AgentRuntimeSettingsPanel
                         agentName={detailName}
-                        variant="panel"
                         active={detailTab === 'config'}
+                        reloadToken={runtimeSettingsRev}
+                        onModelSwitched={() => setRuntimeSettingsRev((v) => v + 1)}
                       />
                     )}
                   </div>

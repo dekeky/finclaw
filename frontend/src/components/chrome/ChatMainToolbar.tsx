@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AgentSwitcher } from '@/components/AgentSwitcher';
 import { ChatModelSwitcher } from '@/components/chrome/ChatModelSwitcher';
+import { ChatThinkingToggle } from '@/components/chrome/ChatThinkingToggle';
 import { Button } from '@/components/ui/button';
 import { useAgents } from '@/state/agents';
 
@@ -52,7 +53,12 @@ export function ChatMainToolbar() {
         aria-label="切换 Agent"
         onShowDetail={handleShowDetail}
       />
-      {currentAgent && <ChatModelSwitcher agentName={currentAgent} />}
+      {currentAgent && (
+        <>
+          <ChatModelSwitcher agentName={currentAgent} />
+          <ChatThinkingToggle agentName={currentAgent} />
+        </>
+      )}
     </div>
   );
 }
