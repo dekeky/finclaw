@@ -25,13 +25,22 @@
 <text x="62" y="54.0" text-anchor="end" font-family="system-ui,sans-serif" font-size="11" fill="#666">8</text>
 <line x1="70.0" y1="340" x2="70.0" y2="344" stroke="#666" stroke-width="1"/>
 <text x="70.0" y="358" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11" fill="#666">2026-04-06</text>
+<line x1="687.7" y1="340" x2="687.7" y2="344" stroke="#666" stroke-width="1"/>
+<text x="687.7" y="358" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11" fill="#666">2026-06-28</text>
 <line x1="770.0" y1="340" x2="770.0" y2="344" stroke="#666" stroke-width="1"/>
-<text x="770.0" y="358" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11" fill="#666">2026-07-18</text>
-<polygon points="70.0,340.0 70.0,340.0 770.0,50.0 770.0,340.0" fill="#dd4528" fill-opacity="0.12"/>
-<polyline points="70.0,340.0 770.0,50.0" fill="none" stroke="#dd4528" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="770.0" y="358" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11" fill="#666">2026-07-09</text>
+<polygon points="70.0,340.0 70.0,340.0 348.1,303.8 679.3,267.5 680.8,231.2 687.7,195.0 687.9,158.8 693.4,122.5 717.4,86.2 770.0,50.0 770.0,340.0" fill="#dd4528" fill-opacity="0.12"/>
+<polyline points="70.0,340.0 348.1,303.8 679.3,267.5 680.8,231.2 687.7,195.0 687.9,158.8 693.4,122.5 717.4,86.2 770.0,50.0" fill="none" stroke="#dd4528" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="348.1" cy="303.8" r="4" fill="#dd4528"/>
+<circle cx="679.3" cy="267.5" r="4" fill="#dd4528"/>
+<circle cx="680.8" cy="231.2" r="4" fill="#dd4528"/>
+<circle cx="687.7" cy="195.0" r="4" fill="#dd4528"/>
+<circle cx="687.9" cy="158.8" r="4" fill="#dd4528"/>
+<circle cx="693.4" cy="122.5" r="4" fill="#dd4528"/>
+<circle cx="717.4" cy="86.2" r="4" fill="#dd4528"/>
 <circle cx="770.0" cy="50.0" r="4" fill="#dd4528"/>
 <rect x="82" y="58" width="150" height="28" rx="4" fill="#fff" stroke="#ccc"/>
 <rect x="90" y="68" width="10" height="10" rx="2" fill="#dd4528"/>
 <text x="106" y="77" font-family="system-ui,sans-serif" font-size="13" fill="#111">dekeky/finclaw</text>
-<text x="770" y="388" text-anchor="end" font-family="system-ui,sans-serif" font-size="11" fill="#888">cached snapshots · configure GH_STAR_HISTORY_TOKEN for full timeline · updated 2026-07-18</text>
+<text x="770" y="388" text-anchor="end" font-family="system-ui,sans-serif" font-size="11" fill="#888">live stargazers data · updated 2026-07-18</text>
 </svg>
