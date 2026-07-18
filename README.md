@@ -225,6 +225,7 @@ go build -o finclaw ./cmd/agent
 ## 六、Star 趋势
 
 <!-- star-history:start -->
+[![Star 趋势](assets/star-history.svg)](https://www.star-history.com/?type=date&repos=dekeky%2Ffinclaw)
 <!-- star-history:end -->
 
 ---
