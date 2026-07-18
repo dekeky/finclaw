@@ -16,30 +16,36 @@ README_PATH = os.path.join(os.path.dirname(__file__), "..", "README.md")
 OUT_PATH = os.path.join(os.path.dirname(__file__), "..", "assets", "star-history.svg")
 WIDTH, HEIGHT = 800, 400
 COLOR = "#dd4528"
+DATA_SOURCE = "live"
+
+
+def api_request(url: str, accept: str) -> dict | list:
+    token = os.environ.get("GITHUB_TOKEN", "")
+    headers = {"Accept": accept, "User-Agent": "finclaw-star-chart"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.load(resp)
 
 
 def fetch_stargazer_dates() -> list[datetime]:
-    token = os.environ.get("GITHUB_TOKEN", "")
-    headers = {"Accept": "application/vnd.github.v3.star+json", "User-Agent": "finclaw-star-chart"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
+    global DATA_SOURCE
     dates: list[datetime] = []
     page = 1
     while True:
         url = f"https://api.github.com/repos/{REPO}/stargazers?per_page=100&page={page}"
-        req = urllib.request.Request(url, headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                batch = json.load(resp)
+            batch = api_request(url, "application/vnd.github.v3.star+json")
         except urllib.error.HTTPError as exc:
             if exc.code in (403, 401):
                 print(
-                    f"GitHub API {exc.code} for stargazers; using fallback star dates. "
-                    "Add GH_STAR_HISTORY_TOKEN (Metadata Read-only) if this persists.",
+                    f"GitHub stargazers API {exc.code}; falling back to repo star count. "
+                    "For per-star timeline, add GH_STAR_HISTORY_TOKEN (Metadata Read-only).",
                     file=sys.stderr,
                 )
-                return fallback_dates()
+                DATA_SOURCE = "approx"
+                return approximate_star_dates()
             raise
 
         if not batch:
@@ -53,28 +59,29 @@ def fetch_stargazer_dates() -> list[datetime]:
         page += 1
 
     dates.sort()
-    return dates or fallback_dates()
+    if not dates:
+        DATA_SOURCE = "approx"
+        return approximate_star_dates()
+    DATA_SOURCE = "live"
+    return dates
 
 
-def fallback_dates() -> list[datetime]:
-    """Known dates when the public API is unavailable."""
-    return [
-        datetime(2026, 5, 13, tzinfo=timezone.utc),
-        datetime(2026, 6, 27, tzinfo=timezone.utc),
-    ]
+def approximate_star_dates() -> list[datetime]:
+    """Stargazers list unavailable; build_series will use repo star count instead."""
+    return []
+
+
+def fetch_star_count() -> int:
+    try:
+        data = api_request(f"https://api.github.com/repos/{REPO}", "application/vnd.github.v3+json")
+        return int(data.get("stargazers_count") or 0)
+    except (urllib.error.HTTPError, TypeError, ValueError):
+        return 0
 
 
 def fetch_repo_created() -> datetime:
-    token = os.environ.get("GITHUB_TOKEN", "")
-    headers = {"Accept": "application/vnd.github.v3+json", "User-Agent": "finclaw-star-chart"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    url = f"https://api.github.com/repos/{REPO}"
-    req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.load(resp)
+        data = api_request(f"https://api.github.com/repos/{REPO}", "application/vnd.github.v3+json")
         created = data.get("created_at")
         if created:
             return datetime.fromisoformat(created.replace("Z", "+00:00"))
@@ -84,6 +91,14 @@ def fetch_repo_created() -> datetime:
 
 
 def build_series(star_dates: list[datetime], repo_created: datetime) -> list[tuple[datetime, int]]:
+    if DATA_SOURCE == "approx":
+        count = fetch_star_count()
+        start = repo_created
+        end = datetime.now(timezone.utc)
+        if count <= 0:
+            return [(start, 0), (end, 0)]
+        return [(start, 0), (end, count)]
+
     start = min(repo_created, star_dates[0]) if star_dates else repo_created
     series: list[tuple[datetime, int]] = [(start, 0)]
     for i, dt in enumerate(star_dates, start=1):
@@ -177,8 +192,12 @@ def generate_svg(series: list[tuple[datetime, int]]) -> str:
     parts.append(
         f'<text x="{margin_left + 36}" y="{margin_top + 27}" font-family="system-ui,sans-serif" font-size="13" fill="#111">{REPO}</text>'
     )
+    footer_note = {
+        "live": "live stargazers data",
+        "approx": "approximate · add GH_STAR_HISTORY_TOKEN for full timeline",
+    }[DATA_SOURCE]
     parts.append(
-        f'<text x="{WIDTH - margin_right}" y="{HEIGHT - 12}" text-anchor="end" font-family="system-ui,sans-serif" font-size="11" fill="#888">star-history.com style · updated {datetime.now(timezone.utc).strftime("%Y-%m-%d")}</text>'
+        f'<text x="{WIDTH - margin_right}" y="{HEIGHT - 12}" text-anchor="end" font-family="system-ui,sans-serif" font-size="11" fill="#888">{footer_note} · updated {datetime.now(timezone.utc).strftime("%Y-%m-%d")}</text>'
     )
     parts.append("</svg>")
     return "\n".join(parts)
@@ -225,7 +244,8 @@ def main() -> None:
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
         f.write(svg)
-    print(f"Wrote {out} ({len(star_dates)} stars)")
+    count = fetch_star_count() if DATA_SOURCE == "approx" else len(star_dates)
+    print(f"Wrote {out} ({count} stars, source={DATA_SOURCE})")
     update_readme()
 
 
