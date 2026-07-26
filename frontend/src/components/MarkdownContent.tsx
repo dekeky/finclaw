@@ -2,7 +2,10 @@ import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
+import remarkMath from 'remark-math';
 import rehypeSlug from 'rehype-slug';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import type { PluggableList } from 'unified';
 import { useTheme } from '../context/ThemeContext';
 import { cn } from '../lib/cn';
@@ -275,7 +278,9 @@ export function MarkdownContent({
     [compact, copiedId, copyableCode, dark, handleCopy, idPrefix],
   );
 
-  const remarkPlugins = lineBreaks ? [remarkGfm, remarkBreaks] : [remarkGfm];
+  const remarkPlugins = lineBreaks
+    ? [remarkGfm, remarkMath, remarkBreaks]
+    : [remarkGfm, remarkMath];
 
   if (!children?.trim()) {
     return null;
@@ -292,13 +297,15 @@ export function MarkdownContent({
         'prose-code:before:content-none prose-code:after:content-none',
         'prose-strong:font-semibold prose-strong:text-foreground',
 	        'prose-a:text-violet-500 dark:prose-a:text-violet-400',
+        '[&_.katex-display]:my-4 [&_.katex-display]:max-w-full [&_.katex-display]:overflow-x-auto',
+        'dark:[&_.katex]:text-foreground',
         SIZE_CLASS[size],
         className,
       )}
     >
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
-        rehypePlugins={[rehypeSlug, ...(rehypePlugins ?? [])]}
+        rehypePlugins={[rehypeSlug, rehypeKatex, ...(rehypePlugins ?? [])]}
         components={components}
       >
         {children}

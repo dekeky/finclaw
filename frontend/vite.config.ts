@@ -31,7 +31,8 @@ export default defineConfig({
             id.includes('remark-') ||
             id.includes('rehype-') ||
             id.includes('unified') ||
-            id.includes('micromark')
+            id.includes('micromark') ||
+            id.includes('katex')
           ) {
             return 'markdown'
           }
