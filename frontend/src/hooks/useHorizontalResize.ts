@@ -41,6 +41,8 @@ export interface UseHorizontalResizeOptions {
   defaultWidth: number;
   minWidth: number;
   maxWidth: number;
+  /** When true, dragging left increases width (for handles on the left edge of a panel). */
+  invertDelta?: boolean;
 }
 
 export interface HorizontalResizeHandleProps {
@@ -55,6 +57,7 @@ export function useHorizontalResize({
   defaultWidth,
   minWidth,
   maxWidth,
+  invertDelta = false,
 }: UseHorizontalResizeOptions) {
   const [width, setWidth] = useState(() =>
     storageKey
@@ -104,11 +107,16 @@ export function useHorizontalResize({
       (e: ReactPointerEvent<HTMLDivElement>) => {
         const drag = dragRef.current;
         if (!drag || drag.pointerId !== e.pointerId) return;
-        const next = clamp(drag.startWidth + (e.clientX - drag.startX), minWidth, maxWidth);
+        const delta = e.clientX - drag.startX;
+        const next = clamp(
+          drag.startWidth + (invertDelta ? -delta : delta),
+          minWidth,
+          maxWidth,
+        );
         widthRef.current = next;
         setWidth(next);
       },
-      [minWidth, maxWidth],
+      [minWidth, maxWidth, invertDelta],
     ),
     onPointerUp: useCallback(
       (e: ReactPointerEvent<HTMLDivElement>) => {

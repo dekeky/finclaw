@@ -31,6 +31,9 @@ interface ChatContainerProps {
   variant?: 'default' | 'dock';
   onQuickPrompt?: (text: string) => void;
   quickPrompts?: string[];
+  /** dock 变体空状态标题与描述 */
+  dockTitle?: string;
+  dockDescription?: string;
   /** 仅展示历史记录，不显示「清空」等操作 */
   readOnly?: boolean;
   /** 当前思考任务的起始时间（ms）；用于刷新后让计时延续 */
@@ -57,6 +60,8 @@ export function ChatContainer({
   variant = 'default',
   onQuickPrompt,
   quickPrompts = DOCK_QUICK_PROMPTS,
+  dockTitle,
+  dockDescription,
   readOnly = false,
   taskStartedAt = null,
 }: ChatContainerProps) {
@@ -130,9 +135,9 @@ export function ChatContainer({
             decorative
             className="mb-3 rounded-2xl shadow-md ring-2 ring-violet-500/15"
           />
-          <h3 className="mb-2 text-base font-medium text-foreground">想问点什么？</h3>
+          <h3 className="mb-2 text-base font-medium text-foreground">{dockTitle ?? '想问点什么？'}</h3>
           <p className="mb-4 max-w-xs text-xs text-muted-foreground leading-relaxed">
-            可直接输入问题；在资讯列表勾选文章后提问，会自动带上原文链接。
+            {dockDescription ?? '可直接输入问题；在资讯列表勾选文章后提问，会自动带上原文链接。'}
           </p>
           {onQuickPrompt && quickPrompts.length > 0 && (
             <div className="flex flex-wrap justify-center gap-2">
@@ -154,6 +159,11 @@ export function ChatContainer({
     return (
       <div className="flex flex-1 flex-col items-center justify-center px-6 py-16">
         <div className="text-center">
+          <ChatMascot
+            size={72}
+            decorative
+            className="mx-auto mb-4 rounded-2xl shadow-md ring-2 ring-violet-500/15"
+          />
           <h2 className="mb-2 text-xl font-medium text-foreground/90">
             {agentName ? `与 ${agentName} 开始对话` : '欢迎使用 Finclaw'}
           </h2>

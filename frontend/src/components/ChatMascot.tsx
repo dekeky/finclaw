@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import mascotPng from '@/assets/chat/finclaw-anime-mascot.png';
+import { FinclawMark } from '@/components/FinclawMark';
 
 export type ChatMascotProps = {
   size?: number;
@@ -9,19 +9,15 @@ export type ChatMascotProps = {
   decorative?: boolean;
 };
 
-/** 对话区二次元助手形象（空状态、助手头像等） */
+/** 对话区助手形象（空状态等），统一使用 Finclaw 品牌图标 */
 export function ChatMascot({ size = 64, className, style, decorative }: ChatMascotProps) {
   return (
-    <img
-      src={mascotPng}
-      alt={decorative ? '' : 'Finclaw 助手'}
-      width={size}
-      height={size}
+    <FinclawMark
+      variant="mark"
+      size={size}
       className={className}
-      style={{ display: 'block', objectFit: 'cover', flexShrink: 0, ...style }}
-      decoding="async"
-      loading="eager"
+      style={style}
+      decorative={decorative}
     />
   );
 }
-

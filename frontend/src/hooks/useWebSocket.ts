@@ -170,7 +170,7 @@ export interface UseWebSocketReturn {
   status: ConnectionStatus;
   isTyping: boolean;
   sendError: string | null;
-  send: (content: string, media?: string[]) => void;
+  send: (content: string, media?: string[], opts?: { displayContent?: string }) => void;
   /** 收起「正在思考」指示（仅本地 UI，不中断服务端生成） */
   stop: () => void;
   /**
@@ -1058,7 +1058,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   }, [reconnect]);
 
   const send = useCallback(
-    (content: string, media?: string[]) => {
+    (content: string, media?: string[], opts?: { displayContent?: string }) => {
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         setSendError('Connection lost. Please reconnect.');
@@ -1123,9 +1123,17 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
               filename: `image-${i + 1}`,
             }))
           : undefined;
+      const displayContent = opts?.displayContent?.trim() || undefined;
       const next = foldChatMessages([
         ...base,
-        { id, role: 'user', content, timestamp: new Date(), attachments },
+        {
+          id,
+          role: 'user',
+          content,
+          displayContent,
+          timestamp: new Date(),
+          attachments,
+        },
       ]);
       messagesRef.current = next;
       setMessages(commitMessages(next));

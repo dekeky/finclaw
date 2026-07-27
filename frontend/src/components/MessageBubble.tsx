@@ -14,6 +14,7 @@ import {
   IconWriting,
 } from '@tabler/icons-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { extractStrategyUserRequest } from '@/lib/strategyPlatforms';
 import type { ChatMessage, ProcessSegment } from '../types';
 import { MarkdownContent } from './MarkdownContent';
 import { MessageAttachments } from './MessageAttachments';
@@ -436,6 +437,10 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   });
 
   const isUser = message.role === 'user';
+  const userVisibleContent =
+    isUser
+      ? (message.displayContent ?? extractStrategyUserRequest(message.content))
+      : message.content;
   const isLegacyTool =
     !isUser && (message.kind === 'tool' || isPicoclawToolFeedbackContent(message.content));
   const { thought, body } =
@@ -471,9 +476,9 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             {message.attachments && message.attachments.length > 0 && (
               <MessageAttachments attachments={message.attachments} />
             )}
-            {message.content && (
+            {userVisibleContent && (
               <div className="rounded-2xl rounded-tr-sm bg-violet-500 px-4 py-3 text-[15px] leading-relaxed text-white">
-                <span>{message.content}</span>
+                <span>{userVisibleContent}</span>
               </div>
             )}
           </div>

@@ -28,6 +28,7 @@ export interface PersistedMessage {
   id: string;
   role: MessageRole;
   content: string;
+  displayContent?: string;
   timestamp: string;
   kind?: MessageKind;
   processSegments?: ProcessSegment[];
@@ -302,6 +303,7 @@ function msgToPersisted(m: ChatMessage): PersistedMessage {
     content: m.content,
     timestamp: (m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp)).toISOString(),
   };
+  if (m.displayContent) row.displayContent = m.displayContent;
   if (m.kind) row.kind = m.kind;
   if (m.processSegments?.length) row.processSegments = m.processSegments;
   if (typeof m.taskElapsedSec === 'number') row.taskElapsedSec = m.taskElapsedSec;
@@ -313,6 +315,7 @@ function persistedToMessages(rows: PersistedMessage[]): ChatMessage[] {
     id: m.id,
     role: m.role,
     content: m.content,
+    displayContent: m.displayContent,
     timestamp: new Date(m.timestamp),
     kind: m.kind,
     processSegments: m.processSegments,
@@ -322,12 +325,12 @@ function persistedToMessages(rows: PersistedMessage[]): ChatMessage[] {
 
 function inferTitle(messages: ChatMessage[]): string {
   const firstUser = messages.find((m) => m.role === 'user');
-  return titleFromContent(firstUser?.content);
+  return titleFromContent(firstUser?.displayContent ?? firstUser?.content);
 }
 
 function inferTitleFromRows(rows: PersistedMessage[]): string {
   const firstUser = rows.find((m) => m.role === 'user');
-  return titleFromContent(firstUser?.content);
+  return titleFromContent(firstUser?.displayContent ?? firstUser?.content);
 }
 
 function titleFromContent(raw: string | undefined): string {

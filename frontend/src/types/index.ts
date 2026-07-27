@@ -26,6 +26,8 @@ export interface ChatMessage {
   id: string;
   role: MessageRole;
   content: string;
+  /** User-facing text; when set, UI shows this instead of content (which may include hidden context). */
+  displayContent?: string;
   timestamp: Date;
   kind?: MessageKind;
   /** 合并后的思考 + 工具步骤（kind === 'process'） */
