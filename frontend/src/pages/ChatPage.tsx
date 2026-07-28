@@ -47,6 +47,7 @@ import {
 import { prefetchModels } from '@/api/models';
 import { getAgent } from '@/api/agents';
 import { useState, useRef, useMemo, useEffect, useCallback, type ChangeEvent, type MouseEvent } from 'react';
+import TextareaAutosize from 'react-textarea-autosize';
 import { filesToPendingImages, type PendingImage } from '@/lib/imageAttach';
 import { cn } from '@/lib/cn';
 import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
@@ -540,7 +541,7 @@ export default function ChatPage() {
                         ))}
                       </div>
                     )}
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-end gap-2">
                       <input
                         ref={fileInputRef}
                         type="file"
@@ -563,10 +564,11 @@ export default function ChatPage() {
                         </TooltipTrigger>
                         <TooltipContent side="top">添加图片</TooltipContent>
                       </Tooltip>
-                      <textarea
-                        className="min-h-9 w-full resize-none bg-transparent px-3 py-1.5 text-[15px] leading-normal text-foreground outline-none placeholder:text-muted-foreground"
+                      <TextareaAutosize
+                        className="w-full resize-none bg-transparent px-3 py-1.5 text-[15px] leading-normal text-foreground outline-none break-words whitespace-pre-wrap placeholder:text-muted-foreground"
                         placeholder={dock.selectedKeys.size > 0 ? '已选文章将自动附带到对话中...' : "输入您的问题...。输入'/'可使用系统命令，如'/stop'可中止当前回复"}
-                        rows={1}
+                        minRows={1}
+                        maxRows={10}
                         value={value}
                         onChange={(e) => setValue(e.target.value)}
                         disabled={status !== 'connected'}
