@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { IconChartAreaLine, IconPlus, IconTrash } from '@tabler/icons-react';
+import { Link, useLocation } from 'react-router-dom';
+import { IconChartAreaLine, IconExternalLink, IconLibrary, IconPlus, IconShare2, IconTrash } from '@tabler/icons-react';
 import { PanelResizeHandle } from '@/components/PanelResizeHandle';
 import { StrategyChatPanel } from '@/components/StrategyChatPanel';
 import { StrategyCodeEditor } from '@/components/StrategyCodeEditor';
 import { StrategyCreateDialog } from '@/components/StrategyCreateDialog';
+import { StrategyShareDialog } from '@/components/StrategyShareDialog';
+import { StrategyPlatformBadge } from '@/components/StrategyPlatformField';
 import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
 import { useHorizontalResize } from '@/hooks/useHorizontalResize';
@@ -24,6 +27,7 @@ import {
 } from '@/api/strategies';
 import {
   DEFAULT_STRATEGY_PLATFORM,
+  getStrategyPlatformConfig,
   normalizeStrategyPlatform,
   type StrategyPlatform,
 } from '@/lib/strategyPlatforms';
@@ -39,6 +43,7 @@ import {
 } from '@/lib/primaryButton';
 import { toast } from 'sonner';
 import { useAgents } from '@/state/agents';
+import { shareStrategyToLibrary } from '@/api/strategyLibrary';
 
 type EditorForm = {
   name: string;
@@ -71,6 +76,7 @@ function formatUpdatedAt(iso: string): string {
 }
 
 export default function BacktestPage() {
+  const location = useLocation();
   const { refresh: refreshAgents, currentAgent } = useAgents();
   const [strategies, setStrategies] = useState<StrategySummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,8 +90,15 @@ export default function BacktestPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState('');
+  const [createPlatform, setCreatePlatform] = useState<StrategyPlatform>(DEFAULT_STRATEGY_PLATFORM);
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareTitle, setShareTitle] = useState('');
+  const [shareSummary, setShareSummary] = useState('');
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [shareSuccess, setShareSuccess] = useState(false);
   const { confirm, dialog: confirmDialog } = useConfirm();
 
   const listResize = useHorizontalResize({
@@ -122,6 +135,14 @@ export default function BacktestPage() {
     void refresh();
     void refreshAgents();
   }, [refresh, refreshAgents]);
+
+  useEffect(() => {
+    const state = location.state as { selectedStrategy?: string } | null;
+    if (state?.selectedStrategy) {
+      setSelectedName(state.selectedStrategy);
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -173,12 +194,47 @@ export default function BacktestPage() {
 
   const resetCreateForm = () => {
     setCreateName('');
+    setCreatePlatform(DEFAULT_STRATEGY_PLATFORM);
     setCreateError(null);
   };
 
   const openCreate = () => {
     resetCreateForm();
     setCreateOpen(true);
+  };
+
+  const resetShareForm = () => {
+    setShareTitle('');
+    setShareSummary('');
+    setShareError(null);
+    setShareSuccess(false);
+  };
+
+  const openShare = () => {
+    if (!selectedName) return;
+    resetShareForm();
+    setShareTitle(form.name.trim() || selectedName);
+    setShareOpen(true);
+  };
+
+  const handleShareSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedName || shareBusy) return;
+    setShareBusy(true);
+    setShareError(null);
+    try {
+      await shareStrategyToLibrary({
+        strategy_name: selectedName,
+        title: shareTitle.trim() || selectedName,
+        summary: shareSummary.trim() || undefined,
+      });
+      setShareSuccess(true);
+      toast.success('已发布到策略库');
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : '发布失败');
+    } finally {
+      setShareBusy(false);
+    }
   };
 
   const handleCreateSubmit = async (e: FormEvent) => {
@@ -195,7 +251,7 @@ export default function BacktestPage() {
     try {
       const detail = await createStrategy({
         name,
-        platform: DEFAULT_STRATEGY_PLATFORM,
+        platform: createPlatform,
         agent: currentAgent ?? undefined,
       });
       setCreateOpen(false);
@@ -289,12 +345,19 @@ export default function BacktestPage() {
   };
 
   const strategyReady = !dirty && Boolean(form.path);
+  const platformConfig = getStrategyPlatformConfig(form.platform);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border/50 px-4">
         <SidebarExpandTrigger />
         <h1 className="min-w-0 flex-1 text-base font-medium tracking-tight text-foreground/90">量化回测</h1>
+        <Button asChild variant="outline" size="sm" className="h-8 gap-1 text-xs">
+          <Link to="/backtest/library">
+            <IconLibrary className="size-3.5" stroke={1.75} />
+            策略库
+          </Link>
+        </Button>
         <ThemeToggle />
       </div>
 
@@ -356,9 +419,14 @@ export default function BacktestPage() {
                       )}
                       onClick={() => setSelectedName(s.name)}
                     >
-                      <div className="truncate text-sm font-medium">{s.name}</div>
-                      <div className="mt-1 text-[10px] text-muted-foreground/70">
-                        更新于 {formatUpdatedAt(s.updated_at)}
+                      <div className="flex min-w-0 items-baseline justify-between gap-2">
+                        <span className="min-w-0 truncate text-sm font-medium">{s.name}</span>
+                        <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/70">
+                          {formatUpdatedAt(s.updated_at)}
+                        </span>
+                      </div>
+                      <div className="mt-1">
+                        <StrategyPlatformBadge platform={s.platform} />
                       </div>
                     </button>
                     <button
@@ -391,7 +459,18 @@ export default function BacktestPage() {
               </div>
               <h2 className="text-base font-medium">量化策略管理</h2>
               <p className="max-w-md text-sm text-muted-foreground">
-                每个策略对应一个 Python 文件。保存后可通过右侧 AI 对话，让 Agent 直接修改策略文件。
+                每个策略对应一个 Python 文件。保存后可通过右侧 AI 对话让 Agent 直接修改策略文件，再复制到
+                {' '}
+                <a
+                  href={getStrategyPlatformConfig(DEFAULT_STRATEGY_PLATFORM).backtestUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary underline-offset-2 hover:underline"
+                >
+                  聚宽回测平台
+                </a>
+                {' '}
+                运行验证。
               </p>
               <Button type="button" className={PRIMARY_BUTTON_CLASS} onClick={openCreate}>
                 <IconPlus className="size-4" />
@@ -408,10 +487,28 @@ export default function BacktestPage() {
                   className="h-8 max-w-[220px] text-sm font-medium"
                   disabled={detailLoading}
                 />
+                <StrategyPlatformBadge platform={form.platform} />
                 {form.path && (
-                  <span className="hidden truncate font-mono text-[11px] text-muted-foreground sm:inline">
-                    {form.path}
-                  </span>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="hidden truncate font-mono text-[11px] text-muted-foreground sm:inline">
+                      {form.path}
+                    </span>
+                    <Button
+                      asChild
+                      size="xs"
+                      className={cn('shrink-0 gap-1', PRIMARY_BUTTON_CLASS)}
+                    >
+                      <a
+                        href={platformConfig.backtestUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={`前往${platformConfig.label}回测`}
+                      >
+                        {platformConfig.label}回测
+                        <IconExternalLink className="size-3" stroke={1.75} />
+                      </a>
+                    </Button>
+                  </div>
                 )}
                 <div className="ml-auto flex shrink-0 items-center gap-2">
                   {dirty && (
@@ -419,6 +516,18 @@ export default function BacktestPage() {
                       未保存
                     </Badge>
                   )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="gap-1"
+                    disabled={dirty || detailLoading}
+                    title={dirty ? '请先保存后再分享' : '分享到策略库'}
+                    onClick={openShare}
+                  >
+                    <IconShare2 className="size-3.5" stroke={1.75} />
+                    分享
+                  </Button>
                   <Button
                     type="button"
                     size="sm"
@@ -471,11 +580,27 @@ export default function BacktestPage() {
         onOpenChange={setCreateOpen}
         name={createName}
         onNameChange={setCreateName}
+        platform={createPlatform}
+        onPlatformChange={setCreatePlatform}
         nameConflict={createNameConflict}
         busy={createBusy}
         error={createError}
         onSubmit={handleCreateSubmit}
         onCancel={resetCreateForm}
+      />
+      <StrategyShareDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        strategyName={selectedName ?? ''}
+        title={shareTitle}
+        onTitleChange={setShareTitle}
+        summary={shareSummary}
+        onSummaryChange={setShareSummary}
+        busy={shareBusy}
+        error={shareError}
+        success={shareSuccess}
+        onSubmit={handleShareSubmit}
+        onCancel={resetShareForm}
       />
       {confirmDialog}
     </div>

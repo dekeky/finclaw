@@ -8,6 +8,7 @@ const ModelsPage = lazy(() => import('./pages/ModelsPage'));
 const AgentMarketPage = lazy(() => import('./pages/AgentMarketPage'));
 const AgentsPage = lazy(() => import('./pages/AgentsPage'));
 const BacktestPage = lazy(() => import('./pages/BacktestPage'));
+const StrategyLibraryPage = lazy(() => import('./pages/StrategyLibraryPage'));
 const ChatPage = lazy(() => import('./pages/ChatPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const NewsPage = lazy(() => import('./pages/NewsPage'));
@@ -63,6 +64,7 @@ export default function App() {
             <Route path="/models" element={<ModelsPage />} />
             <Route path="/agents/market" element={<AgentMarketPage />} />
             <Route path="/backtest" element={<BacktestPage />} />
+            <Route path="/backtest/library" element={<StrategyLibraryPage />} />
             <Route path="/weixin" element={<WeixinPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/chat" replace />} />

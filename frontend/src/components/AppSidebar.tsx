@@ -2,6 +2,7 @@ import {
   IconBuildingStore,
   IconChartAreaLine,
   IconCpu,
+  IconLibrary,
   IconNews,
   IconRobot,
 } from '@tabler/icons-react';
@@ -40,6 +41,7 @@ const COMM_NAV = [
 const MORE_NAV = [
   { title: '金融资讯', url: '/news', icon: IconNews },
   { title: '量化回测', url: '/backtest', icon: IconChartAreaLine },
+  { title: '策略库', url: '/backtest/library', icon: IconLibrary },
 ] as const;
 
 function isNavActive(currentPath: string, url: string): boolean {
