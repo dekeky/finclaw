@@ -75,8 +75,11 @@ func (s *Store) CreateUser(account, email, password, displayName string) (*User,
 		return nil, fmt.Errorf("insert user: %w", err)
 	}
 
-	userDir := userHomeDir(user.ID)
-	if err := os.MkdirAll(userDir, 0755); err != nil {
+	userDir, err := UserHomeDirForAccount(user.Account)
+	if err != nil {
+		return nil, fmt.Errorf("resolve user directory: %w", err)
+	}
+	if err := os.MkdirAll(userDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create user directory: %w", err)
 	}
 
@@ -179,6 +182,7 @@ func CheckPassword(hashed, plain string) bool {
 }
 
 func UserHomeDir(userID string) string {
+	// Deprecated: use Store.ResolveUserHomeDir for account-based paths.
 	return userHomeDir(userID)
 }
 

@@ -33,7 +33,7 @@ type strategyDetail struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// StrategyStore persists quant strategies as single .py files under ~/.finclaw/{userID}/strategies/.
+// StrategyStore persists quant strategies as single .py files under ~/.finclaw/{account}/strategies/.
 type StrategyStore struct {
 	mu     sync.Mutex
 	root   string
@@ -128,7 +128,7 @@ func (s *StrategyStore) toSummary(name string, entry strategyIndexEntry) strateg
 	return strategySummary{
 		Name:      name,
 		Platform:  platform,
-		Path:      StrategyRelPath(name),
+		Path:      s.filePath(name),
 		UpdatedAt: entry.UpdatedAt,
 	}
 }
@@ -285,15 +285,6 @@ func (s *StrategyStore) Create(name, platform, script, agentName string) (strate
 		_ = os.Remove(s.filePath(name))
 		return strategyDetail{}, err
 	}
-	if err := SyncStrategyToAgentWorkspaces(s.userID, name); err != nil {
-		return strategyDetail{}, err
-	}
-	agentName = strings.TrimSpace(agentName)
-	if agentName != "" {
-		if err := SyncStrategyToAgentWorkspace(s.userID, agentName, name); err != nil {
-			return strategyDetail{}, err
-		}
-	}
 	return s.toDetail(name, entry, script), nil
 }
 
@@ -343,37 +334,23 @@ func (s *StrategyStore) Update(currentName string, patchName, platform, script s
 		delete(index.Entries, currentName)
 	}
 
-	if script != "" {
-		if err := s.writeScript(newName, script); err != nil {
-			return strategyDetail{}, err
-		}
-	} else {
-		script, err = s.readScript(newName)
-		if err != nil {
-			return strategyDetail{}, err
-		}
+	if err := s.writeScript(newName, script); err != nil {
+		return strategyDetail{}, err
 	}
 
 	index.Entries[newName] = entry
 	if err := s.saveIndex(index); err != nil {
 		return strategyDetail{}, err
 	}
-	if err := SyncStrategyToAgentWorkspaces(s.userID, newName); err != nil {
-		return strategyDetail{}, err
-	}
 	return s.toDetail(newName, entry, script), nil
 }
 
-func (s *StrategyStore) SyncToAgent(agentName, strategyName string) error {
+func (s *StrategyStore) SyncToAgent(_ string, strategyName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	strategyName, err := normalizeStrategyName(strategyName)
 	if err != nil {
 		return err
-	}
-	agentName = strings.TrimSpace(agentName)
-	if agentName == "" {
-		return fmt.Errorf("agent name is required")
 	}
 	if err := s.migrateLegacyLayout(); err != nil {
 		return err
@@ -385,10 +362,10 @@ func (s *StrategyStore) SyncToAgent(agentName, strategyName string) error {
 	if _, ok := index.Entries[strategyName]; !ok {
 		return fmt.Errorf("strategy %q not found", strategyName)
 	}
-	return SyncStrategyToAgentWorkspace(s.userID, agentName, strategyName)
+	return nil
 }
 
-func (s *StrategyStore) PullFromAgent(agentName, strategyName string) (strategyDetail, error) {
+func (s *StrategyStore) PullFromAgent(_ string, strategyName string) (strategyDetail, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	strategyName, err := normalizeStrategyName(strategyName)
@@ -406,10 +383,13 @@ func (s *StrategyStore) PullFromAgent(agentName, strategyName string) (strategyD
 	if !ok {
 		return strategyDetail{}, fmt.Errorf("strategy %q not found", strategyName)
 	}
-	if changed, err := PullStrategyFromAgentWorkspace(s.userID, agentName, strategyName); err != nil {
-		return strategyDetail{}, err
-	} else if changed {
-		entry.UpdatedAt = time.Now().UTC()
+	info, err := os.Stat(s.filePath(strategyName))
+	if err != nil {
+		return strategyDetail{}, fmt.Errorf("strategy file: %w", err)
+	}
+	fileTime := info.ModTime().UTC()
+	if fileTime.After(entry.UpdatedAt) {
+		entry.UpdatedAt = fileTime
 		index.Entries[strategyName] = entry
 		if err := s.saveIndex(index); err != nil {
 			return strategyDetail{}, err
@@ -445,9 +425,6 @@ func (s *StrategyStore) Delete(name string) error {
 	}
 	if err := os.Remove(s.filePath(name)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("delete strategy file: %w", err)
-	}
-	if err := RemoveStrategyFromAgentWorkspaces(s.userID, name); err != nil {
-		return err
 	}
 	return nil
 }

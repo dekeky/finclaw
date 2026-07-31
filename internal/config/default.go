@@ -8,10 +8,10 @@ import (
 )
 
 const (
-	FinclawHomeEnv    = "FINCLAW_HOME"
-	FinclawConfigFile = "finclaw.toml"
-	FinclawWorkspace  = "workspace"
-	RssSourceFile     = "rss.config"
+	FinclawHomeEnv      = "FINCLAW_HOME"
+	FinclawConfigFile   = "finclaw.toml"
+	FinclawWorkspace    = "workspace"
+	RssSourceFile       = "rss.config"
 
 	// DefaultAgentHubAddr is the desktop AgentHub market service base URL.
 	DefaultAgentHubAddr = "http://159.75.51.78:9093"

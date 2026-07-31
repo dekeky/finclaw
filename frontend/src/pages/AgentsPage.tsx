@@ -9,6 +9,7 @@ import {
   PANEL_WIDTH_KEYS,
   PANEL_WIDTH_LIMITS,
 } from '@/lib/panelWidths';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { useAgents, findAgentSummary } from '../state/agents';
 import {
   getAgent,
@@ -107,6 +108,7 @@ function saveDetailTab(tab: DetailTab) {
 
 export default function AgentsPage() {
   const { agents, agentNames, avatarRevision, currentAgent, selectAgent, refresh, createAgent, deleteAgent } = useAgents();
+  const { requireAuth } = useRequireAuth();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const agentParam = searchParams.get('agent');
@@ -244,13 +246,14 @@ export default function AgentsPage() {
   const detailSummary = useMemo(() => findAgentSummary(agents, detailName), [agents, detailName]);
 
   const openAddForm = useCallback(() => {
+    if (!requireAuth()) return;
     void refresh();
     setForm(EMPTY_FORM);
     setSelectedModel('');
     setModelsMeta({ models: [], loading: false, error: null });
     setSubmitError(null);
     setAddOpen(true);
-  }, [refresh]);
+  }, [refresh, requireAuth]);
 
   const handleModelsMetaChange = useCallback((meta: AgentModelsMeta) => {
     setModelsMeta(meta);
@@ -273,15 +276,15 @@ export default function AgentsPage() {
 
   const saveSkillContent = useCallback(
     async (content: string) => {
-      if (!detailName || !skillFile) return;
+      if (!requireAuth() || !detailName || !skillFile) return;
       await writeAgentSkillFile(detailName, skillFile.source, skillFile.skill, skillFile.file, content);
     },
-    [detailName, skillFile],
+    [requireAuth, detailName, skillFile],
   );
 
   const handleDeleteSkill = useCallback(
     async (source: string, skill: string, name: string) => {
-      if (!detailName) return;
+      if (!requireAuth() || !detailName) return;
       const ok = await confirm({
         title: `删除 Skill 包「${name}」`,
         description: '将永久删除该 Skill 包及其全部文件，操作不可恢复。',
@@ -299,7 +302,7 @@ export default function AgentsPage() {
         window.alert(err instanceof Error ? err.message : '删除失败');
       }
     },
-    [detailName, skillFile, confirm],
+    [requireAuth, detailName, skillFile, confirm],
   );
 
   const handleDownloadSkillPath = useCallback(
@@ -316,7 +319,7 @@ export default function AgentsPage() {
 
   const handleShareSkillPath = useCallback(
     async (source: string, skill: string, relPath: string, isDir?: boolean) => {
-      if (!detailName) return;
+      if (!requireAuth() || !detailName) return;
       if (isDir || !relPath.trim()) {
         toast.error('暂不支持分享文件夹');
         return;
@@ -334,12 +337,12 @@ export default function AgentsPage() {
         toast.error(err instanceof Error ? err.message : '创建分享失败');
       }
     },
-    [detailName],
+    [requireAuth, detailName],
   );
 
   const handleDeleteSkillPath = useCallback(
     async (source: string, skill: string, relPath: string, isDir: boolean, skillName: string) => {
-      if (!detailName) return;
+      if (!requireAuth() || !detailName) return;
       const label = relPath.split('/').pop() ?? relPath;
       const ok = await confirm({
         title: isDir ? `删除文件夹「${label}」` : `删除文件「${label}」`,
@@ -364,7 +367,7 @@ export default function AgentsPage() {
         window.alert(err instanceof Error ? err.message : '删除失败');
       }
     },
-    [detailName, skillFile, confirm],
+    [requireAuth, detailName, skillFile, confirm],
   );
 
   useEffect(() => {
@@ -389,7 +392,7 @@ export default function AgentsPage() {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formValid || submitting) return;
+    if (!requireAuth() || !formValid || submitting) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -406,6 +409,7 @@ export default function AgentsPage() {
   };
 
   const onDelete = async (name: string) => {
+    if (!requireAuth()) return;
     if (pendingDelete) return;
     const ok = await confirm({
       title: `删除 Agent「${name}」`,
@@ -427,7 +431,7 @@ export default function AgentsPage() {
   };
 
   const openUploadDialog = useCallback(() => {
-    if (!detailName) return;
+    if (!requireAuth() || !detailName) return;
     setUploadForm({ displayName: detailName, summary: '', uploadToken: loadCachedUploadToken() });
     setUploadError(null);
     setUploadSuccess(false);
@@ -436,10 +440,10 @@ export default function AgentsPage() {
     setSummaryPolishPrompt('');
     setSummaryPolishError(null);
     setUploadOpen(true);
-  }, [detailName]);
+  }, [requireAuth, detailName]);
 
   const onPolishSummary = useCallback(async () => {
-    if (!detailName || summaryPolishing || uploading) return;
+    if (!requireAuth() || !detailName || summaryPolishing || uploading) return;
     setSummaryPolishing(true);
     setSummaryPolishError(null);
     try {
@@ -454,11 +458,11 @@ export default function AgentsPage() {
     } finally {
       setSummaryPolishing(false);
     }
-  }, [detailName, summaryPolishing, uploading, summaryPolishPrompt, uploadForm.displayName, uploadForm.summary]);
+  }, [requireAuth, detailName, summaryPolishing, uploading, summaryPolishPrompt, uploadForm.displayName, uploadForm.summary]);
 
   const onUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!detailName || uploading) return;
+    if (!requireAuth() || !detailName || uploading) return;
     setUploading(true);
     setUploadError(null);
     try {

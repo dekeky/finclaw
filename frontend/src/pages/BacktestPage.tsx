@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { IconChartAreaLine, IconExternalLink, IconLibrary, IconPlus, IconShare2, IconTrash } from '@tabler/icons-react';
+import { useLocation } from 'react-router-dom';
+import {
+  IconBuildingWarehouse,
+  IconChartAreaLine,
+  IconCopy,
+  IconExternalLink,
+  IconPlus,
+  IconShare2,
+  IconTrash,
+} from '@tabler/icons-react';
 import { PanelResizeHandle } from '@/components/PanelResizeHandle';
 import { StrategyChatPanel } from '@/components/StrategyChatPanel';
 import { StrategyCodeEditor } from '@/components/StrategyCodeEditor';
@@ -37,13 +45,18 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/cn';
+import { copyToClipboard } from '@/lib/clipboard';
 import {
   PRIMARY_BUTTON_CLASS,
   PRIMARY_LIST_ITEM_SELECTED_CLASS,
+  SAVE_BUTTON_IDLE_CLASS,
 } from '@/lib/primaryButton';
 import { toast } from 'sonner';
 import { useAgents } from '@/state/agents';
-import { shareStrategyToLibrary } from '@/api/strategyLibrary';
+import { useAuth } from '@/state/auth';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
+import { shareStrategyToLibrary, type StrategyLibrarySummary } from '@/api/strategyLibrary';
+import { StrategyLibraryDetailView, StrategyLibraryPanel } from '@/components/StrategyLibraryPanel';
 
 type EditorForm = {
   name: string;
@@ -75,8 +88,24 @@ function formatUpdatedAt(iso: string): string {
   }
 }
 
+function formFromDetail(detail: {
+  name: string;
+  platform: string;
+  script: string;
+  path?: string;
+}): EditorForm {
+  return {
+    name: detail.name,
+    platform: normalizeStrategyPlatform(detail.platform),
+    script: detail.script,
+    path: detail.path || strategyRelPath(detail.name),
+  };
+}
+
 export default function BacktestPage() {
   const location = useLocation();
+  const { user } = useAuth();
+  const { requireAuth } = useRequireAuth();
   const { refresh: refreshAgents, currentAgent } = useAgents();
   const [strategies, setStrategies] = useState<StrategySummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,6 +113,7 @@ export default function BacktestPage() {
   const [search, setSearch] = useState('');
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [form, setForm] = useState<EditorForm>(() => emptyForm());
+  const [savedForm, setSavedForm] = useState<EditorForm>(() => emptyForm());
   const [dirty, setDirty] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -99,7 +129,12 @@ export default function BacktestPage() {
   const [shareBusy, setShareBusy] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
   const [shareSuccess, setShareSuccess] = useState(false);
+  const [showLibrary, setShowLibrary] = useState(false);
+  const [libraryEntry, setLibraryEntry] = useState<StrategyLibrarySummary | null>(null);
+  const [libraryRefreshKey, setLibraryRefreshKey] = useState(0);
   const { confirm, dialog: confirmDialog } = useConfirm();
+
+  const existingStrategyNames = useMemo(() => strategies.map((s) => s.name), [strategies]);
 
   const listResize = useHorizontalResize({
     storageKey: PANEL_WIDTH_KEYS.backtestList,
@@ -115,6 +150,13 @@ export default function BacktestPage() {
   });
 
   const refresh = useCallback(async () => {
+    if (!user) {
+      setStrategies([]);
+      setLoading(false);
+      setLoadError(null);
+      setSelectedName(null);
+      return;
+    }
     setLoading(true);
     setLoadError(null);
     try {
@@ -129,7 +171,7 @@ export default function BacktestPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     void refresh();
@@ -166,14 +208,10 @@ export default function BacktestPage() {
     setSubmitError(null);
     try {
       const detail = await getStrategy(name);
-      const platform = normalizeStrategyPlatform(detail.platform);
-      setForm({
-        name: detail.name,
-        platform,
-        script: detail.script,
-        path: detail.path || strategyRelPath(detail.name),
-      });
+      const nextForm = formFromDetail(detail);
+      setForm(nextForm);
       if (!opts?.preserveDirty) {
+        setSavedForm(nextForm);
         setDirty(false);
       }
     } catch (err) {
@@ -188,6 +226,7 @@ export default function BacktestPage() {
       void loadDetail(selectedName);
     } else {
       setForm(emptyForm());
+      setSavedForm(emptyForm());
       setDirty(false);
     }
   }, [selectedName, loadDetail]);
@@ -199,6 +238,7 @@ export default function BacktestPage() {
   };
 
   const openCreate = () => {
+    if (!requireAuth()) return;
     resetCreateForm();
     setCreateOpen(true);
   };
@@ -211,15 +251,28 @@ export default function BacktestPage() {
   };
 
   const openShare = () => {
-    if (!selectedName) return;
+    if (!requireAuth() || !selectedName) return;
     resetShareForm();
     setShareTitle(form.name.trim() || selectedName);
     setShareOpen(true);
   };
 
+  const handleCopyScript = async () => {
+    if (!form.script.trim()) {
+      toast.error('策略内容为空');
+      return;
+    }
+    try {
+      await copyToClipboard(form.script);
+      toast.success('策略代码已复制到剪贴板');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '复制失败');
+    }
+  };
+
   const handleShareSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!selectedName || shareBusy) return;
+    if (!requireAuth() || !selectedName || shareBusy) return;
     setShareBusy(true);
     setShareError(null);
     try {
@@ -229,6 +282,7 @@ export default function BacktestPage() {
         summary: shareSummary.trim() || undefined,
       });
       setShareSuccess(true);
+      setLibraryRefreshKey((k) => k + 1);
       toast.success('已发布到策略库');
     } catch (err) {
       setShareError(err instanceof Error ? err.message : '发布失败');
@@ -239,6 +293,7 @@ export default function BacktestPage() {
 
   const handleCreateSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!requireAuth()) return;
     const name = createName.trim();
     if (!name) {
       setCreateError('策略名称不能为空');
@@ -267,7 +322,7 @@ export default function BacktestPage() {
   };
 
   const handleSave = async () => {
-    if (!selectedName) return;
+    if (!requireAuth() || !selectedName) return;
     const name = form.name.trim();
     if (!name) {
       setSubmitError('策略名称不能为空');
@@ -284,12 +339,9 @@ export default function BacktestPage() {
       if (name !== selectedName) {
         setSelectedName(name);
       }
-      setForm({
-        name: detail.name,
-        platform: normalizeStrategyPlatform(detail.platform),
-        script: detail.script,
-        path: detail.path || strategyRelPath(detail.name),
-      });
+      const nextForm = formFromDetail(detail);
+      setForm(nextForm);
+      setSavedForm(nextForm);
       setDirty(false);
       toast.success('策略已保存');
       await refresh();
@@ -301,6 +353,7 @@ export default function BacktestPage() {
   };
 
   const handleDelete = async (name: string) => {
+    if (!requireAuth()) return;
     const ok = await confirm({
       title: `删除策略「${name}」`,
       description: '将永久删除该策略文件，操作不可恢复。',
@@ -314,6 +367,7 @@ export default function BacktestPage() {
       if (selectedName === name) {
         setSelectedName(null);
         setForm(emptyForm());
+        setSavedForm(emptyForm());
       }
       await refresh();
     } catch (err) {
@@ -325,19 +379,21 @@ export default function BacktestPage() {
     if (!selectedName) return;
     try {
       const detail = await pullStrategyFromAgent(selectedName, agentName);
-      const platform = normalizeStrategyPlatform(detail.platform);
-      setForm({
-        name: detail.name,
-        platform,
-        script: detail.script,
-        path: detail.path || strategyRelPath(detail.name),
-      });
+      const nextForm = formFromDetail(detail);
+      setForm(nextForm);
+      setSavedForm(nextForm);
       setDirty(false);
     } catch (err) {
       // Agent 运行中文件可能尚未就绪，静默失败，不打断用户
       console.warn('[Backtest] pull strategy after agent run failed:', err);
     }
   }, [selectedName]);
+
+  const handleRevert = () => {
+    setForm(savedForm);
+    setDirty(false);
+    setSubmitError(null);
+  };
 
   const updateField = <K extends keyof EditorForm>(key: K, value: EditorForm[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -352,12 +408,6 @@ export default function BacktestPage() {
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border/50 px-4">
         <SidebarExpandTrigger />
         <h1 className="min-w-0 flex-1 text-base font-medium tracking-tight text-foreground/90">量化回测</h1>
-        <Button asChild variant="outline" size="sm" className="h-8 gap-1 text-xs">
-          <Link to="/backtest/library">
-            <IconLibrary className="size-3.5" stroke={1.75} />
-            策略库
-          </Link>
-        </Button>
         <ThemeToggle />
       </div>
 
@@ -383,6 +433,7 @@ export default function BacktestPage() {
               新建策略
             </Button>
           </div>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <ScrollArea className="min-h-0 flex-1">
             {loading ? (
               <p className="p-4 text-center text-xs text-muted-foreground">加载中…</p>
@@ -417,16 +468,18 @@ export default function BacktestPage() {
                         'min-w-0 flex-1 rounded-lg px-3 py-2.5 text-left',
                         selectedName !== s.name && 'hover:bg-muted/60',
                       )}
-                      onClick={() => setSelectedName(s.name)}
+                      onClick={() => {
+                        setSelectedName(s.name);
+                        setShowLibrary(false);
+                        setLibraryEntry(null);
+                      }}
                     >
-                      <div className="flex min-w-0 items-baseline justify-between gap-2">
-                        <span className="min-w-0 truncate text-sm font-medium">{s.name}</span>
+                      <span className="block min-w-0 truncate text-sm font-medium">{s.name}</span>
+                      <div className="mt-1 flex min-w-0 items-center justify-between gap-2">
+                        <StrategyPlatformBadge platform={s.platform} />
                         <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/70">
                           {formatUpdatedAt(s.updated_at)}
                         </span>
-                      </div>
-                      <div className="mt-1">
-                        <StrategyPlatformBadge platform={s.platform} />
                       </div>
                     </button>
                     <button
@@ -448,11 +501,59 @@ export default function BacktestPage() {
               </ul>
             )}
           </ScrollArea>
+          <div className="shrink-0 border-t border-border/50 p-3">
+            <Button
+              type="button"
+              size="sm"
+              className={cn(
+                'h-8 w-full gap-1.5',
+                PRIMARY_BUTTON_CLASS,
+                (showLibrary || libraryEntry) && 'ring-2 ring-violet-400/60 ring-offset-1 ring-offset-background',
+              )}
+              onClick={() => {
+                setShowLibrary(true);
+                setSelectedName(null);
+                setLibraryEntry(null);
+              }}
+            >
+              <IconBuildingWarehouse className="size-4" stroke={1.75} />
+              策略库
+            </Button>
+          </div>
+          </div>
           <PanelResizeHandle {...listResize.handleProps} />
         </div>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {!selectedName ? (
+          {libraryEntry ? (
+            <StrategyLibraryDetailView
+              entry={libraryEntry}
+              existingStrategyNames={existingStrategyNames}
+              onBack={() => setLibraryEntry(null)}
+              onInstalled={(name) => {
+                setShowLibrary(false);
+                setLibraryEntry(null);
+                setSelectedName(name);
+                void refresh();
+              }}
+            />
+          ) : showLibrary ? (
+            <StrategyLibraryPanel
+              variant="cards"
+              hideTitle
+              existingStrategyNames={existingStrategyNames}
+              refreshKey={libraryRefreshKey}
+              onSelectEntry={(entry) => {
+                if (entry) setLibraryEntry(entry);
+              }}
+              onInstalled={(name) => {
+                setShowLibrary(false);
+                setLibraryEntry(null);
+                setSelectedName(name);
+                void refresh();
+              }}
+            />
+          ) : !selectedName ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
               <div className="flex size-14 items-center justify-center rounded-2xl bg-primary/10">
                 <IconChartAreaLine className="size-7 text-primary" />
@@ -470,7 +571,7 @@ export default function BacktestPage() {
                   聚宽回测平台
                 </a>
                 {' '}
-                运行验证。
+                运行验证。点击左侧「策略库」可查看社区分享的策略。
               </p>
               <Button type="button" className={PRIMARY_BUTTON_CLASS} onClick={openCreate}>
                 <IconPlus className="size-4" />
@@ -519,8 +620,18 @@ export default function BacktestPage() {
                   <Button
                     type="button"
                     size="sm"
-                    variant="outline"
-                    className="gap-1"
+                    className={cn('gap-1', PRIMARY_BUTTON_CLASS)}
+                    disabled={detailLoading || !form.script.trim()}
+                    title="复制策略代码到剪贴板"
+                    onClick={() => void handleCopyScript()}
+                  >
+                    <IconCopy className="size-3.5" stroke={1.75} />
+                    复制
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className={cn('gap-1', PRIMARY_BUTTON_CLASS)}
                     disabled={dirty || detailLoading}
                     title={dirty ? '请先保存后再分享' : '分享到策略库'}
                     onClick={openShare}
@@ -530,9 +641,18 @@ export default function BacktestPage() {
                   </Button>
                   <Button
                     type="button"
+                    variant="ghost"
                     size="sm"
-                    className={PRIMARY_BUTTON_CLASS}
-                    disabled={submitting || detailLoading}
+                    disabled={!dirty || submitting || detailLoading}
+                    onClick={handleRevert}
+                  >
+                    撤销
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className={cn(dirty ? PRIMARY_BUTTON_CLASS : SAVE_BUTTON_IDLE_CLASS)}
+                    disabled={submitting || detailLoading || !dirty}
                     onClick={() => void handleSave()}
                   >
                     {submitting ? '保存中…' : '保存'}
@@ -567,7 +687,6 @@ export default function BacktestPage() {
           <StrategyChatPanel
             className="h-full"
             platform={form.platform}
-            strategyName={selectedName}
             strategyPath={form.path}
             strategyReady={strategyReady}
             onStrategyFileChanged={handleAgentFileChanged}

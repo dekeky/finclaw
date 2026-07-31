@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { IconArrowLeft, IconRefresh, IconDownload, IconPackage, IconFileDescription } from '@tabler/icons-react';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 import {
   listMarketTemplates,
   getMarketTemplate,
@@ -118,6 +119,7 @@ export function AgentMarketPanel({
   search: searchProp,
   onSearchChange,
 }: AgentMarketPanelProps) {
+  const { requireAuth } = useRequireAuth();
   const [templates, setTemplates] = useState<MarketTemplate[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -241,7 +243,7 @@ export function AgentMarketPanel({
 
   const onInstall = async (e: FormEvent) => {
     e.preventDefault();
-    if (!selected || !formValid || installing) return;
+    if (!requireAuth() || !selected || !formValid || installing) return;
     setInstalling(true);
     setInstallError(null);
     try {
@@ -263,7 +265,7 @@ export function AgentMarketPanel({
   };
 
   const openInstallDialog = () => {
-    if (!templateInstallable) return;
+    if (!requireAuth() || !templateInstallable) return;
     setInstallError(null);
     setInstallDialogOpen(true);
   };

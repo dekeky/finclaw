@@ -8,7 +8,6 @@ export const AGENT_DOC_SCAN_ROOTS = [
   'research',
   'memos',
   'screening',
-  'strategies',
 ] as const;
 
 export function messageTouchesDocScanRoot(content: string): boolean {

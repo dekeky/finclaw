@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import { migrateSessionId } from '@/lib/agentSessions';
+import { useAuth } from './auth';
 import {
   createAgent as apiCreateAgent,
   deleteAgent as apiDeleteAgent,
@@ -65,6 +66,7 @@ function persistAgent(name: string | null) {
 }
 
 export function AgentsProvider({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [status, setStatus] = useState<LoadStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +82,14 @@ export function AgentsProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const refresh = useCallback(async () => {
+    if (!user) {
+      setAgents([]);
+      setStatus('ready');
+      setError(null);
+      setCurrentAgentRaw(null);
+      persistAgent(null);
+      return;
+    }
     if (inflightRef.current) return inflightRef.current;
     setStatus((prev) => (prev === 'ready' ? 'ready' : 'loading'));
     const p = (async () => {
@@ -104,7 +114,7 @@ export function AgentsProvider({ children }: { children: React.ReactNode }) {
     })();
     inflightRef.current = p;
     return p;
-  }, []);
+  }, [user]);
 
   const createAgent = useCallback(
     async (req: CreateAgentRequest) => {

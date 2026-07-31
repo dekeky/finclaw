@@ -26,22 +26,26 @@ import (
 
 func main() {
 	log.Println("🚀 Finclaw Agent Starting...")
-	// 1. Load configuration
 	finclawConf := finclawconfig.FinConfigGet()
-	// 2. Create message bus (the core of the system)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	agentManager, err := agentruntime.Init(ctx, finclawConf)
-	if err != nil {
-		log.Fatalf("❌ Failed to init agent manager: %v", err)
-	}
 
 	authStore, err := auth.NewStore()
 	if err != nil {
 		log.Fatalf("❌ Failed to init auth store: %v", err)
 	}
 	defer authStore.Close()
+
+	if err := authStore.MigrateUserHomeDirs(); err != nil {
+		log.Fatalf("❌ Failed to migrate user home directories: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	agentruntime.SetUserHomeLoader(authStore)
+	agentManager, err := agentruntime.Init(ctx, finclawConf, authStore)
+	if err != nil {
+		log.Fatalf("❌ Failed to init agent manager: %v", err)
+	}
 
 	agentHubAddr := finclawConf.AgentHubAddr
 	if agentHubAddr == "" {

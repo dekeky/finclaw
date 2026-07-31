@@ -44,8 +44,10 @@ import {
   loadConversation,
   type ConversationSummary,
 } from '@/lib/chatPersistence';
+import { useAuth } from '@/state/auth';
 import { prefetchModels } from '@/api/models';
 import { getAgent } from '@/api/agents';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { useState, useRef, useMemo, useEffect, useCallback, type ChangeEvent, type MouseEvent } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
 import { filesToPendingImages, type PendingImage } from '@/lib/imageAttach';
@@ -54,7 +56,9 @@ import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 import { TOOLBAR_ICON_BUTTON_CLASS } from '@/lib/toolbarButton';
 
 export default function ChatPage() {
+  const { user } = useAuth();
   const { agents, currentAgent, refresh, status: agentsLoadStatus, error: agentsLoadError } = useAgents();
+  const { requireAuth } = useRequireAuth();
   const [value, setValue] = useState('');
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -63,9 +67,9 @@ export default function ChatPage() {
 
   useEffect(() => {
     void refresh();
-    void prefetchModels();
-    if (currentAgent) void getAgent(currentAgent);
-  }, [refresh, currentAgent]);
+    if (user) void prefetchModels();
+    if (user && currentAgent) void getAgent(currentAgent);
+  }, [refresh, user, currentAgent]);
 
   const {
     messages,
@@ -128,9 +132,9 @@ export default function ChatPage() {
   }, [currentAgent, selectedDocPath, bumpDocsRefresh]);
 
   const saveSkillContent = useCallback(async (content: string) => {
-    if (!currentAgent || !skillFile) return;
+    if (!requireAuth() || !currentAgent || !skillFile) return;
     await writeAgentSkillFile(currentAgent, skillFile.source, skillFile.skill, skillFile.file, content);
-  }, [currentAgent, skillFile]);
+  }, [requireAuth, currentAgent, skillFile]);
 
   // ── 删除 ──
   const handleDownloadDoc = useCallback(async (fullPath: string, isDir: boolean) => {
@@ -143,7 +147,7 @@ export default function ChatPage() {
   }, [currentAgent]);
 
   const handleDeleteDoc = useCallback(async (fullPath: string, isDir: boolean) => {
-    if (!currentAgent) return false;
+    if (!requireAuth() || !currentAgent) return false;
     const name = fullPath.split('/').pop() ?? fullPath;
     const ok = await confirm({
       title: isDir ? `删除文件夹「${name}」` : `删除文件「${name}」`,
@@ -164,7 +168,7 @@ export default function ChatPage() {
       window.alert(err instanceof Error ? err.message : '删除失败');
       return false;
     }
-  }, [currentAgent, selectedDocPath, setSelectedDocPath, confirm]);
+  }, [requireAuth, currentAgent, selectedDocPath, setSelectedDocPath, confirm]);
 
   const handleDownloadSkillPath = useCallback(
     async (source: string, skill: string, relPath: string) => {
@@ -179,7 +183,7 @@ export default function ChatPage() {
   );
 
   const handleDeleteSkill = useCallback(async (source: string, skill: string, name: string) => {
-    if (!currentAgent) return;
+    if (!requireAuth() || !currentAgent) return;
     const ok = await confirm({
       title: `删除 Skill 包「${name}」`,
       description: '将永久删除该 Skill 包及其全部文件，操作不可恢复。',
@@ -196,11 +200,11 @@ export default function ChatPage() {
     } catch (err) {
       window.alert(err instanceof Error ? err.message : '删除失败');
     }
-  }, [currentAgent, skillFile, confirm]);
+  }, [requireAuth, currentAgent, skillFile, confirm]);
 
   const handleDeleteSkillPath = useCallback(
     async (source: string, skill: string, relPath: string, isDir: boolean, skillName: string) => {
-      if (!currentAgent) return;
+      if (!requireAuth() || !currentAgent) return;
       const label = relPath.split('/').pop() ?? relPath;
       const ok = await confirm({
         title: isDir ? `删除文件夹「${label}」` : `删除文件「${label}」`,
@@ -225,11 +229,11 @@ export default function ChatPage() {
         window.alert(err instanceof Error ? err.message : '删除失败');
       }
     },
-    [currentAgent, skillFile, confirm],
+    [requireAuth, currentAgent, skillFile, confirm],
   );
 
   const handleShareDoc = useCallback(async (fullPath: string, isDir?: boolean) => {
-    if (!currentAgent) return;
+    if (!requireAuth() || !currentAgent) return;
     if (isDir) {
       toast.error('暂不支持分享文件夹');
       return;
@@ -241,11 +245,11 @@ export default function ChatPage() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '创建分享失败');
     }
-  }, [currentAgent]);
+  }, [requireAuth, currentAgent]);
 
   const handleShareSkillPath = useCallback(
     async (source: string, skill: string, relPath: string, isDir?: boolean) => {
-      if (!currentAgent) return;
+      if (!requireAuth() || !currentAgent) return;
       if (isDir || !relPath.trim()) {
         toast.error('暂不支持分享文件夹');
         return;
@@ -263,7 +267,7 @@ export default function ChatPage() {
         toast.error(err instanceof Error ? err.message : '创建分享失败');
       }
     },
-    [currentAgent],
+    [requireAuth, currentAgent],
   );
 
   // 历史对话列表（含当前对话）：打开面板或数据变更时刷新
@@ -278,9 +282,10 @@ export default function ChatPage() {
 
   // 新对话：当前对话持续落盘、本身就是历史记录，直接切换到新会话即可
   const handleNewChat = useCallback(() => {
+    if (!requireAuth()) return;
     clearMessages({ startNewSession: true });
     bumpHistory();
-  }, [clearMessages, bumpHistory]);
+  }, [requireAuth, clearMessages, bumpHistory]);
 
   const handleRestoreConversation = useCallback(
     (item: ConversationSummary) => {
@@ -293,7 +298,7 @@ export default function ChatPage() {
   const handleDeleteConversation = useCallback(
     (e: MouseEvent, convId: string) => {
       e.stopPropagation();
-      if (!currentAgent) return;
+      if (!requireAuth() || !currentAgent) return;
       if (convId === getSessionId()) {
         // 删除的是当前对话：清空聊天区并丢弃记录，切换到新会话
         clearMessages({ startNewSession: true, discard: true });
@@ -302,7 +307,7 @@ export default function ChatPage() {
       }
       if (deleteConversation(convId)) bumpHistory();
     },
-    [currentAgent, bumpHistory, getSessionId, clearMessages],
+    [requireAuth, currentAgent, bumpHistory, getSessionId, clearMessages],
   );
 
   const noAgents = agents.length === 0 && agentsLoadStatus === 'ready';
@@ -316,6 +321,7 @@ export default function ChatPage() {
   }, [messages, bumpDocsRefresh]);
 
   const handleSend = (text: string) => {
+    if (!requireAuth()) return;
     if (status !== 'connected') return;
     if (!text.trim() && pendingImages.length === 0) return;
     const content = dock.selectedKeys.size > 0

@@ -7,7 +7,6 @@ import { ChatSlashHints, handleSlashInputKeyDown } from '@/components/ChatSlashH
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { syncStrategyToAgent } from '@/api/strategies';
 import { buildAgentWsUrl } from '@/lib/agentWsUrl';
 import { findStrategyFileTouchInTurn, turnHasUserMessage } from '@/lib/strategyFileDetect';
 import {
@@ -16,6 +15,8 @@ import {
 } from '@/lib/strategyPlatforms';
 import { TOOLBAR_ICON_BUTTON_CLASS } from '@/lib/toolbarButton';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
+import { useAuth } from '@/state/auth';
 import { useAgents } from '@/state/agents';
 import { cn } from '@/lib/cn';
 
@@ -28,7 +29,6 @@ const STRATEGY_QUICK_PROMPTS = [
 
 interface StrategyChatPanelProps {
   platform: StrategyPlatform;
-  strategyName?: string | null;
   strategyPath?: string | null;
   strategyReady: boolean;
   onStrategyFileChanged?: (agentName: string) => void;
@@ -37,14 +37,18 @@ interface StrategyChatPanelProps {
 
 export function StrategyChatPanel({
   platform,
-  strategyName,
   strategyPath,
   strategyReady,
   onStrategyFileChanged,
   className,
 }: StrategyChatPanelProps) {
+  const { user } = useAuth();
+  const { requireAuth } = useRequireAuth();
   const { agents, currentAgent, status: agentsLoadStatus } = useAgents();
-  const wsUrl = useMemo(() => buildAgentWsUrl(currentAgent), [currentAgent]);
+  const wsUrl = useMemo(
+    () => (user && currentAgent ? buildAgentWsUrl(currentAgent) : null),
+    [user, currentAgent],
+  );
   const persistKey = currentAgent ? `backtest:${currentAgent}` : null;
   const {
     messages,
@@ -70,6 +74,7 @@ export function StrategyChatPanel({
 
   const handleSend = useCallback(
     (text: string) => {
+      if (!requireAuth()) return;
       if (status !== 'connected' || !strategyReady) return;
       const trimmed = text.trim();
       if (!trimmed) return;
@@ -78,13 +83,14 @@ export function StrategyChatPanel({
       send(content, undefined, { displayContent: trimmed });
       setValue('');
     },
-    [status, strategyReady, buildMessage, send],
+    [requireAuth, status, strategyReady, buildMessage, send],
   );
 
   const handleNewChat = useCallback(() => {
+    if (!requireAuth()) return;
     lastPulledTouchRef.current = null;
     clearMessages({ startNewSession: true });
-  }, [clearMessages]);
+  }, [requireAuth, clearMessages]);
 
   const tryPullStrategyUpdate = useCallback(() => {
     if (!currentAgent || !strategyReady || !onStrategyFileChanged) return;
@@ -98,13 +104,6 @@ export function StrategyChatPanel({
     lastPulledTouchRef.current = touchKey;
     onStrategyFileChanged(currentAgent);
   }, [currentAgent, strategyReady, onStrategyFileChanged, messages, strategyPath]);
-
-  useEffect(() => {
-    if (!strategyReady || !currentAgent || !strategyName) return;
-    void syncStrategyToAgent(strategyName, currentAgent).catch(() => {
-      // Best-effort: ensure agent workspace has the strategy file before chat.
-    });
-  }, [strategyReady, currentAgent, strategyName]);
 
   useEffect(() => {
     tryPullStrategyUpdate();

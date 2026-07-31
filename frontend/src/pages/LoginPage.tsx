@@ -73,7 +73,10 @@ export default function LoginPage() {
   const [sendingCode, setSendingCode] = useState(false);
   const [cooldown, setCooldown] = useState(0);
 
-  const from = (location.state as { from?: string })?.from || '/chat';
+  const from =
+    (location.state as { from?: string })?.from ||
+    new URLSearchParams(location.search).get('from') ||
+    '/chat';
   const codeEmail = mode === 'register' ? registerEmail.trim() : resetEmail.trim();
   const codeEmailValid = isValidEmail(codeEmail);
 

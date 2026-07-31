@@ -20,16 +20,16 @@ const (
 )
 
 var (
-	ErrInvalidEmail       = errors.New("invalid email address")
-	ErrCodeExpired        = errors.New("verification code expired or not found")
-	ErrCodeInvalid        = errors.New("invalid verification code")
-	ErrSendTooFrequent    = errors.New("please wait before requesting another code")
-	ErrEmailAlreadyExists          = errors.New("email already registered")
-	ErrAccountAlreadyExists        = errors.New("account already registered")
-	ErrInvalidAccount              = errors.New("account must be 3-64 characters and cannot be an email address")
-	ErrEmailNotFound               = errors.New("email not registered")
-	ErrVerificationNotConfigured  = errors.New("email verification is not configured")
-	ErrSMTPSendFailed             = errors.New("failed to send verification email")
+	ErrInvalidEmail              = errors.New("invalid email address")
+	ErrCodeExpired               = errors.New("verification code expired or not found")
+	ErrCodeInvalid               = errors.New("invalid verification code")
+	ErrSendTooFrequent           = errors.New("please wait before requesting another code")
+	ErrEmailAlreadyExists        = errors.New("email already registered")
+	ErrAccountAlreadyExists      = errors.New("account already registered")
+	ErrInvalidAccount            = errors.New("account must be 3-64 characters and cannot be an email address")
+	ErrEmailNotFound             = errors.New("email not registered")
+	ErrVerificationNotConfigured = errors.New("email verification is not configured")
+	ErrSMTPSendFailed            = errors.New("failed to send verification email")
 )
 
 func NormalizeEmail(email string) (string, error) {

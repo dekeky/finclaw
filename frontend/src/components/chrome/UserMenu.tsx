@@ -1,4 +1,5 @@
-import { IconLogout } from '@tabler/icons-react';
+import { IconLogin, IconLogout } from '@tabler/icons-react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '@/state/auth';
 import { buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
@@ -33,7 +34,18 @@ function UserAvatar({ user, className }: { user: { display_name?: string; accoun
 export function UserMenu() {
   const { user, logout } = useAuth();
 
-  if (!user) return null;
+  if (!user) {
+    return (
+      <Link
+        to="/login"
+        state={{ from: window.location.pathname + window.location.search }}
+        className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'shrink-0 gap-1.5')}
+      >
+        <IconLogin className="size-4" />
+        登录
+      </Link>
+    );
+  }
 
   return (
     <DropdownMenu>
@@ -68,7 +80,18 @@ export function UserMenu() {
 export function SidebarUserBlock() {
   const { user, logout } = useAuth();
 
-  if (!user) return null;
+  if (!user) {
+    return (
+      <Link
+        to="/login"
+        state={{ from: window.location.pathname + window.location.search }}
+        className="flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+      >
+        <IconLogin className="size-4 shrink-0 text-muted-foreground" />
+        <span className="text-sm font-medium text-foreground">登录 / 注册</span>
+      </Link>
+    );
+  }
 
   return (
     <DropdownMenu>

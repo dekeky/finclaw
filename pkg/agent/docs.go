@@ -22,7 +22,6 @@ var DocScanRoots = []string{
 	"research",
 	"memos",
 	"screening",
-	"strategies",
 }
 
 type DocFileEntry struct {

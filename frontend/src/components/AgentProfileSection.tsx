@@ -4,6 +4,7 @@ import { AgentAvatar } from '@/components/AgentAvatar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useAgents } from '@/state/agents';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 
 const MAX_AVATAR_BYTES = 512 * 1024;
@@ -30,6 +31,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
 /** Agent 名称与头像编辑区。 */
 export function AgentProfileSection({ agentName, hasAvatar, className, onRenamed }: AgentProfileSectionProps) {
   const { agentNames, avatarRevision, renameAgent, uploadAgentAvatar, deleteAgentAvatar } = useAgents();
+  const { requireAuth } = useRequireAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [nameDraft, setNameDraft] = useState(agentName);
@@ -51,6 +53,7 @@ export function AgentProfileSection({ agentName, hasAvatar, className, onRenamed
   const nameConflict = nameDraft.trim().length > 0 && agentNames.includes(nameDraft.trim()) && nameDraft.trim() !== agentName;
 
   const onRename = useCallback(async () => {
+    if (!requireAuth()) return;
     const next = nameDraft.trim();
     if (!next || next === agentName || nameConflict) return;
     setRenameBusy(true);
@@ -63,7 +66,7 @@ export function AgentProfileSection({ agentName, hasAvatar, className, onRenamed
     } finally {
       setRenameBusy(false);
     }
-  }, [agentName, nameConflict, nameDraft, onRenamed, renameAgent]);
+  }, [requireAuth, agentName, nameConflict, nameDraft, onRenamed, renameAgent]);
 
   const onPickAvatar = useCallback(() => {
     fileInputRef.current?.click();
@@ -71,6 +74,7 @@ export function AgentProfileSection({ agentName, hasAvatar, className, onRenamed
 
   const onAvatarSelected = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (!requireAuth()) return;
       const file = e.target.files?.[0];
       e.target.value = '';
       if (!file) return;
@@ -93,10 +97,11 @@ export function AgentProfileSection({ agentName, hasAvatar, className, onRenamed
         setAvatarBusy(false);
       }
     },
-    [agentName, uploadAgentAvatar],
+    [requireAuth, agentName, uploadAgentAvatar],
   );
 
   const onRemoveAvatar = useCallback(async () => {
+    if (!requireAuth()) return;
     setAvatarBusy(true);
     setAvatarError(null);
     try {
@@ -106,7 +111,7 @@ export function AgentProfileSection({ agentName, hasAvatar, className, onRenamed
     } finally {
       setAvatarBusy(false);
     }
-  }, [agentName, deleteAgentAvatar]);
+  }, [requireAuth, agentName, deleteAgentAvatar]);
 
   return (
     <div className={className}>

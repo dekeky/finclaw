@@ -1,6 +1,7 @@
 import { Outlet } from 'react-router-dom';
 import { useEffect } from 'react';
 import { prefetchModels } from '@/api/models';
+import { useAuth } from '@/state/auth';
 import { AppSidebar } from '../components/AppSidebar';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { SidebarInset } from '@/components/ui/sidebar';
@@ -15,6 +16,7 @@ import {
 } from '@/lib/panelWidths';
 
 export function AppLayout() {
+  const { user } = useAuth();
   const sidebarResize = useHorizontalResize({
     storageKey: PANEL_WIDTH_KEYS.appSidebar,
     defaultWidth: PANEL_WIDTH_DEFAULTS.appSidebar,
@@ -22,8 +24,8 @@ export function AppLayout() {
   });
 
   useEffect(() => {
-    void prefetchModels();
-  }, []);
+    if (user) void prefetchModels();
+  }, [user]);
 
   return (
     <TooltipProvider>

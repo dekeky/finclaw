@@ -70,25 +70,29 @@ export async function fetchWeixinSettings(): Promise<WeixinSettingsResponse> {
   return res.json();
 }
 
-// 本地存储 keys
+// 本地存储 keys（按用户 id 隔离，避免未登录或切换账号时串数据）
 const STORAGE_KEYS = {
   QRCODE: 'weixin_qrcode',
   QRCODE_CONTENT: 'weixin_qrcode_content',
   BOUND_BOT_ID: 'weixin_bound_bot_id',
   SETTINGS: 'weixin_settings',
   BOUND_AGENT: 'weixin_bound_agent',
-};
+} as const;
+
+function scopedKey(base: string, userId: string): string {
+  return `${base}:${userId}`;
+}
 
 // 本地保存二维码信息
-export function saveQrcodeToLocal(qrcode: string, qrcodeContent: string): void {
-  localStorage.setItem(STORAGE_KEYS.QRCODE, qrcode);
-  localStorage.setItem(STORAGE_KEYS.QRCODE_CONTENT, qrcodeContent);
+export function saveQrcodeToLocal(qrcode: string, qrcodeContent: string, userId: string): void {
+  localStorage.setItem(scopedKey(STORAGE_KEYS.QRCODE, userId), qrcode);
+  localStorage.setItem(scopedKey(STORAGE_KEYS.QRCODE_CONTENT, userId), qrcodeContent);
 }
 
 // 获取本地保存的二维码信息
-export function getLocalQrcode(): { qrcode: string; qrcodeContent: string } | null {
-  const qrcode = localStorage.getItem(STORAGE_KEYS.QRCODE);
-  const qrcodeContent = localStorage.getItem(STORAGE_KEYS.QRCODE_CONTENT);
+export function getLocalQrcode(userId: string): { qrcode: string; qrcodeContent: string } | null {
+  const qrcode = localStorage.getItem(scopedKey(STORAGE_KEYS.QRCODE, userId));
+  const qrcodeContent = localStorage.getItem(scopedKey(STORAGE_KEYS.QRCODE_CONTENT, userId));
   if (qrcode && qrcodeContent) {
     return { qrcode, qrcodeContent };
   }
@@ -96,33 +100,34 @@ export function getLocalQrcode(): { qrcode: string; qrcodeContent: string } | nu
 }
 
 // 清除本地二维码信息
-export function clearLocalQrcode(): void {
-  localStorage.removeItem(STORAGE_KEYS.QRCODE);
-  localStorage.removeItem(STORAGE_KEYS.QRCODE_CONTENT);
+export function clearLocalQrcode(userId: string): void {
+  localStorage.removeItem(scopedKey(STORAGE_KEYS.QRCODE, userId));
+  localStorage.removeItem(scopedKey(STORAGE_KEYS.QRCODE_CONTENT, userId));
 }
 
 // 保存绑定信息
-export function saveBoundBotId(botId: string): void {
-  localStorage.setItem(STORAGE_KEYS.BOUND_BOT_ID, botId);
+export function saveBoundBotId(botId: string, userId: string): void {
+  localStorage.setItem(scopedKey(STORAGE_KEYS.BOUND_BOT_ID, userId), botId);
 }
 
 // 获取本地绑定信息
-export function getLocalBoundBotId(): string | null {
-  return localStorage.getItem(STORAGE_KEYS.BOUND_BOT_ID);
+export function getLocalBoundBotId(userId: string): string | null {
+  return localStorage.getItem(scopedKey(STORAGE_KEYS.BOUND_BOT_ID, userId));
 }
 
 // 清除本地绑定信息
-export function clearLocalBoundBotId(): void {
-  localStorage.removeItem(STORAGE_KEYS.BOUND_BOT_ID);
+export function clearLocalBoundBotId(userId: string): void {
+  localStorage.removeItem(scopedKey(STORAGE_KEYS.BOUND_BOT_ID, userId));
 }
 
 // 保存绑定 Agent
-export function saveBoundAgent(name: string): void {
-  if (name) localStorage.setItem(STORAGE_KEYS.BOUND_AGENT, name);
-  else localStorage.removeItem(STORAGE_KEYS.BOUND_AGENT);
+export function saveBoundAgent(name: string, userId: string): void {
+  const key = scopedKey(STORAGE_KEYS.BOUND_AGENT, userId);
+  if (name) localStorage.setItem(key, name);
+  else localStorage.removeItem(key);
 }
 
 // 获取本地绑定的 Agent 名
-export function getLocalBoundAgent(): string | null {
-  return localStorage.getItem(STORAGE_KEYS.BOUND_AGENT);
+export function getLocalBoundAgent(userId: string): string | null {
+  return localStorage.getItem(scopedKey(STORAGE_KEYS.BOUND_AGENT, userId));
 }

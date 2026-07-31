@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { Dialog } from 'radix-ui';
-import { IconRefresh, IconSwitchHorizontal } from '@tabler/icons-react';
+import { IconLogin, IconRefresh, IconSwitchHorizontal } from '@tabler/icons-react';
 import {
   fetchQrcode,
   fetchQrcodeStatus,
@@ -17,6 +18,8 @@ import {
   clearLocalBoundBotId,
 } from '@/api/weixin';
 import { listAgents, type AgentSummary } from '@/api/agents';
+import { useAuth } from '@/state/auth';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { AgentAvatar } from '@/components/AgentAvatar';
@@ -37,6 +40,8 @@ interface WeixinSettings {
 }
 
 export default function WeixinPage() {
+  const { user, loading: authLoading } = useAuth();
+  const { requireAuth } = useRequireAuth();
   const [bindStatus, setBindStatus] = useState<BindStatus>('idle');
   const [qrcodeImgContent, setQrcodeImgContent] = useState<string>('');
   const [error, setError] = useState<string>('');
@@ -61,33 +66,71 @@ export default function WeixinPage() {
   const switchTargetAgent = agents.find(a => a.name === switchTarget);
   const canSwitch = agents.length > 1 && !agentsLoading && !agentsError;
 
-  const isBound = settings.boundBotId !== '' || bindStatus === 'bound';
+  const isBound = user != null && (settings.boundBotId !== '' || bindStatus === 'bound');
 
-  // 初始化：检查本地存储的绑定状态
+  const resetBindState = () => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    setBindStatus('idle');
+    setQrcodeImgContent('');
+    setError('');
+    setSettings({
+      enabled: true,
+      allowFrom: [],
+      proxy: '',
+      boundBotId: '',
+      boundAgent: '',
+    });
+    setSavedAgent('');
+  };
+
+  // 未登录时清空绑定展示；登录后恢复该用户的本地/后端状态
   useEffect(() => {
-    const savedAgentLocal = getLocalBoundAgent();
+    if (authLoading) return;
+
+    if (!user) {
+      resetBindState();
+      setAgents([]);
+      setAgentsLoading(false);
+      setAgentsError('');
+      return;
+    }
+
+    const userId = user.id;
+    resetBindState();
+
+    const savedAgentLocal = getLocalBoundAgent(userId);
     if (savedAgentLocal) {
       setSettings(prev => ({ ...prev, boundAgent: savedAgentLocal }));
       setSavedAgent(savedAgentLocal);
     }
 
-    const savedBoundBotId = getLocalBoundBotId();
+    const savedBoundBotId = getLocalBoundBotId(userId);
     if (savedBoundBotId) {
       setSettings(prev => ({ ...prev, boundBotId: savedBoundBotId }));
       setBindStatus('bound');
       return;
     }
 
-    const savedQrcode = getLocalQrcode();
+    const savedQrcode = getLocalQrcode(userId);
     if (savedQrcode) {
       setQrcodeImgContent(savedQrcode.qrcodeContent);
       setBindStatus('binding');
       startPolling(savedQrcode.qrcode);
     }
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, authLoading]);
 
   // 加载 Agent 列表 + 后端绑定状态
   useEffect(() => {
+    if (!user) {
+      setAgents([]);
+      setAgentsLoading(false);
+      setAgentsError('');
+      return;
+    }
     let cancelled = false;
     setAgentsLoading(true);
     setAgentsError('');
@@ -111,11 +154,11 @@ export default function WeixinPage() {
             next = list[0]?.name ?? '';
           }
           if (next !== prev.boundAgent) {
-            saveBoundAgent(next);
+            saveBoundAgent(next, user.id);
           }
           const nextBotId = remoteAccountId || prev.boundBotId;
           if (remoteAccountId) {
-            saveBoundBotId(remoteAccountId);
+            saveBoundBotId(remoteAccountId, user.id);
             setBindStatus('bound');
           }
           setSavedAgent(next);
@@ -123,7 +166,7 @@ export default function WeixinPage() {
         });
 
         if (!remoteAgent) {
-          const local = getLocalBoundAgent();
+          const local = getLocalBoundAgent(user.id);
           if (local && list.some(a => a.name === local)) {
             void saveWeixinSettings({ bound_agent: local }).catch(err => {
               console.error('回写 bound_agent 失败:', err);
@@ -141,20 +184,21 @@ export default function WeixinPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [user]);
 
   const openSwitchDialog = () => {
+    if (!requireAuth()) return;
     setSwitchTarget(savedAgent);
     setSwitchOpen(true);
   };
 
   const handleConfirmSwitch = async () => {
-    if (!switchTarget || switchTarget === savedAgent) return;
+    if (!requireAuth() || !user || !switchTarget || switchTarget === savedAgent) return;
 
     setAgentSaving(true);
     try {
       await saveWeixinSettings({ bound_agent: switchTarget });
-      saveBoundAgent(switchTarget);
+      saveBoundAgent(switchTarget, user.id);
       setSavedAgent(switchTarget);
       setSettings(prev => ({ ...prev, boundAgent: switchTarget }));
       setSwitchOpen(false);
@@ -166,13 +210,14 @@ export default function WeixinPage() {
   };
 
   const loadQrcode = async () => {
+    if (!requireAuth() || !user) return;
     setBindStatus('loading');
     setError('');
     try {
       const resp = await fetchQrcode();
       setQrcodeImgContent(resp.qrcode_img_content);
       setBindStatus('binding');
-      saveQrcodeToLocal(resp.qrcode, resp.qrcode_img_content);
+      saveQrcodeToLocal(resp.qrcode, resp.qrcode_img_content, user.id);
       startPolling(resp.qrcode);
     } catch {
       setBindStatus('error');
@@ -191,10 +236,10 @@ export default function WeixinPage() {
           setBindStatus('bound');
           const botId = resp.ilink_user_id || '';
           const botToken = resp.bot_token || '';
-          if (botId) {
+          if (botId && user) {
             setSettings(prev => ({ ...prev, boundBotId: botId }));
-            saveBoundBotId(botId);
-            clearLocalQrcode();
+            saveBoundBotId(botId, user.id);
+            clearLocalQrcode(user.id);
             saveWeixinSettings({
               token: botToken,
               account_id: botId,
@@ -206,7 +251,7 @@ export default function WeixinPage() {
           clearInterval(pollTimerRef.current!);
         } else if (resp.status === 'expired') {
           setBindStatus('expired');
-          clearLocalQrcode();
+          if (user) clearLocalQrcode(user.id);
           clearInterval(pollTimerRef.current!);
         }
       } catch (err) {
@@ -223,19 +268,21 @@ export default function WeixinPage() {
 
   // 后端绑定状态确认为「未绑定」后，自动拉取二维码展示，无需用户手动点击。
   useEffect(() => {
+    if (!user) return;
     if (!agentsLoading && !isBound && bindStatus === 'idle') {
       void loadQrcode();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentsLoading, isBound, bindStatus]);
+  }, [user, agentsLoading, isBound, bindStatus]);
 
   const handleRebind = async () => {
+    if (!requireAuth() || !user) return;
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current);
       pollTimerRef.current = null;
     }
-    clearLocalQrcode();
-    clearLocalBoundBotId();
+    clearLocalQrcode(user.id);
+    clearLocalBoundBotId(user.id);
     setSettings(prev => ({ ...prev, boundBotId: '' }));
     setBindStatus('idle');
 
@@ -379,7 +426,34 @@ export default function WeixinPage() {
     );
   };
 
-  const renderBindContent = () => renderBindingSection();
+  const renderGuestSection = () => (
+    <div className="flex flex-col items-center gap-4 py-8 text-center">
+      <p className="max-w-sm text-sm text-muted-foreground">
+        登录后可绑定微信账号，通过微信与您的 Agent 对话。
+      </p>
+      <Button asChild size="sm">
+        <Link to="/login" state={{ from: '/weixin' }}>
+          <IconLogin className="size-4" />
+          登录
+        </Link>
+      </Button>
+    </div>
+  );
+
+  const renderAuthLoadingSection = () => (
+    <div className="flex flex-col items-center gap-4 py-8">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+        正在加载…
+      </div>
+    </div>
+  );
+
+  const renderBindContent = () => {
+    if (authLoading) return renderAuthLoadingSection();
+    if (!user) return renderGuestSection();
+    return renderBindingSection();
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">

@@ -101,7 +101,7 @@ export async function updateStrategy(name: string, req: UpdateStrategyRequest): 
   return body.body;
 }
 
-/** POST /strategies/:name/sync — push canonical strategy file into agent workspace. */
+/** POST /strategies/:name/sync — legacy no-op; strategies live under ~/.finclaw/{account}/strategies/. */
 export async function syncStrategyToAgent(name: string, agent: string): Promise<StrategyDetail> {
   const res = await fetch(`${STRATEGIES_API}/${encodeURIComponent(name)}/sync`, {
     method: 'POST',
@@ -113,7 +113,7 @@ export async function syncStrategyToAgent(name: string, agent: string): Promise<
   return body.body;
 }
 
-/** POST /strategies/:name/pull — sync strategy file from agent workspace back to canonical store. */
+/** POST /strategies/:name/pull — reload strategy script from ~/.finclaw/{account}/strategies/. */
 export async function pullStrategyFromAgent(name: string, agent: string): Promise<StrategyDetail> {
   const res = await fetch(`${STRATEGIES_API}/${encodeURIComponent(name)}/pull`, {
     method: 'POST',

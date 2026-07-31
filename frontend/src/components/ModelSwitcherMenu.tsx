@@ -20,6 +20,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useAgents } from '@/state/agents';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { cn } from '@/lib/cn';
 import {
   modelSwitchToastError,
@@ -51,6 +52,7 @@ export function ModelSwitcherMenu({
   onModelSwitched,
 }: ModelSwitcherMenuProps) {
   const { updateAgent } = useAgents();
+  const { requireAuth } = useRequireAuth();
   const [currentModel, setCurrentModel] = useState<string | null>(null);
   const [modelLoading, setModelLoading] = useState(false);
   const [profiles, setProfiles] = useState<ModelProfileSummary[]>(() => getCachedModels() ?? []);
@@ -101,7 +103,7 @@ export function ModelSwitcherMenu({
 
   const handleSwitch = useCallback(
     async (displayName: string) => {
-      if (switching || displayName === currentModel) return;
+      if (!requireAuth() || switching || displayName === currentModel) return;
       setSwitching(true);
       const toastId = modelSwitchToastLoading(displayName);
       try {
@@ -121,7 +123,7 @@ export function ModelSwitcherMenu({
         setSwitching(false);
       }
     },
-    [agentName, currentModel, onModelSwitched, switching, updateAgent],
+    [requireAuth, agentName, currentModel, onModelSwitched, switching, updateAgent],
   );
 
   const menuBody = (

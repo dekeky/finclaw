@@ -19,6 +19,7 @@ import { cn } from '@/lib/cn';
 import { DEFAULT_AGENT_TEMPERATURE } from '@/lib/agentLLMSettings';
 import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 import { toast } from 'sonner';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 
 const TEMP_MIN = 0;
 const TEMP_MAX = 2;
@@ -122,6 +123,7 @@ export function AgentLLMSettingsSection({
   className,
   onSaved,
 }: AgentLLMSettingsSectionProps) {
+  const { requireAuth } = useRequireAuth();
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saved, setSaved] = useState<FormState | null>(null);
@@ -158,7 +160,7 @@ export function AgentLLMSettingsSection({
   const formValid = !form.thinkingEnabled || !!form.thinkingLevel;
 
   const onSave = useCallback(async () => {
-    if (!formValid || submitting) return;
+    if (!requireAuth() || !formValid || submitting) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -178,7 +180,7 @@ export function AgentLLMSettingsSection({
     } finally {
       setSubmitting(false);
     }
-  }, [agentName, form, formValid, onSaved, submitting]);
+  }, [requireAuth, agentName, form, formValid, onSaved, submitting]);
 
   const settingsBlock = loading ? (
     <p className="text-xs text-muted-foreground">加载配置…</p>

@@ -9,6 +9,8 @@ import {
   PANEL_WIDTH_KEYS,
   PANEL_WIDTH_LIMITS,
 } from '@/lib/panelWidths';
+import { useAuth } from '@/state/auth';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 import {
   createModel,
   deleteModel,
@@ -68,6 +70,8 @@ function FieldLabel({
 }
 
 export default function ModelsPage() {
+  const { user } = useAuth();
+  const { requireAuth } = useRequireAuth();
   const [models, setModels] = useState<ModelProfileSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -90,6 +94,13 @@ export default function ModelsPage() {
   });
 
   const refresh = useCallback(async () => {
+    if (!user) {
+      setModels([]);
+      setLoading(false);
+      setLoadError(null);
+      setSelectedName(null);
+      return;
+    }
     setLoading(true);
     setLoadError(null);
     try {
@@ -104,7 +115,7 @@ export default function ModelsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     void refresh();
@@ -126,6 +137,7 @@ export default function ModelsPage() {
   );
 
   const openCreate = () => {
+    if (!requireAuth()) return;
     setCreating(true);
     setForm(EMPTY_FORM);
     setDetail(null);
@@ -187,7 +199,7 @@ export default function ModelsPage() {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formValid || submitting) return;
+    if (!requireAuth() || !formValid || submitting) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -222,6 +234,7 @@ export default function ModelsPage() {
   };
 
   const onDelete = async (displayName: string) => {
+    if (!requireAuth()) return;
     if (pendingDelete) return;
     const ok = await confirm({
       title: `删除模型「${displayName}」`,

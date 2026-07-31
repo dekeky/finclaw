@@ -35,13 +35,15 @@ func NewMarketRouter(agentManager *AgentManager, r *gin.Engine, authMiddleware g
 
 // ConfigRouter registers /api/v1/market/* routes.
 func (mr *MarketRouter) ConfigRouter() {
-	group := mr.r.Group("/api/v1/market", mr.authMiddleware)
-	group.GET("/categories", mr.listCategories)
-	group.GET("/templates", mr.listTemplates)
-	group.GET("/templates/:name/file", mr.getTemplateFile)
-	group.GET("/templates/:name", mr.getTemplate)
-	group.POST("/install", mr.installTemplate)
-	group.POST("/upload", mr.uploadAgent)
+	public := mr.r.Group("/api/v1/market")
+	public.GET("/categories", mr.listCategories)
+	public.GET("/templates", mr.listTemplates)
+	public.GET("/templates/:name/file", mr.getTemplateFile)
+	public.GET("/templates/:name", mr.getTemplate)
+
+	authed := mr.r.Group("/api/v1/market", mr.authMiddleware)
+	authed.POST("/install", mr.installTemplate)
+	authed.POST("/upload", mr.uploadAgent)
 }
 
 func (mr *MarketRouter) listCategories(c *gin.Context) {

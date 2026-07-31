@@ -68,6 +68,8 @@ export function ChatContainer({
   const bottomRef = useRef<HTMLDivElement>(null);
   /** 上次已跟随滚动的正文回复快照；过程消息更新不触发视口滚动 */
   const lastReplyScrollKeyRef = useRef<string | null>(null);
+  /** 用于识别用户新发消息（列表末尾追加 user），避免历史载入等整表替换时误滚动 */
+  const prevMessagesLenRef = useRef(messages.length);
 
   const taskActive = !readOnly && isTaskTimingActive(messages, isTyping, taskStartedAt);
   const lastUserIdx = findLastUserIndex(messages);
@@ -75,6 +77,15 @@ export function ChatContainer({
   const activeTaskSegments = taskActive
     ? collectProcessSegmentsForTurn(messages, lastUserIdx)
     : [];
+
+  useEffect(() => {
+    const len = messages.length;
+    const prevLen = prevMessagesLenRef.current;
+    prevMessagesLenRef.current = len;
+    if (len > prevLen && messages[len - 1]?.role === 'user') {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  }, [messages]);
 
   useEffect(() => {
     const replyIdx = findCompleteReplyIndexInTurn(messages);

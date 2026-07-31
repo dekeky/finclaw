@@ -5,6 +5,7 @@ import { MarkdownContent } from '@/components/MarkdownContent';
 import { DocTocSidebar, DocTocOverlay } from '@/components/DocTocSidebar';
 import { useTocHeadings } from '@/hooks/useTocHeadings';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { getAgentDocFile, polishAgentDoc } from '@/api/agentDocs';
 import { Button } from '@/components/ui/button';
 import { AiPolishPromptPopover } from '@/components/AiPolishPromptPopover';
@@ -533,6 +534,7 @@ export function DocReadingPanel({
   defaultTocCollapsed,
   tocStorageKey,
 }: DocReadingPanelProps) {
+  const { requireAuth } = useRequireAuth();
   const isMobile = useIsMobile();
   const [tocOverlayOpen, setTocOverlayOpen] = useState(false);
   const [savedContent, setSavedContent] = useState<string | null>(null);
@@ -678,7 +680,7 @@ export function DocReadingPanel({
   }, []);
 
   const handleSave = useCallback(async () => {
-    if (!onSave || !dirty) return;
+    if (!requireAuth() || !onSave || !dirty) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -691,7 +693,7 @@ export function DocReadingPanel({
     } finally {
       setSaving(false);
     }
-  }, [onSave, draft, dirty]);
+  }, [requireAuth, onSave, draft, dirty]);
 
   const handleUndo = useCallback(() => {
     if (savedContent == null) return;
@@ -701,6 +703,7 @@ export function DocReadingPanel({
   }, [savedContent]);
 
   const handlePolish = useCallback(async () => {
+    if (!requireAuth()) return;
     const prompt = aiPrompt.trim();
     if (!prompt || generating) return;
 
@@ -741,7 +744,7 @@ export function DocReadingPanel({
     } finally {
       setGenerating(false);
     }
-  }, [agentName, aiPrompt, draft, generating]);
+  }, [requireAuth, agentName, aiPrompt, draft, generating]);
 
   const fileName = filePath.split('/').pop() ?? filePath;
   const isMd = isMarkdown(fileName);

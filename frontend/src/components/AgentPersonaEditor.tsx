@@ -18,6 +18,7 @@ import {
 import { AiPolishPromptPopover } from './AiPolishPromptPopover';
 import { Button } from '@/components/ui/button';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { cn } from '@/lib/cn';
 import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 import { toast } from 'sonner';
@@ -43,6 +44,7 @@ interface AgentPersonaEditorProps {
 
 export function AgentPersonaEditor({ agentName, className, onDirtyChange }: AgentPersonaEditorProps) {
   const { confirm, dialog: confirmDialog } = useConfirm();
+  const { requireAuth } = useRequireAuth();
   const [activeTab, setActiveTab] = useState<PersonaFileName>('AGENT.md');
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
   const [loading, setLoading] = useState(false);
@@ -147,7 +149,7 @@ export function AgentPersonaEditor({ agentName, className, onDirtyChange }: Agen
   }, [confirm, hasUnsavedChanges]);
 
   const onSave = async () => {
-    if (saving || !dirty) return;
+    if (!requireAuth() || saving || !dirty) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -163,7 +165,7 @@ export function AgentPersonaEditor({ agentName, className, onDirtyChange }: Agen
   };
 
   const onInitMissing = async () => {
-    if (initBusy) return;
+    if (!requireAuth() || initBusy) return;
     setInitBusy(true);
     setSaveError(null);
     try {
@@ -185,6 +187,7 @@ export function AgentPersonaEditor({ agentName, className, onDirtyChange }: Agen
   };
 
   const onGenerate = async () => {
+    if (!requireAuth()) return;
     const prompt = aiPrompt.trim();
     if (!prompt || generating) return;
 

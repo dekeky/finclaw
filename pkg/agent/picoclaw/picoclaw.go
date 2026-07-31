@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -40,6 +41,10 @@ func LoadAgentByConfig(rootDir, agentName string) (*agent.AgentLoop, *bus.Messag
 	conf.Agents.Defaults.ToolFeedback.Enabled = true
 	workspace := agentWorkspacePath(rootDir, agentName)
 	conf.Agents.Defaults.Workspace = workspace
+	applyStrategiesWhitelist(rootDir, conf)
+	if err := picoclawconfig.SaveConfig(configPath, conf); err != nil {
+		return nil, nil, fmt.Errorf("save agent config: %w", err)
+	}
 	if err := EnsurePersonaFiles(workspace); err != nil {
 		return nil, nil, fmt.Errorf("init persona files: %w", err)
 	}
@@ -80,6 +85,7 @@ func NewPicoclawAgent(rootDir string, msgBus *bus.MessageBus, modelConf *picocla
 	if err := applyModelConfig(picoConf, modelConf); err != nil {
 		return nil, err
 	}
+	applyStrategiesWhitelist(rootDir, picoConf)
 	picoclawconfig.SaveConfig(agentConfigPath(rootDir, agentName), picoConf)
 
 	// picoConf 在此之后的改动不影响上面已创建的 provider（例如 HTTP request_timeout 须在 CreateProviderFromConfig 之前写入 modelConf）。
@@ -110,6 +116,7 @@ func SwitchAgentModel(loop *agent.AgentLoop, rootDir, agentName string, modelCon
 	if err := applyModelConfig(picoConf, modelConf); err != nil {
 		return err
 	}
+	applyStrategiesWhitelist(rootDir, picoConf)
 	if err := picoclawconfig.SaveConfig(agentConfigPath(rootDir, agentName), picoConf); err != nil {
 		return fmt.Errorf("save agent config: %w", err)
 	}
@@ -189,4 +196,36 @@ func agentWorkspacePath(rootDir, agentName string) string {
 
 func agentConfigPath(rootDir, agentName string) string {
 	return AgentConfigPath(rootDir, agentName)
+}
+
+func applyStrategiesWhitelist(agentHome string, conf *picoclawconfig.Config) {
+	if conf == nil {
+		return
+	}
+	dir := filepath.Join(agentHome, "strategies")
+	_ = os.MkdirAll(dir, 0o755)
+	pattern, err := strategiesAllowPathPattern(dir)
+	if err != nil {
+		return
+	}
+	conf.Tools.AllowReadPaths = appendUniquePathPattern(conf.Tools.AllowReadPaths, pattern)
+	conf.Tools.AllowWritePaths = appendUniquePathPattern(conf.Tools.AllowWritePaths, pattern)
+}
+
+func strategiesAllowPathPattern(absDir string) (string, error) {
+	clean, err := filepath.Abs(filepath.Clean(absDir))
+	if err != nil {
+		return "", err
+	}
+	sep := regexp.QuoteMeta(string(os.PathSeparator))
+	return "^" + regexp.QuoteMeta(clean) + "(?:" + sep + "|$)", nil
+}
+
+func appendUniquePathPattern(paths []string, pattern string) []string {
+	for _, existing := range paths {
+		if existing == pattern {
+			return paths
+		}
+	}
+	return append(paths, pattern)
 }

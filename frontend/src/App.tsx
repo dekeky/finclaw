@@ -1,14 +1,13 @@
 import { lazy, Suspense, type ReactNode } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { IconLoader2 } from '@tabler/icons-react';
-import { AuthProvider, useAuth } from './state/auth';
+import { useAuth } from './state/auth';
 import { AppLayout } from './layouts/AppLayout';
 
 const ModelsPage = lazy(() => import('./pages/ModelsPage'));
 const AgentMarketPage = lazy(() => import('./pages/AgentMarketPage'));
 const AgentsPage = lazy(() => import('./pages/AgentsPage'));
 const BacktestPage = lazy(() => import('./pages/BacktestPage'));
-const StrategyLibraryPage = lazy(() => import('./pages/StrategyLibraryPage'));
 const ChatPage = lazy(() => import('./pages/ChatPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const NewsPage = lazy(() => import('./pages/NewsPage'));
@@ -31,16 +30,6 @@ function PageFallback() {
   );
 }
 
-function RequireAuth({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
-  const location = useLocation();
-  if (loading) return <AuthLoading />;
-  if (!user) {
-    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
-  }
-  return <>{children}</>;
-}
-
 function GuestOnly({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
   if (loading) return <AuthLoading />;
@@ -50,26 +39,24 @@ function GuestOnly({ children }: { children: ReactNode }) {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <Suspense fallback={<PageFallback />}>
-        <Routes>
-          <Route path="/login" element={<GuestOnly><LoginPage /></GuestOnly>} />
-          <Route path="/share/:token" element={<SharePage />} />
-          <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
-            <Route path="/" element={<Navigate to="/chat" replace />} />
-            <Route path="/chat" element={<ChatPage />} />
-            <Route path="/news" element={<NewsPage />} />
-            <Route path="/rss" element={<Navigate to="/news" replace />} />
-            <Route path="/agents" element={<AgentsPage />} />
-            <Route path="/models" element={<ModelsPage />} />
-            <Route path="/agents/market" element={<AgentMarketPage />} />
-            <Route path="/backtest" element={<BacktestPage />} />
-            <Route path="/backtest/library" element={<StrategyLibraryPage />} />
-            <Route path="/weixin" element={<WeixinPage />} />
-          </Route>
-          <Route path="*" element={<Navigate to="/chat" replace />} />
-        </Routes>
-      </Suspense>
-    </AuthProvider>
+    <Suspense fallback={<PageFallback />}>
+      <Routes>
+        <Route path="/login" element={<GuestOnly><LoginPage /></GuestOnly>} />
+        <Route path="/share/:token" element={<SharePage />} />
+        <Route element={<AppLayout />}>
+          <Route path="/" element={<Navigate to="/chat" replace />} />
+          <Route path="/chat" element={<ChatPage />} />
+          <Route path="/news" element={<NewsPage />} />
+          <Route path="/rss" element={<Navigate to="/news" replace />} />
+          <Route path="/agents" element={<AgentsPage />} />
+          <Route path="/models" element={<ModelsPage />} />
+          <Route path="/agents/market" element={<AgentMarketPage />} />
+          <Route path="/backtest" element={<BacktestPage />} />
+          <Route path="/backtest/library" element={<Navigate to="/backtest" replace />} />
+          <Route path="/weixin" element={<WeixinPage />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/chat" replace />} />
+      </Routes>
+    </Suspense>
   );
 }

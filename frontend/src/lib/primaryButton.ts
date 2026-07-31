@@ -59,3 +59,11 @@ export const PRIMARY_AI_PANEL_HOVER_CLASS =
   'hover:from-violet-500/12 hover:via-fuchsia-500/8 hover:to-violet-500/12';
 
 
+
+/** 保存按钮无改动时的轻量态（浅紫底，非实心深蓝）。 */
+
+export const SAVE_BUTTON_IDLE_CLASS =
+
+  'bg-violet-500/10 text-violet-600 hover:bg-violet-500/15 dark:bg-violet-500/14 dark:text-violet-300 dark:hover:bg-violet-500/20';
+
+

@@ -332,14 +332,37 @@ func (m *AgentManager) Remove(name string) error {
 	return nil
 }
 
-// Init lists agent names persisted on disk: each immediate subdirectory of FinClaw home
-// that contains config.json (same layout as picoclaw agentConfigPath).
-// For backward compatibility, it also scans legacy top-level agent dirs (no userId prefix).
-func Init(ctx context.Context, finclawConf *config.FinclawConfig) (*AgentManager, error) {
-	home := config.FinclawHomePath()
+// Init loads agents for all registered users. When loader is nil, falls back to scanning
+// top-level directories under FinClaw home (legacy behavior).
+func Init(ctx context.Context, finclawConf *config.FinclawConfig, loader UserHomeLoader) (*AgentManager, error) {
 	agentManager := NewAgentManager(ctx, finclawConf)
+	if loader != nil {
+		userIDs, err := loader.ListUserIDs()
+		if err != nil {
+			return nil, fmt.Errorf("list users: %w", err)
+		}
+		for _, userID := range userIDs {
+			userDir, err := loader.ResolveUserHomeDir(userID)
+			if err != nil {
+				return nil, fmt.Errorf("resolve home for user %q: %w", userID, err)
+			}
+			agentNames, err := agentNamesFromDisk(userDir)
+			if err != nil {
+				return nil, fmt.Errorf("list agents for user %q: %w", userID, err)
+			}
+			for _, agentName := range agentNames {
+				internalKey := AgentKey(userID, agentName)
+				agentLoop, msgBus, err := picoclaw.LoadAgentByConfig(userDir, agentName)
+				if err != nil {
+					return nil, fmt.Errorf("load agent by config: %w", err)
+				}
+				agentManager.AddAgent(internalKey, agentLoop, msgBus)
+			}
+		}
+		return agentManager, nil
+	}
 
-	// Scan user directories
+	home := config.FinclawHomePath()
 	userEntries, err := os.ReadDir(home)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -350,6 +373,9 @@ func Init(ctx context.Context, finclawConf *config.FinclawConfig) (*AgentManager
 
 	for _, ue := range userEntries {
 		if !ue.IsDir() || strings.HasPrefix(ue.Name(), ".") {
+			continue
+		}
+		if ue.Name() == config.FinclawWorkspace {
 			continue
 		}
 		userDir := filepath.Join(home, ue.Name())
@@ -370,10 +396,7 @@ func Init(ctx context.Context, finclawConf *config.FinclawConfig) (*AgentManager
 	return agentManager, nil
 }
 
-// UserAgentHome returns the directory for a user's agents.
-func UserAgentHome(userID string) string {
-	return filepath.Join(config.FinclawHomePath(), userID)
-}
+// UserAgentHome is defined in userhome.go.
 
 // AgentNamesFromDisk returns sorted directory names under home that have agent config.json.
 func agentNamesFromDisk(home string) ([]string, error) {

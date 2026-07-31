@@ -17,6 +17,12 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes('node_modules')) return
           if (
+            id.includes('monaco-editor') ||
+            id.includes('@monaco-editor')
+          ) {
+            return 'monaco'
+          }
+          if (
             id.includes('react-syntax-highlighter') ||
             id.includes('refractor') ||
             id.includes('prismjs')

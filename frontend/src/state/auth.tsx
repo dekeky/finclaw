@@ -76,7 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     authApi.clearToken();
     setToken(null);
     setUser(null);
-    window.location.replace('/login');
+    window.location.replace('/chat');
   }, []);
 
   return (

@@ -22,12 +22,14 @@ func NewStrategyLibraryRouter(r *gin.Engine, authMiddleware gin.HandlerFunc, aut
 }
 
 func (lr *StrategyLibraryRouter) ConfigRouter() {
-	group := lr.r.Group("/api/v1/strategy-library", lr.authMiddleware)
-	group.GET("", lr.listEntries)
-	group.GET("/:id", lr.getEntry)
-	group.POST("", lr.shareStrategy)
-	group.POST("/:id/install", lr.installEntry)
-	group.DELETE("/:id", lr.deleteEntry)
+	public := lr.r.Group("/api/v1/strategy-library")
+	public.GET("", lr.listEntries)
+	public.GET("/:id", lr.getEntry)
+
+	authed := lr.r.Group("/api/v1/strategy-library", lr.authMiddleware)
+	authed.POST("", lr.shareStrategy)
+	authed.POST("/:id/install", lr.installEntry)
+	authed.DELETE("/:id", lr.deleteEntry)
 }
 
 type strategyLibraryListResp struct {
