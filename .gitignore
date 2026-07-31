@@ -103,5 +103,6 @@ temp/
 #配置文件
 config.json
 
-
+assets/star-history-data.json
+assets/star-history.svg
 
