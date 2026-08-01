@@ -14,7 +14,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/github/stars/dekeky/finclaw?style=flat-square&logo=github" alt="Stars" />
-  <img src="https://img.shields.io/github/license/dekeky/finclaw?style=flat-square&logo=apache&logoColor=white" alt="License" />
+  <img src="https://img.shields.io/badge/License-PolyForm%20Noncommercial-lightgrey?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/平台-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square" alt="平台" />
 </p>
 
@@ -260,6 +260,11 @@ go build -o finclaw ./cmd/agent
 
 ---
 
-## 七、开源协议
+## 七、许可协议
 
-本项目基于 [Apache License 2.0](LICENSE) 开源。
+本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)（[说明](https://polyformproject.org/licenses/noncommercial/1.0.0)）。
+
+- **允许**：个人学习、研究、非商业 hobby、慈善/教育/科研机构等非商业用途
+- **禁止**：未经书面授权的商业用途
+
+如需商业授权，请通过 [GitHub Issues](https://github.com/dekeky/finclaw/issues) 或微信公众号 **finclaw实验室** 联系我们。
