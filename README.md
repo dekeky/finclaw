@@ -1,4 +1,4 @@
-# Finclaw · AI 驱动的多 Agent 投研平台（零依赖,[下载](https://github.com/dekeky/finclaw/releases)直接执行）
+# Finclaw · AI 驱动的多 Agent 投研平台（零依赖,[下载](https://github.com/dekeky/finclaw/releases)可直接运行）
 > 开源维护不易，如果对您有帮助，欢迎 [Star ⭐](https://github.com/dekeky/finclaw) 支持一下
 
 <p align="center">
