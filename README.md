@@ -1,6 +1,4 @@
-# Finclaw · AI 驱动的多 Agent 投研平台
-
-> AI + 金融投研工作台 — 多 Agent 对话、量化策略编写、Agent 市场、模型管理与微信集成，零依赖，下载直接执行。
+# Finclaw · AI 驱动的多 Agent 投研平台（零依赖,[下载](https://github.com/dekeky/finclaw/releases)直接执行）
 > 开源维护不易，如果对您有帮助，欢迎 [Star ⭐](https://github.com/dekeky/finclaw) 支持一下
 
 <p align="center">
