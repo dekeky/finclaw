@@ -69,7 +69,7 @@ func (fr *FinClawRouter) RoutesInit() error {
 	fr.r = gin.Default()
 	fr.r.Use(CORSMiddleware())
 
-	dist, err := webui.DistFS()
+	static, err := webui.NewStaticServer()
 	if err != nil {
 		return fmt.Errorf("webui: %w", err)
 	}
@@ -85,7 +85,7 @@ func (fr *FinClawRouter) RoutesInit() error {
 	fr.marketRouter()
 	fr.weixinRouter()
 
-	fr.r.NoRoute(webui.SPANoRoute(dist))
+	fr.r.NoRoute(static.Handler())
 
 	log.Println("📡 Routes initialized")
 	return nil

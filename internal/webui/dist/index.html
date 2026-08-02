@@ -20,11 +20,42 @@
         }
       } catch (_) {}
     </script>
-    <script type="module" crossorigin src="/assets/index-CcESnocd.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/react-vendor-DN2CTUzv.js">
-    <link rel="modulepreload" crossorigin href="/assets/radix-B5JjEh1k.js">
-    <link rel="modulepreload" crossorigin href="/assets/markdown-CaHIdFQa.js">
-    <link rel="modulepreload" crossorigin href="/assets/syntax-highlighter-BtGYouv3.js">
+    <script>
+      ;(function () {
+        var key = 'finclaw.chunk-reload'
+        function shouldReload(msg) {
+          if (!msg) return false
+          return (
+            msg.indexOf('Failed to fetch dynamically imported module') !== -1 ||
+            msg.indexOf('Importing a module script failed') !== -1 ||
+            msg.indexOf('error loading dynamically imported module') !== -1
+          )
+        }
+        window.addEventListener(
+          'error',
+          function (event) {
+            var msg = event && event.message
+            if (!shouldReload(msg)) return
+            if (sessionStorage.getItem(key)) return
+            sessionStorage.setItem(key, '1')
+            window.location.reload()
+          },
+          true,
+        )
+        window.addEventListener('unhandledrejection', function (event) {
+          var reason = event && event.reason
+          var msg = typeof reason === 'string' ? reason : reason && reason.message
+          if (!shouldReload(msg)) return
+          if (sessionStorage.getItem(key)) return
+          sessionStorage.setItem(key, '1')
+          window.location.reload()
+        })
+        window.addEventListener('load', function () {
+          sessionStorage.removeItem(key)
+        })
+      })()
+    </script>
+    <script type="module" crossorigin src="/assets/index-MhaggNvf.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/markdown-DywYRkvg.css">
     <link rel="stylesheet" crossorigin href="/assets/index-BrcWhPeq.css">
   </head>

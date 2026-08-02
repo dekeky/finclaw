@@ -1,1 +1,0 @@
-import{m as u,k as o,a as n}from"./react-vendor-DN2CTUzv.js";import{u as i}from"./index-CcESnocd.js";function l(){const{user:t,loading:r}=i(),a=u(),e=o();return{requireAuth:n.useCallback(()=>{if(r)return!1;if(t)return!0;const s=e.pathname+e.search;return a("/login",{state:{from:s}}),!1},[t,r,a,e]),isAuthenticated:!!t}}export{l as u};

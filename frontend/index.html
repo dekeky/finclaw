@@ -20,6 +20,41 @@
         }
       } catch (_) {}
     </script>
+    <script>
+      ;(function () {
+        var key = 'finclaw.chunk-reload'
+        function shouldReload(msg) {
+          if (!msg) return false
+          return (
+            msg.indexOf('Failed to fetch dynamically imported module') !== -1 ||
+            msg.indexOf('Importing a module script failed') !== -1 ||
+            msg.indexOf('error loading dynamically imported module') !== -1
+          )
+        }
+        window.addEventListener(
+          'error',
+          function (event) {
+            var msg = event && event.message
+            if (!shouldReload(msg)) return
+            if (sessionStorage.getItem(key)) return
+            sessionStorage.setItem(key, '1')
+            window.location.reload()
+          },
+          true,
+        )
+        window.addEventListener('unhandledrejection', function (event) {
+          var reason = event && event.reason
+          var msg = typeof reason === 'string' ? reason : reason && reason.message
+          if (!shouldReload(msg)) return
+          if (sessionStorage.getItem(key)) return
+          sessionStorage.setItem(key, '1')
+          window.location.reload()
+        })
+        window.addEventListener('load', function () {
+          sessionStorage.removeItem(key)
+        })
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

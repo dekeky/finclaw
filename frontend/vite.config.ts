@@ -12,6 +12,8 @@ export default defineConfig({
   build: {
     outDir: '../internal/webui/dist',
     emptyOutDir: true,
+    // 关闭 modulepreload，避免首屏并行拉取 markdown 等大 chunk 触发连接中断。
+    modulePreload: false,
     rollupOptions: {
       output: {
         manualChunks(id) {
