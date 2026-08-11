@@ -66,18 +66,29 @@ func TestStaticServerPrecompressedAsset(t *testing.T) {
 		t.Fatalf("NewStaticServer: %v", err)
 	}
 
-	entry, ok := s.files["assets/markdown-CaHIdFQa.js"]
+	// 从嵌入产物中动态挑选一个 js 资源，避免 hash 文件名变更导致测试失效
+	var asset string
+	for name := range s.files {
+		if strings.HasPrefix(name, "assets/") && strings.HasSuffix(name, ".js") {
+			asset = name
+			break
+		}
+	}
+	if asset == "" {
+		t.Skip("no js asset in embedded dist")
+	}
+	entry, ok := s.files[asset]
 	if !ok {
-		t.Skip("markdown chunk not present in embedded dist")
+		t.Fatalf("asset %s missing", asset)
 	}
 	if len(entry.gzip) == 0 {
-		t.Fatal("expected precomputed gzip payload for markdown chunk")
+		t.Fatal("expected precomputed gzip payload for asset")
 	}
 
 	r := gin.New()
 	r.NoRoute(s.Handler())
 
-	req := httptest.NewRequest(http.MethodGet, "/assets/markdown-CaHIdFQa.js", nil)
+	req := httptest.NewRequest(http.MethodGet, "/"+asset, nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)

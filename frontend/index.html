@@ -5,13 +5,41 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f4f6fb" />
     <link rel="icon" type="image/png" href="/branding/finclaw-mark.png" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
     <title>Finclaw</title>
+    <style>
+      /* 首屏占位：React 挂载前先渲染一个居中加载指示，避免白屏 */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+      #root {
+        min-height: 100%;
+      }
+      .fc-boot {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #f7f7f8;
+      }
+      .dark .fc-boot {
+        background: #17171a;
+      }
+      .fc-boot-spinner {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        border: 2px solid rgba(139, 92, 246, 0.25);
+        border-top-color: rgb(139, 92, 246);
+        animation: fc-boot-spin 0.8s linear infinite;
+      }
+      @keyframes fc-boot-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
     <script>
       try {
         if (localStorage.getItem('finclaw.theme') === 'dark') {
@@ -57,7 +85,11 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="fc-boot">
+        <div class="fc-boot-spinner"></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -1,5 +1,6 @@
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
+import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
@@ -7,6 +8,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': '/src',
+      // monaco-editor 的 exports 字段未暴露 CSS 子路径，这里显式指向本地文件
+      'monaco-editor/min/vs/editor/editor.main.css': fileURLToPath(
+        new URL('./node_modules/monaco-editor/min/vs/editor/editor.main.css', import.meta.url),
+      ),
     },
   },
   build: {

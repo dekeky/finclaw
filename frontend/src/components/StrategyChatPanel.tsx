@@ -206,6 +206,12 @@ export function StrategyChatPanel({
                 请先保存策略后再使用 AI 生成。
               </p>
             )}
+            {status !== 'connected' && status !== 'idle' && (
+              <p className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span className="inline-block size-1.5 animate-pulse rounded-full bg-amber-500" />
+                {status === 'connecting' ? '正在连接聊天服务…' : '连接已断开，正在自动重连…'}
+              </p>
+            )}
             <form
               onSubmit={(e) => {
                 e.preventDefault();

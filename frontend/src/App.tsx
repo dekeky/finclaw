@@ -1,18 +1,20 @@
-import { lazy, Suspense, type ReactNode } from 'react';
+import { Suspense, useEffect, type ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { IconLoader2 } from '@tabler/icons-react';
 import { useAuth } from './state/auth';
 import { AppLayout } from './layouts/AppLayout';
+import { lazyWithRetry } from './lib/lazyWithRetry';
+import { scheduleIdlePreload } from './lib/idlePreload';
 
-const ModelsPage = lazy(() => import('./pages/ModelsPage'));
-const AgentMarketPage = lazy(() => import('./pages/AgentMarketPage'));
-const AgentsPage = lazy(() => import('./pages/AgentsPage'));
-const BacktestPage = lazy(() => import('./pages/BacktestPage'));
-const ChatPage = lazy(() => import('./pages/ChatPage'));
-const LoginPage = lazy(() => import('./pages/LoginPage'));
-const NewsPage = lazy(() => import('./pages/NewsPage'));
-const SharePage = lazy(() => import('./pages/SharePage'));
-const WeixinPage = lazy(() => import('./pages/WeixinPage'));
+const ModelsPage = lazyWithRetry(() => import('./pages/ModelsPage'));
+const AgentMarketPage = lazyWithRetry(() => import('./pages/AgentMarketPage'));
+const AgentsPage = lazyWithRetry(() => import('./pages/AgentsPage'));
+const BacktestPage = lazyWithRetry(() => import('./pages/BacktestPage'));
+const ChatPage = lazyWithRetry(() => import('./pages/ChatPage'));
+const LoginPage = lazyWithRetry(() => import('./pages/LoginPage'));
+const NewsPage = lazyWithRetry(() => import('./pages/NewsPage'));
+const SharePage = lazyWithRetry(() => import('./pages/SharePage'));
+const WeixinPage = lazyWithRetry(() => import('./pages/WeixinPage'));
 
 function AuthLoading() {
   return (
@@ -38,6 +40,12 @@ function GuestOnly({ children }: { children: ReactNode }) {
 }
 
 export default function App() {
+  useEffect(() => {
+    // 首屏渲染完成后在后台预载回测编译器 / markdown 等重 chunk，
+    // 用户点击进入时无需再等待动态加载。
+    scheduleIdlePreload();
+  }, []);
+
   return (
     <Suspense fallback={<PageFallback />}>
       <Routes>

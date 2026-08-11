@@ -2,6 +2,7 @@ import Editor, { type BeforeMount } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { useCallback } from 'react';
 import { cn } from '@/lib/cn';
+import '@/lib/monacoSetup';
 
 const EDITOR_FONT = "'JetBrains Mono', ui-monospace, monospace";
 const EDITOR_BG = '#1e1e1e';

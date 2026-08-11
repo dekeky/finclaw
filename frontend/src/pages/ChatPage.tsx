@@ -520,6 +520,12 @@ export default function ChatPage() {
 
             <div className={cn('relative shrink-0 overflow-visible border-t border-border/40', CHAT_INPUT_GUTTER)}>
               <div className={CHAT_MAIN_COLUMN}>
+                {status !== 'connected' && status !== 'idle' && (
+                  <p className="mb-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <span className="inline-block size-1.5 animate-pulse rounded-full bg-amber-500" />
+                    {status === 'connecting' ? '正在连接聊天服务…' : '连接已断开，正在自动重连…'}
+                  </p>
+                )}
                 <form ref={formRef} onSubmit={(e) => { e.preventDefault(); handleSend(value); }}>
                   <div className="relative overflow-visible rounded-2xl border border-border/60 bg-card p-1.5 pr-1 shadow-sm">
                     <ChatSlashHints

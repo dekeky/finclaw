@@ -35,8 +35,18 @@ import { normalizeSlashInput } from '@/components/ChatSlashHints';
 import { isMobileClient } from '@/lib/isMobileClient';
 
 const RECONNECT_DELAY = 2000;
-const MAX_RECONNECT = 5;
+const MAX_RECONNECT = 30;
 const PING_INTERVAL = 30000;
+/** 重连退避上限：连续失败后最多每 8s 重试一次 */
+const MAX_RECONNECT_DELAY = 8_000;
+/** 建连超时：超过该时长仍未 onopen，强制关闭并交由 onclose 走重连，避免连接卡死在 CONNECTING */
+const CONNECT_TIMEOUT_MS = 15_000;
+
+/** 指数退避：2s → 4s → 封顶 8s */
+function reconnectDelayMs(attempt: number): number {
+  const base = RECONNECT_DELAY * Math.pow(2, Math.min(attempt - 1, 2));
+  return Math.min(base, MAX_RECONNECT_DELAY);
+}
 /** 移动端回前台时发 ping 探活；超时无服务端帧则判定幽灵 OPEN */
 const MOBILE_PROBE_TIMEOUT_MS = 1000;
 /** 长时间无助手回复时收起「正在思考」（避免一直转圈） */
@@ -239,6 +249,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   const typingFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sendConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wsConnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mobileProbeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const urlRef = useRef<string | null>(url);
@@ -475,6 +486,10 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
+    }
+    if (wsConnectTimeoutRef.current) {
+      clearTimeout(wsConnectTimeoutRef.current);
+      wsConnectTimeoutRef.current = null;
     }
     if (sendConfirmTimerRef.current) {
       clearTimeout(sendConfirmTimerRef.current);
@@ -720,8 +735,8 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         console.error('[Finclaw WS] Server error:', errContent, 'Full message:', msg);
         // Detect token expiration - force logout and redirect to login
         const errStr = typeof errContent === 'string' ? errContent : String(errContent || '');
-        if (errStr.toLowerCase().includes('invalid or expired token') ||
-            errStr.toLowerCase().includes('token')) {
+        // 仅精确匹配鉴权类错误，避免把「token count exceeded」等普通业务错误误判为登录失效
+        if (/invalid or expired token|token query parameter is required|unauthorized/i.test(errStr)) {
           console.log('[Finclaw WS] Token issue detected, redirecting to login');
           clearToken();
           window.location.href = '/login';
@@ -755,11 +770,16 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       setStatus('idle');
       return;
     }
-    // 防止并发 connect()：当 WS 正处于 CONNECTING 状态时跳过
+    // 清理残留的重连定时器，避免 onclose / 心跳 / 手动重连多条路径叠加
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    // 防止并发 connect()：当 WS 正处于 OPEN/CONNECTING 状态时跳过
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
     if (wsRef.current?.readyState === WebSocket.CONNECTING) return;
     if (connectingRef.current) return;
-    // 达到最大重试次数后不再自动重试，留给用户手动触发
+    // 达到最大重试次数后不再自动重试（手动 reconnect() 会先清零计数）
     if (reconnectCountRef.current > MAX_RECONNECT) {
       setStatus('error');
       return;
@@ -787,6 +807,21 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
+      // 建连超时兜底：若长时间未 onopen（如服务端接受 TCP 但握手卡住），
+      // 强制关闭让 onclose 走重连路径，避免 connectingRef 卡死输入框。
+      wsConnectTimeoutRef.current = setTimeout(() => {
+        wsConnectTimeoutRef.current = null;
+        const w = wsRef.current;
+        if (w && w.readyState === WebSocket.CONNECTING) {
+          console.warn('[Finclaw WS] Connect timeout, closing connection for retry');
+          try {
+            w.close();
+          } catch {
+            // ignore
+          }
+        }
+      }, CONNECT_TIMEOUT_MS);
+
       // 必须最先注册 onmessage：connected 可能在 onopen 之前到达；sessionId 落盘不依赖 mountedRef
       ws.onmessage = (ev) => {
         try {
@@ -804,6 +839,10 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
 
       ws.onopen = () => {
         connectingRef.current = false;
+        if (wsConnectTimeoutRef.current) {
+          clearTimeout(wsConnectTimeoutRef.current);
+          wsConnectTimeoutRef.current = null;
+        }
         wsEverOpenedRef.current = true;
         console.log('[Finclaw WS] onopen, mounted=', mountedRef.current);
         if (!mountedRef.current) return;
@@ -816,6 +855,10 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
 
       ws.onclose = (ev) => {
         connectingRef.current = false;
+        if (wsConnectTimeoutRef.current) {
+          clearTimeout(wsConnectTimeoutRef.current);
+          wsConnectTimeoutRef.current = null;
+        }
         console.log('[Finclaw WS] onclose, code=', ev.code, 'mounted=', mountedRef.current);
         if (!mountedRef.current) return;
         if (pingTimerRef.current) {
@@ -828,20 +871,21 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
           window.location.href = '/login';
           return;
         }
-        // 主动关闭（code 1000）不重试
-        if (ev.code === 1000) {
-          setStatus('idle');
+        // 无论 code 1000（服务端正常关闭帧）还是异常断开，都进入重连：
+        // 后端 readLoop 在任何原因（重启 / 限流 / 读超时 / 写失败）关闭连接前
+        // 都会先发 CloseNormalClosure(1000)。若在此放弃，聊天输入框会因
+        // status!=='connected' 永久禁用，只能靠刷新 / 新建会话恢复。
+        // 指数退避（封顶 8s）最多重试 MAX_RECONNECT 次。
+        reconnectCountRef.current += 1;
+        if (reconnectCountRef.current > MAX_RECONNECT) {
+          setStatus('error');
+          console.warn('[Finclaw WS] Max reconnect attempts reached:', MAX_RECONNECT);
           return;
         }
-        if (reconnectCountRef.current < MAX_RECONNECT) {
-          reconnectCountRef.current += 1;
-          setStatus('connecting');
-          reconnectTimerRef.current = setTimeout(connect, RECONNECT_DELAY * reconnectCountRef.current);
-          console.log('[Finclaw WS] Scheduling reconnect #', reconnectCountRef.current);
-        } else {
-          reconnectCountRef.current += 1;
-          setStatus('error');
-        }
+        setStatus('connecting');
+        const delay = reconnectDelayMs(reconnectCountRef.current);
+        reconnectTimerRef.current = setTimeout(connect, delay);
+        console.log('[Finclaw WS] Scheduling reconnect #', reconnectCountRef.current, 'in', delay, 'ms');
       };
 
       ws.onerror = () => {
@@ -859,7 +903,8 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
               Authorization: `Bearer ${token}`,
             },
           }).then(res => {
-            if (!res.ok) {
+            // 仅 401 视为登录失效；5xx 等瞬时错误不登出用户
+            if (res.status === 401) {
               console.log('[Finclaw WS] Token refresh failed, redirecting to login');
               clearToken();
               window.location.href = '/login';
@@ -883,7 +928,8 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
             Authorization: `Bearer ${token}`,
           },
         }).then(res => {
-          if (!res.ok) {
+          // 仅 401 视为登录失效；5xx 等瞬时错误不登出用户
+          if (res.status === 401) {
             console.log('[Finclaw WS] Token invalid, redirecting to login');
             clearToken();
             window.location.href = '/login';
@@ -1038,13 +1084,21 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     }, MOBILE_PROBE_TIMEOUT_MS);
   }, [clearMobileProbe, reconnect]);
 
-  // 心跳守护：定期检查连接是否仍有活动。只在 JS 层长时间未收到任何消息
-  // 且 ping 也未收到 pong 响应时才触发重连（注意 lastActivityRef 在发送 ping 时
-  // 也会更新，因此仅当服务端真正无响应时才会触发）。
+  // 心跳守护：定期检查连接状态。
+  // - 连接已关闭（非主动 reset）：主动补一次 connect()，作为 onclose 重连定时器的兜底，
+  //   避免 close 事件丢失时输入框长时间禁用。
+  // - 连接 OPEN 但长时间无消息：判定为幽灵连接，主动重连。
   useEffect(() => {
     const timer = setInterval(() => {
       const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      if (!ws || ws.readyState === WebSocket.CLOSED) {
+        if (urlRef.current && mountedRef.current && !connectingRef.current) {
+          console.warn('[Finclaw WS] Connection closed, retrying via heartbeat guard');
+          connect();
+        }
+        return;
+      }
+      if (ws.readyState !== WebSocket.OPEN) return;
       if (lastActivityRef.current === 0) return;
       const silence = Date.now() - lastActivityRef.current;
       // 阈值设为 ping 间隔的 2 倍（~60s）：lastActivityRef 仅在收到消息时更新，
@@ -1055,7 +1109,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       }
     }, PING_INTERVAL);
     return () => clearInterval(timer);
-  }, [reconnect]);
+  }, [reconnect, connect]);
 
   const send = useCallback(
     (content: string, media?: string[], opts?: { displayContent?: string }) => {

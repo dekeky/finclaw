@@ -1,0 +1,1 @@
+import{W as o,l as r,m as e}from"./monaco-DZe73WsJ.js";import"./react-vendor-DN2CTUzv.js";self.MonacoEnvironment||(self.MonacoEnvironment={getWorker:()=>new o});r.config({monaco:e});export{e as monaco};
