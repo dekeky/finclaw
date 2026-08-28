@@ -106,7 +106,7 @@ function StrategyLibraryInstallDialog({
         <Dialog.Content className="fixed left-1/2 top-1/2 z-[1201] w-[min(92vw,24rem)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-background p-5 shadow-2xl">
           <Dialog.Title className="text-lg font-semibold">创建到我的策略</Dialog.Title>
           <Dialog.Description className="mt-1 text-xs text-muted-foreground">
-            从策略库「{entry?.title}」创建本地副本，之后可在量化回测中编辑。
+            从策略库「{entry?.title}」创建本地副本，之后可在量化中编辑。
           </Dialog.Description>
           <form onSubmit={onInstall} className="mt-4 space-y-4">
             <div>
@@ -659,7 +659,7 @@ export function StrategyLibraryPanel({
           <Dialog.Content className="fixed left-1/2 top-1/2 z-[1201] w-[min(92vw,24rem)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-background p-5 shadow-2xl">
             <Dialog.Title className="text-lg font-semibold">创建到我的策略</Dialog.Title>
             <Dialog.Description className="mt-1 text-xs text-muted-foreground">
-              从策略库「{selected?.title}」创建本地副本，之后可在量化回测中编辑。
+              从策略库「{selected?.title}」创建本地副本，之后可在量化中编辑。
             </Dialog.Description>
             <form onSubmit={onInstall} className="mt-4 space-y-4">
               <div>

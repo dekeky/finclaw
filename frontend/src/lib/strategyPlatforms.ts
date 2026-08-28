@@ -1,21 +1,63 @@
-export type StrategyPlatform = 'joinquant';
+export type StrategyPlatform = 'joinquant' | 'finclaw';
 
 export interface StrategyPlatformConfig {
   id: StrategyPlatform;
   label: string;
   shortLabel: string;
-  /** 平台回测 / 策略管理控制台地址 */
+  /** 外部回测控制台；FinClaw 原生回测为空 */
   backtestUrl: string;
+  nativeBacktest: boolean;
   promptHint: string;
   defaultScript: string;
+  badgeClassName: string;
 }
 
 export const STRATEGY_PLATFORMS: Record<StrategyPlatform, StrategyPlatformConfig> = {
+  finclaw: {
+    id: 'finclaw',
+    label: 'FinClaw',
+    shortLabel: 'FinClaw',
+    backtestUrl: '',
+    nativeBacktest: true,
+    promptHint:
+      '使用 FinClaw / akquant 策略 API：必须定义且仅定义一个 akquant.Strategy 子类，实现 on_bar；'
+      + '标的在点击回测时选择，不必写在策略里；不要写 if __name__ == "__main__"；'
+      + '不要使用聚宽的 initialize / handle_data。',
+    defaultScript: `from akquant import Bar, Strategy
+
+
+class DualMAStrategy(Strategy):
+    """双均线：MA5 上穿 MA20 买入，下穿卖出。标的在点击回测时选择。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.short_window = 5
+        self.long_window = 20
+        self.warmup_period = self.long_window
+
+    def on_bar(self, bar: Bar) -> None:
+        closes = self.get_history(count=self.long_window, symbol=bar.symbol, field="close")
+        if len(closes) < self.long_window:
+            return
+
+        ma_short = closes[-self.short_window :].mean()
+        ma_long = closes[-self.long_window :].mean()
+        position = self.get_position(bar.symbol)
+
+        if ma_short > ma_long and position == 0:
+            self.order_target_percent(symbol=bar.symbol, target_percent=0.95)
+        elif ma_short < ma_long and position > 0:
+            self.order_target_percent(symbol=bar.symbol, target_percent=0.0)
+`,
+    badgeClassName:
+      'border-teal-500/25 bg-teal-500/8 text-teal-700 dark:text-teal-300',
+  },
   joinquant: {
     id: 'joinquant',
     label: '聚宽',
     shortLabel: '聚宽',
     backtestUrl: 'https://www.joinquant.com/algorithm/index/list',
+    nativeBacktest: false,
     promptHint:
       '使用聚宽（JoinQuant）平台 API，如 initialize、handle_data、order_target、g 等；'
       + '股票代码格式如 000001.XSHE。',
@@ -33,20 +75,22 @@ def handle_data(context, data):
     """每个交易日调用"""
     pass
 `,
+    badgeClassName:
+      'border-violet-500/25 bg-violet-500/8 text-violet-700 dark:text-violet-300',
   },
 };
 
 export const STRATEGY_PLATFORM_LIST = Object.values(STRATEGY_PLATFORMS);
 
-export const DEFAULT_STRATEGY_PLATFORM: StrategyPlatform = 'joinquant';
+export const DEFAULT_STRATEGY_PLATFORM: StrategyPlatform = 'finclaw';
 
 export function isStrategyPlatform(value: string): value is StrategyPlatform {
-  return value === 'joinquant';
+  return value === 'joinquant' || value === 'finclaw';
 }
 
 export function normalizeStrategyPlatform(value?: string | null): StrategyPlatform {
   if (value && isStrategyPlatform(value)) return value;
-  return DEFAULT_STRATEGY_PLATFORM;
+  return 'joinquant';
 }
 
 export function getStrategyPlatformConfig(platform: StrategyPlatform): StrategyPlatformConfig {

@@ -27,12 +27,12 @@ func NewSecureString(value string) *SecureString {
 
 // WeixinSettings 微信配置
 type WeixinSettings struct {
-	Token       string `toml:"token" json:"token"`
-	AccountID   string `toml:"account_id" json:"account_id"`
-	BaseURL     string `toml:"base_url" json:"base_url"`
-	CDNBaseURL  string `toml:"cdn_base_url" json:"cdn_base_url"`
-	Proxy       string `toml:"proxy" json:"proxy"`
-	BoundAgent  string `toml:"bound_agent" json:"bound_agent"`
+	Token      string `toml:"token" json:"token"`
+	AccountID  string `toml:"account_id" json:"account_id"`
+	BaseURL    string `toml:"base_url" json:"base_url"`
+	CDNBaseURL string `toml:"cdn_base_url" json:"cdn_base_url"`
+	Proxy      string `toml:"proxy" json:"proxy"`
+	BoundAgent string `toml:"bound_agent" json:"bound_agent"`
 }
 
 // GetToken returns token as SecureString
@@ -54,11 +54,11 @@ const (
 
 // ChannelConfig 渠道配置（用于工厂模式）
 type ChannelConfig struct {
-	ChannelName        string   `toml:"channel_name"`
-	Enabled           bool   `toml:"enabled"`
-	AllowFrom         []string `toml:"allow_from"`
-	ReasoningChannelID string   `toml:"reasoning_channel_id"`
-	Weixin            *WeixinSettings `toml:"weixin"`
+	ChannelName        string          `toml:"channel_name"`
+	Enabled            bool            `toml:"enabled"`
+	AllowFrom          []string        `toml:"allow_from"`
+	ReasoningChannelID string          `toml:"reasoning_channel_id"`
+	Weixin             *WeixinSettings `toml:"weixin"`
 }
 
 // GetChannelName 返回渠道名称
@@ -94,9 +94,10 @@ func (s *SMTPSettings) Enabled() bool {
 }
 
 type FinclawConfigServer struct {
-	ServerAddr          string                    `toml:"serverAddr"`
-	RSSServerAddr       string                    `toml:"rssServerAddr"`
+	ServerAddr         string                    `toml:"serverAddr"`
+	RSSServerAddr      string                    `toml:"rssServerAddr"`
 	AgentHubAddr       string                    `toml:"agentHubAddr"`
+	FquantAddr         string                    `toml:"fquantAddr"`
 	SMTP               *SMTPSettings             `toml:"smtp"`
 	FinClawChannelConf *finclaw.FinChannelConfig `toml:"finClawChannel"`
 	Channels           map[string]*ChannelConfig `toml:"channels"`
@@ -157,6 +158,7 @@ func loadFinclawConfig() (finServerConf *FinclawConfigServer, err error) {
 		return nil, err
 	}
 	ensureDefaultChannels(finServerConf)
+	ensureDefaultFquant(finServerConf)
 	if ensureDefaultSMTP(finServerConf) {
 		if err := appendSMTPSectionIfMissing(); err != nil {
 			return nil, err

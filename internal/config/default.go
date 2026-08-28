@@ -8,13 +8,15 @@ import (
 )
 
 const (
-	FinclawHomeEnv      = "FINCLAW_HOME"
-	FinclawConfigFile   = "finclaw.toml"
-	FinclawWorkspace    = "workspace"
-	RssSourceFile       = "rss.config"
+	FinclawHomeEnv    = "FINCLAW_HOME"
+	FinclawConfigFile = "finclaw.toml"
+	FinclawWorkspace  = "workspace"
+	RssSourceFile     = "rss.config"
 
 	// DefaultAgentHubAddr is the desktop AgentHub market service base URL.
 	DefaultAgentHubAddr = "http://159.75.51.78:9093"
+	// DefaultFquantAddr is the local fquant backtest service.
+	DefaultFquantAddr = "http://127.0.0.1:8000"
 )
 
 func FinclawHomePath() string {
@@ -52,6 +54,7 @@ func defaultFinclawConfig() *FinclawConfigServer {
 		ServerAddr:    ":8082",
 		RSSServerAddr: "http://159.75.51.78:6606",
 		AgentHubAddr:  DefaultAgentHubAddr,
+		FquantAddr:    DefaultFquantAddr,
 		SMTP:          defaultSMTPSettings(),
 		FinClawChannelConf: &finclaw.FinChannelConfig{
 			ReadTimeout:  60,
@@ -81,6 +84,15 @@ func defaultChannelConfigs() map[string]*ChannelConfig {
 			Enabled: false,
 			Weixin:  defaultWeixinSettings(),
 		},
+	}
+}
+
+func ensureDefaultFquant(cfg *FinclawConfigServer) {
+	if cfg == nil {
+		return
+	}
+	if cfg.FquantAddr == "" {
+		cfg.FquantAddr = DefaultFquantAddr
 	}
 }
 

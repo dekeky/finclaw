@@ -26,7 +26,8 @@ export function StrategyPlatformBadge({
     <Badge
       variant="outline"
       className={cn(
-        'h-4 shrink-0 border-violet-500/25 bg-violet-500/8 px-1.5 text-[10px] font-normal text-violet-700 dark:text-violet-300',
+        'h-4 shrink-0 px-1.5 text-[10px] font-normal',
+        config.badgeClassName,
         className,
       )}
     >

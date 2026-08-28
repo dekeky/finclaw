@@ -39,7 +39,7 @@ const COMM_NAV = [
 
 const MORE_NAV = [
   { title: '金融资讯', url: '/news', icon: IconNews },
-  { title: '量化回测', url: '/backtest', icon: IconChartAreaLine },
+  { title: '量化', url: '/backtest', icon: IconChartAreaLine },
 ] as const;
 
 function isNavActive(currentPath: string, url: string): boolean {

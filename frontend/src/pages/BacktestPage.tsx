@@ -7,8 +7,9 @@ import {
   IconExternalLink,
   IconPlus,
   IconShare2,
-  IconTrash,
 } from '@tabler/icons-react';
+import { BacktestRunsPanel } from '@/components/backtest/BacktestRunsPanel';
+import '@/components/backtest/fquant-ui.css';
 import { PanelResizeHandle } from '@/components/PanelResizeHandle';
 import { StrategyChatPanel } from '@/components/StrategyChatPanel';
 import { StrategyCodeEditor } from '@/components/StrategyCodeEditor';
@@ -23,6 +24,8 @@ import {
   PANEL_WIDTH_KEYS,
   PANEL_WIDTH_LIMITS,
 } from '@/lib/panelWidths';
+import { submitBacktestRun, type UniverseSelection } from '@/api/backtest';
+import { UniverseDialog } from '@/components/backtest/UniverseDialog';
 import {
   createStrategy,
   pullStrategyFromAgent,
@@ -48,7 +51,6 @@ import { cn } from '@/lib/cn';
 import { copyToClipboard } from '@/lib/clipboard';
 import {
   PRIMARY_BUTTON_CLASS,
-  PRIMARY_LIST_ITEM_SELECTED_CLASS,
   SAVE_BUTTON_IDLE_CLASS,
 } from '@/lib/primaryButton';
 import { toast } from 'sonner';
@@ -129,6 +131,21 @@ export default function BacktestPage() {
   const [shareBusy, setShareBusy] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
   const [shareSuccess, setShareSuccess] = useState(false);
+  const [workspace, setWorkspace] = useState<'strategies' | 'runs'>('strategies');
+  const [runParams, setRunParams] = useState({
+    initial_cash: '100000',
+    start_time: '2020-01-01',
+    end_time: '2023-12-31',
+    commission_pct: '0.03',
+    min_commission: '5',
+    stamp_pct: '0.1',
+    transfer_pct: '0.001',
+    slippage_pct: '0.02',
+  });
+  const [runBusy, setRunBusy] = useState(false);
+  const [universeOpen, setUniverseOpen] = useState(false);
+  const [runsRefreshKey, setRunsRefreshKey] = useState(0);
+  const [focusRunId, setFocusRunId] = useState<string | null>(null);
   const [showLibrary, setShowLibrary] = useState(false);
   const [libraryEntry, setLibraryEntry] = useState<StrategyLibrarySummary | null>(null);
   const [libraryRefreshKey, setLibraryRefreshKey] = useState(0);
@@ -352,6 +369,78 @@ export default function BacktestPage() {
     }
   };
 
+  const persistIfDirty = async (): Promise<string | null> => {
+    if (!selectedName) return null;
+    if (!dirty) return selectedName;
+    const name = form.name.trim();
+    if (!name) {
+      setSubmitError('策略名称不能为空');
+      return null;
+    }
+    const detail = await updateStrategy(selectedName, {
+      name,
+      platform: form.platform,
+      script: form.script,
+    });
+    if (name !== selectedName) setSelectedName(name);
+    const nextForm = formFromDetail(detail);
+    setForm(nextForm);
+    setSavedForm(nextForm);
+    setDirty(false);
+    await refresh();
+    return detail.name;
+  };
+
+  const handleRun = () => {
+    if (!requireAuth() || !selectedName) return;
+    if (form.platform !== 'finclaw') {
+      toast.error('仅 FinClaw 策略支持内置回测');
+      return;
+    }
+    const cash = Number(runParams.initial_cash);
+    if (!Number.isFinite(cash) || cash <= 0) {
+      toast.error('初始资金必须大于 0');
+      return;
+    }
+    setSubmitError(null);
+    setUniverseOpen(true);
+  };
+
+  const handleConfirmUniverse = async (selection: UniverseSelection) => {
+    const cash = Number(runParams.initial_cash);
+    setRunBusy(true);
+    setSubmitError(null);
+    try {
+      const strategyName = await persistIfDirty();
+      if (!strategyName) return;
+      const run = await submitBacktestRun({
+        strategy_name: strategyName,
+        initial_cash: cash,
+        start_time: runParams.start_time,
+        end_time: runParams.end_time,
+        universe: selection.universe,
+        symbols: selection.symbols,
+        index: selection.index,
+        commission_rate: Number(runParams.commission_pct) / 100,
+        min_commission: Number(runParams.min_commission),
+        stamp_tax_rate: Number(runParams.stamp_pct) / 100,
+        transfer_fee_rate: Number(runParams.transfer_pct) / 100,
+        slippage: Number(runParams.slippage_pct) / 100,
+      });
+      setUniverseOpen(false);
+      setFocusRunId(run.id);
+      setRunsRefreshKey((value) => value + 1);
+      setWorkspace('runs');
+      toast.success('已提交回测');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '提交回测失败';
+      setSubmitError(message);
+      toast.error(message);
+    } finally {
+      setRunBusy(false);
+    }
+  };
+
   const handleDelete = async (name: string) => {
     if (!requireAuth()) return;
     const ok = await confirm({
@@ -405,33 +494,59 @@ export default function BacktestPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border/50 px-4">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/50 px-3">
         <SidebarExpandTrigger />
-        <h1 className="min-w-0 flex-1 text-base font-medium tracking-tight text-foreground/90">量化回测</h1>
-        <ThemeToggle />
+        <nav className="-mb-px flex h-full items-stretch gap-0">
+          {([
+            ['strategies', '策略'],
+            ['runs', '回测'],
+          ] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              className={cn(
+                'h-full px-4 text-[13px]',
+                workspace === id
+                  ? 'border-b-2 border-primary font-medium text-primary'
+                  : 'border-b-2 border-transparent text-muted-foreground hover:text-foreground',
+              )}
+              onClick={() => setWorkspace(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+        <div className="ml-auto">
+          <ThemeToggle />
+        </div>
       </div>
 
+      {workspace === 'runs' ? (
+        <BacktestRunsPanel refreshKey={runsRefreshKey} focusRunId={focusRunId} />
+      ) : (
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
           className="relative flex shrink-0 flex-col border-r border-border/50 bg-muted/20"
           style={{ width: listResize.width }}
         >
-          <div className="space-y-2 border-b border-border/50 p-3">
+          <div className="flex h-9 shrink-0 items-center justify-between border-b border-border/50 px-3">
+            <span className="text-xs text-muted-foreground">策略管理</span>
+            <button
+              type="button"
+              title="新建策略"
+              className="flex size-[22px] items-center justify-center rounded-sm border border-border text-muted-foreground hover:border-primary hover:text-primary"
+              onClick={openCreate}
+            >
+              <IconPlus className="size-3.5" />
+            </button>
+          </div>
+          <div className="border-b border-border/50 p-2">
             <Input
               placeholder="搜索策略…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="h-8 text-sm"
             />
-            <Button
-              type="button"
-              size="sm"
-              className={cn('h-8 w-full gap-1', PRIMARY_BUTTON_CLASS)}
-              onClick={openCreate}
-            >
-              <IconPlus className="size-4" />
-              新建策略
-            </Button>
           </div>
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <ScrollArea className="min-h-0 flex-1">
@@ -453,19 +568,19 @@ export default function BacktestPage() {
                 </Button>
               </div>
             ) : (
-              <ul className="space-y-0.5 p-2">
+              <div className="py-1">
                 {sortedFiltered.map((s) => (
-                  <li
+                  <div
                     key={s.name}
                     className={cn(
-                      'group flex items-stretch gap-0.5 rounded-lg transition-colors',
-                      selectedName === s.name && PRIMARY_LIST_ITEM_SELECTED_CLASS,
+                      'group flex items-center gap-1.5',
+                      selectedName === s.name && 'bg-violet-500/10 shadow-[inset_2px_0_0_0] shadow-violet-600',
                     )}
                   >
                     <button
                       type="button"
                       className={cn(
-                        'min-w-0 flex-1 rounded-lg px-3 py-2.5 text-left',
+                        'min-w-0 flex-1 px-2.5 py-[7px] text-left',
                         selectedName !== s.name && 'hover:bg-muted/60',
                       )}
                       onClick={() => {
@@ -474,8 +589,11 @@ export default function BacktestPage() {
                         setLibraryEntry(null);
                       }}
                     >
-                      <span className="block min-w-0 truncate text-sm font-medium">{s.name}</span>
-                      <div className="mt-1 flex min-w-0 items-center justify-between gap-2">
+                      <span className="flex min-w-0 items-center gap-1">
+                        <span className="min-w-0 truncate text-[13px]">{s.name}</span>
+                        <span className="shrink-0 text-[11px] text-muted-foreground">.py</span>
+                      </span>
+                      <div className="mt-0.5 flex min-w-0 items-center justify-between gap-2">
                         <StrategyPlatformBadge platform={s.platform} />
                         <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/70">
                           {formatUpdatedAt(s.updated_at)}
@@ -485,20 +603,20 @@ export default function BacktestPage() {
                     <button
                       type="button"
                       className={cn(
-                        'flex size-8 shrink-0 items-center justify-center self-center rounded-md',
+                        'mr-1.5 flex size-[22px] shrink-0 items-center justify-center rounded-sm border border-border',
                         'text-muted-foreground/50 opacity-0 transition-opacity',
-                        'group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive',
+                        'group-hover:opacity-100 hover:border-destructive hover:text-destructive',
                         selectedName === s.name && 'opacity-100',
                       )}
                       onClick={() => void handleDelete(s.name)}
-                      title="删除策略"
+                      title="删除"
                       aria-label={`删除策略 ${s.name}`}
                     >
-                      <IconTrash className="size-3.5" stroke={1.75} />
+                      ×
                     </button>
-                  </li>
+                  </div>
                 ))}
-              </ul>
+              </div>
             )}
           </ScrollArea>
           <div className="shrink-0 border-t border-border/50 p-3">
@@ -560,18 +678,7 @@ export default function BacktestPage() {
               </div>
               <h2 className="text-base font-medium">量化策略管理</h2>
               <p className="max-w-md text-sm text-muted-foreground">
-                每个策略对应一个 Python 文件。保存后可通过右侧 AI 对话让 Agent 直接修改策略文件，再复制到
-                {' '}
-                <a
-                  href={getStrategyPlatformConfig(DEFAULT_STRATEGY_PLATFORM).backtestUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-primary underline-offset-2 hover:underline"
-                >
-                  聚宽回测平台
-                </a>
-                {' '}
-                运行验证。点击左侧「策略库」可查看社区分享的策略。
+                FinClaw 策略可在本页直接回测；聚宽策略保存后复制到聚宽控制台运行。右侧 AI 可直接修改当前策略文件。点击左侧「策略库」可查看社区分享的策略。
               </p>
               <Button type="button" className={PRIMARY_BUTTON_CLASS} onClick={openCreate}>
                 <IconPlus className="size-4" />
@@ -580,38 +687,36 @@ export default function BacktestPage() {
             </div>
           ) : (
             <>
-              <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/50 px-4 py-3">
-                <Input
-                  placeholder="策略名称"
-                  value={form.name}
-                  onChange={(e) => updateField('name', e.target.value)}
-                  className="h-8 max-w-[220px] text-sm font-medium"
-                  disabled={detailLoading}
-                />
+              <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border/50 px-2.5">
+                <label className="flex items-center gap-0.5">
+                  <Input
+                    placeholder="策略名称"
+                    value={form.name}
+                    onChange={(e) => updateField('name', e.target.value)}
+                    className="h-[26px] max-w-[180px] border-transparent bg-transparent px-1.5 text-[13px] font-medium hover:border-border focus-visible:border-border"
+                    disabled={detailLoading}
+                  />
+                  <span className="text-xs text-muted-foreground">.py</span>
+                </label>
                 <StrategyPlatformBadge platform={form.platform} />
-                {form.path && (
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="hidden truncate font-mono text-[11px] text-muted-foreground sm:inline">
-                      {form.path}
-                    </span>
-                    <Button
-                      asChild
-                      size="xs"
-                      className={cn('shrink-0 gap-1', PRIMARY_BUTTON_CLASS)}
+                {form.path && !platformConfig.nativeBacktest && platformConfig.backtestUrl ? (
+                  <Button
+                    asChild
+                    size="xs"
+                    className={cn('shrink-0 gap-1', PRIMARY_BUTTON_CLASS)}
+                  >
+                    <a
+                      href={platformConfig.backtestUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={`前往${platformConfig.label}回测`}
                     >
-                      <a
-                        href={platformConfig.backtestUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title={`前往${platformConfig.label}回测`}
-                      >
-                        {platformConfig.label}回测
-                        <IconExternalLink className="size-3" stroke={1.75} />
-                      </a>
-                    </Button>
-                  </div>
-                )}
-                <div className="ml-auto flex shrink-0 items-center gap-2">
+                      {platformConfig.label}回测
+                      <IconExternalLink className="size-3" stroke={1.75} />
+                    </a>
+                  </Button>
+                ) : null}
+                <div className="ml-auto flex shrink-0 items-center gap-1.5">
                   {dirty && (
                     <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">
                       未保存
@@ -619,7 +724,7 @@ export default function BacktestPage() {
                   )}
                   <Button
                     type="button"
-                    size="sm"
+                    size="xs"
                     className={cn('gap-1', PRIMARY_BUTTON_CLASS)}
                     disabled={detailLoading || !form.script.trim()}
                     title="复制策略代码到剪贴板"
@@ -630,7 +735,7 @@ export default function BacktestPage() {
                   </Button>
                   <Button
                     type="button"
-                    size="sm"
+                    size="xs"
                     className={cn('gap-1', PRIMARY_BUTTON_CLASS)}
                     disabled={dirty || detailLoading}
                     title={dirty ? '请先保存后再分享' : '分享到策略库'}
@@ -642,7 +747,7 @@ export default function BacktestPage() {
                   <Button
                     type="button"
                     variant="ghost"
-                    size="sm"
+                    size="xs"
                     disabled={!dirty || submitting || detailLoading}
                     onClick={handleRevert}
                   >
@@ -650,13 +755,24 @@ export default function BacktestPage() {
                   </Button>
                   <Button
                     type="button"
-                    size="sm"
+                    size="xs"
                     className={cn(dirty ? PRIMARY_BUTTON_CLASS : SAVE_BUTTON_IDLE_CLASS)}
                     disabled={submitting || detailLoading || !dirty}
                     onClick={() => void handleSave()}
                   >
                     {submitting ? '保存中…' : '保存'}
                   </Button>
+                  {platformConfig.nativeBacktest ? (
+                    <Button
+                      type="button"
+                      size="xs"
+                      className={cn('gap-1', PRIMARY_BUTTON_CLASS)}
+                      disabled={runBusy || submitting || detailLoading || !form.script.trim()}
+                      onClick={handleRun}
+                    >
+                      {runBusy ? '提交中…' : '回测'}
+                    </Button>
+                  ) : null}
                 </div>
               </div>
 
@@ -678,6 +794,95 @@ export default function BacktestPage() {
                   />
                 )}
               </div>
+
+              {platformConfig.nativeBacktest ? (
+                <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t border-border/50 bg-muted/20 px-3 py-1 text-xs">
+                  <label className="flex items-center gap-2 text-muted-foreground">
+                    初始资金
+                    <Input
+                      type="number"
+                      min="0"
+                      step="1000"
+                      value={runParams.initial_cash}
+                      onChange={(e) => setRunParams((prev) => ({ ...prev, initial_cash: e.target.value }))}
+                      className="h-[26px] w-[110px] font-mono text-xs"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 text-muted-foreground">
+                    开始
+                    <Input
+                      type="date"
+                      value={runParams.start_time}
+                      onChange={(e) => setRunParams((prev) => ({ ...prev, start_time: e.target.value }))}
+                      className="h-[26px] w-[138px] text-xs"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 text-muted-foreground">
+                    结束
+                    <Input
+                      type="date"
+                      value={runParams.end_time}
+                      onChange={(e) => setRunParams((prev) => ({ ...prev, end_time: e.target.value }))}
+                      className="h-[26px] w-[138px] text-xs"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 text-muted-foreground" title="买卖都收，聚宽等平台常用万三">
+                    佣金%
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={runParams.commission_pct}
+                      onChange={(e) => setRunParams((prev) => ({ ...prev, commission_pct: e.target.value }))}
+                      className="h-[26px] w-[72px] font-mono text-xs"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 text-muted-foreground" title="单笔佣金下限，券商常用 5 元">
+                    最低佣金
+                    <Input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={runParams.min_commission}
+                      onChange={(e) => setRunParams((prev) => ({ ...prev, min_commission: e.target.value }))}
+                      className="h-[26px] w-[72px] font-mono text-xs"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 text-muted-foreground" title="仅卖出收取，回测常用千一">
+                    印花税%
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={runParams.stamp_pct}
+                      onChange={(e) => setRunParams((prev) => ({ ...prev, stamp_pct: e.target.value }))}
+                      className="h-[26px] w-[72px] font-mono text-xs"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 text-muted-foreground" title="中国结算过户费，买卖都收">
+                    过户费%
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.001"
+                      value={runParams.transfer_pct}
+                      onChange={(e) => setRunParams((prev) => ({ ...prev, transfer_pct: e.target.value }))}
+                      className="h-[26px] w-[72px] font-mono text-xs"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 text-muted-foreground" title="成交价相对信号价的不利偏移，常用万二">
+                    滑点%
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={runParams.slippage_pct}
+                      onChange={(e) => setRunParams((prev) => ({ ...prev, slippage_pct: e.target.value }))}
+                      className="h-[26px] w-[72px] font-mono text-xs"
+                    />
+                  </label>
+                </div>
+              ) : null}
             </>
           )}
         </div>
@@ -693,6 +898,7 @@ export default function BacktestPage() {
           />
         </div>
       </div>
+      )}
 
       <StrategyCreateDialog
         open={createOpen}
@@ -706,6 +912,12 @@ export default function BacktestPage() {
         error={createError}
         onSubmit={handleCreateSubmit}
         onCancel={resetCreateForm}
+      />
+      <UniverseDialog
+        open={universeOpen}
+        busy={runBusy}
+        onOpenChange={setUniverseOpen}
+        onConfirm={(selection) => void handleConfirmUniverse(selection)}
       />
       <StrategyShareDialog
         open={shareOpen}

@@ -52,6 +52,12 @@ export default defineConfig({
           if (id.includes('@radix-ui') || id.includes('radix-ui')) {
             return 'radix'
           }
+          if (id.includes('recharts') || id.includes('d3-')) {
+            return 'recharts'
+          }
+          if (id.includes('lightweight-charts')) {
+            return 'charts'
+          }
           if (id.includes('react-dom') || id.includes('react-router')) {
             return 'react-vendor'
           }

@@ -82,7 +82,11 @@ export function StrategyCreateDialog({
                 onChange={onPlatformChange}
                 disabled={busy}
               />
-              <p className="mt-1.5 text-[11px] text-muted-foreground">当前仅支持聚宽，更多平台即将上线。</p>
+              <p className="mt-1.5 text-[11px] text-muted-foreground">
+                {platform === 'finclaw'
+                  ? 'FinClaw 策略用 akquant 格式，可在本页直接回测。'
+                  : '聚宽策略保存后复制到聚宽控制台运行。'}
+              </p>
             </div>
 
             <p className="rounded-lg bg-muted/50 px-3 py-2 font-mono text-[11px] text-muted-foreground">

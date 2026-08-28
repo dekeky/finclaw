@@ -81,6 +81,7 @@ func (fr *FinClawRouter) RoutesInit() error {
 	fr.agentManagerRouter()
 	fr.modelRouter()
 	fr.strategyRouter()
+	fr.backtestRouter()
 	fr.strategyLibraryRouter()
 	fr.marketRouter()
 	fr.weixinRouter()
@@ -125,6 +126,15 @@ func (fr *FinClawRouter) modelRouter() {
 func (fr *FinClawRouter) strategyRouter() {
 	strategyRouter := agentruntime.NewStrategyRouter(fr.r, auth.AuthMiddleware(fr.authStore))
 	strategyRouter.ConfigRouter()
+}
+
+func (fr *FinClawRouter) backtestRouter() {
+	addr := ""
+	if fr.finclawConf != nil && fr.finclawConf.FinclawConfigServer != nil {
+		addr = fr.finclawConf.FquantAddr
+	}
+	backtestRouter := agentruntime.NewBacktestRouter(fr.r, auth.AuthMiddleware(fr.authStore), addr)
+	backtestRouter.ConfigRouter()
 }
 
 func (fr *FinClawRouter) strategyLibraryRouter() {
