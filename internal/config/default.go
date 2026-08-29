@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/finclaw/pkg/channels/finclaw"
 )
@@ -16,7 +17,7 @@ const (
 	// DefaultAgentHubAddr is the desktop AgentHub market service base URL.
 	DefaultAgentHubAddr = "http://159.75.51.78:9093"
 	// DefaultFquantAddr is the local fquant backtest service.
-	DefaultFquantAddr = "http://127.0.0.1:8000"
+	DefaultFquantAddr = "http://127.0.0.1:8001"
 )
 
 func FinclawHomePath() string {
@@ -91,7 +92,8 @@ func ensureDefaultFquant(cfg *FinclawConfigServer) {
 	if cfg == nil {
 		return
 	}
-	if cfg.FquantAddr == "" {
+	addr := strings.TrimSpace(cfg.FquantAddr)
+	if addr == "" || addr == "http://127.0.0.1:8000" {
 		cfg.FquantAddr = DefaultFquantAddr
 	}
 }

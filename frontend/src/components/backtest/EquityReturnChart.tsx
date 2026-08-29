@@ -269,7 +269,9 @@ export default function EquityReturnChart({
     for (const item of overlays) {
       overlaySeriesRef.current.get(item.code)?.setData(overlayPoints.get(item.code) ?? []);
     }
-    const last = [...rows.values()].pop();
+    const rowsList = [...rows.values()];
+    const lastWithStrategy = [...rowsList].reverse().find((row) => typeof row.strategy === 'number');
+    const last = lastWithStrategy ?? rowsList[rowsList.length - 1];
     if (last) {
       lastKeyRef.current = String(last.time ?? '');
       paintHud(last);

@@ -11,9 +11,12 @@
   --accent-hover: #ff8533;
   --accent-dim: rgba(255, 106, 0, 0.16);
   --danger: #e64545;
-  --ok: #2dbd6e;
+	--ok: #2dbd6e;
+  --info: #4d9fff;
   --profit: #e64545;
   --loss: #00a870;
+  --run: #ff6a00;
+  --queued: #8a9bb0;
   --mono: "IBM Plex Mono", ui-monospace, monospace;
   --sans: "Noto Sans SC", "Microsoft YaHei UI", "PingFang SC", sans-serif;
   font-family: var(--sans);
@@ -89,6 +92,38 @@
   border-color: var(--accent);
 }
 
+.fquant-ui .icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.fquant-ui .rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--bg-elev);
+  border-right: 1px solid var(--line);
+}
+
+.fquant-ui .rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+
+.fquant-ui .rail-list {
+  flex: 1;
+  overflow: auto;
+  padding: 4px 0;
+}
+
 .fquant-ui .run-item {
   position: relative;
   display: flex;
@@ -112,20 +147,12 @@
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
-.fquant-ui .run-item-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-}
-
 .fquant-ui .run-item-body {
   display: flex;
-  min-width: 0;
-  flex: 1;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
+  flex: 1;
 }
 
 .fquant-ui .run-item-main {
@@ -135,55 +162,154 @@
   min-width: 0;
 }
 
-.fquant-ui .run-status {
-  flex: 0 0 auto;
-  font-size: 11px;
-  color: var(--muted);
+.fquant-ui .run-item-name {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
 }
 
-.fquant-ui .run-status.queued { color: #8a9bb0; }
-.fquant-ui .run-status.running { color: #ff6a00; }
-.fquant-ui .run-status.succeeded { color: #2dbd6e; }
-.fquant-ui .run-status.failed { color: #e64545; }
+.fquant-ui .run-item-name-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.fquant-ui .run-status {
+  flex: 0 0 auto;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.fquant-ui .run-status.queued {
+  color: var(--queued);
+  background: rgba(138, 155, 176, 0.16);
+}
+
+.fquant-ui .run-status.running {
+  color: var(--info);
+  background: rgba(77, 159, 255, 0.16);
+  animation: run-status-pulse 1.4s ease-in-out infinite;
+}
+
+.fquant-ui .run-status.succeeded {
+  color: var(--ok);
+  background: rgba(45, 189, 110, 0.16);
+}
+
+.fquant-ui .run-status.failed {
+  color: var(--danger);
+  background: rgba(230, 69, 69, 0.16);
+}
+
+@keyframes run-status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
 
 .fquant-ui .run-item-duration {
-  margin-left: auto;
   color: var(--muted);
   font-size: 11px;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .fquant-ui .run-item-meta {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
   color: var(--muted);
   font-size: 11px;
 }
 
+.fquant-ui .run-item-meta > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fquant-ui .run-item-meta-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
 .fquant-ui .run-item-config {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
   border: 0;
   background: transparent;
   color: var(--muted);
-  padding: 0;
-  display: inline-flex;
 }
 
 .fquant-ui .run-item-config:hover {
   color: var(--accent);
 }
 
+.fquant-ui .run-item-config.danger:hover {
+  color: var(--danger);
+}
+
+.fquant-ui .run-item-rename {
+  min-width: 0;
+  flex: 1;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
 .fquant-ui .run-item .dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  flex: 0 0 auto;
+  flex: 0 0 6px;
+  background: var(--muted);
 }
 
-.fquant-ui .run-item .dot.queued { background: #6f8ea8; }
-.fquant-ui .run-item .dot.running { background: #ff6a00; }
-.fquant-ui .run-item .dot.succeeded { background: #2dbd6e; }
-.fquant-ui .run-item .dot.failed { background: #e64545; }
+.fquant-ui .run-item .dot.queued {
+  background: var(--queued);
+}
+
+.fquant-ui .run-item .dot.running {
+  background: var(--info);
+  animation: run-status-pulse 1.4s ease-in-out infinite;
+}
+
+.fquant-ui .run-item .dot.succeeded {
+  background: var(--ok);
+}
+
+.fquant-ui .run-item .dot.failed {
+  background: var(--danger);
+}
 
 .fquant-ui .report {
   position: relative;
@@ -256,13 +382,23 @@
   border-right: 0;
 }
 
-.fquant-ui .report-split .kpi-detail-btn {
+.fquant-ui .report-split .report-side-btns {
   grid-column: 2;
   grid-row: 1;
   align-self: stretch;
   margin-top: 12px;
+  display: flex;
+  flex-direction: column;
   border-top: 1px solid var(--line);
   border-right: 1px solid var(--line);
+}
+
+.fquant-ui .report-split .report-side-btns .kpi-detail-btn {
+  flex: 1;
+  align-self: stretch;
+  margin-top: 0;
+  border-top: 0;
+  border-right: 0;
 }
 
 .fquant-ui .report-rest {
@@ -917,6 +1053,52 @@
   min-height: 40px;
   padding: 0 12px;
   border-bottom: 1px solid #2d2d2d;
+}
+
+.modal-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.source-copy-btn {
+  height: 22px;
+  padding: 0 8px;
+  background: transparent;
+  border: 1px solid var(--line, #2d2d2d);
+  color: var(--muted, #8a8a8a);
+  font-size: 12px;
+}
+
+.source-copy-btn:hover {
+  color: var(--accent, #ff6a00);
+  border-color: var(--accent, #ff6a00);
+}
+
+.source-modal {
+  width: min(880px, calc(100vw - 32px));
+  height: min(720px, calc(100vh - 32px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  min-width: min(480px, calc(100vw - 16px));
+  min-height: min(360px, calc(100vh - 16px));
+  resize: both;
+  overflow: hidden;
+}
+
+.source-modal-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .symbol-inspect-modal {

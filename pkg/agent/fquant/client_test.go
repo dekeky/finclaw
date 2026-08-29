@@ -70,6 +70,15 @@ func TestClientUpsertAndSubmit(t *testing.T) {
 				t.Errorf("date = %q", r.URL.Query().Get("date"))
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"items": []any{}})
+		case r.Method == http.MethodPatch && r.URL.Path == "/api/users/u_1/runs/run1":
+			body, _ := io.ReadAll(r.Body)
+			var payload struct {
+				Name string `json:"name"`
+			}
+			_ = json.Unmarshal(body, &payload)
+			writeJSON(w, http.StatusOK, map[string]any{"id": "run1", "name": payload.Name, "strategy_name": "dual_ma"})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/users/u_1/runs/run1":
+			writeJSON(w, http.StatusOK, map[string]any{"id": "run1"})
 		default:
 			http.NotFound(w, r)
 		}
@@ -124,6 +133,13 @@ func TestClientUpsertAndSubmit(t *testing.T) {
 	positions, err := client.GetRunPositions(ctx, "u_1", "run1", "2020-01-02", "")
 	if err != nil || !strings.Contains(string(positions), "items") {
 		t.Fatalf("positions: err=%v body=%s", err, positions)
+	}
+	renamed, err := client.UpdateRunName(ctx, "u_1", "run1", "我的回测")
+	if err != nil || !strings.Contains(string(renamed), "我的回测") {
+		t.Fatalf("rename: err=%v body=%s", err, renamed)
+	}
+	if _, err := client.DeleteRun(ctx, "u_1", "run1"); err != nil {
+		t.Fatalf("delete: %v", err)
 	}
 }
 
@@ -216,6 +232,8 @@ func TestClientGetBarsIndexesOnly(t *testing.T) {
 func TestClientUniverseAndFina(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/api/indicators":
+			writeJSON(w, http.StatusOK, map[string]any{"items": []map[string]any{{"id": "pe_ttm", "source": "kline", "group": "估值", "label": "市盈率 TTM"}}})
 		case r.URL.Path == "/api/symbols":
 			if r.URL.Query().Get("codes") != "600000,000300" {
 				t.Errorf("codes = %q", r.URL.Query().Get("codes"))
@@ -243,6 +261,10 @@ func TestClientUniverseAndFina(t *testing.T) {
 
 	client := New(srv.URL)
 	ctx := context.Background()
+	indicators, err := client.ListIndicators(ctx)
+	if err != nil || !strings.Contains(string(indicators), "pe_ttm") {
+		t.Fatalf("indicators: err=%v body=%s", err, indicators)
+	}
 	symbols, err := client.ListSymbols(ctx, "", "", "600000,000300")
 	if err != nil || !strings.Contains(string(symbols), "浦发银行") {
 		t.Fatalf("symbols: err=%v body=%s", err, symbols)

@@ -16,7 +16,7 @@ export const PANEL_WIDTH_DEFAULTS = {
   docToc: 220,
   backtestList: 224,
   backtestChat: 360,
-  backtestRuns: 240,
+  backtestRuns: 260,
 } as const;
 
 export const PANEL_WIDTH_LIMITS = {
@@ -26,5 +26,5 @@ export const PANEL_WIDTH_LIMITS = {
   docToc: { minWidth: 160, maxWidth: 420 },
   backtestList: { minWidth: 120, maxWidth: 360 },
   backtestChat: { minWidth: 280, maxWidth: 560 },
-  backtestRuns: { minWidth: 160, maxWidth: 360 },
+  backtestRuns: { minWidth: 200, maxWidth: 420 },
 } as const;

@@ -108,6 +108,9 @@ func TestSubmitRunProxiesToFquant(t *testing.T) {
 func TestRunBlotterAndPositionsProxy(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/users/u_test/runs/abc123":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"abc123","status":"succeeded","source":"class S(Strategy):\n    pass\n","request":{"strategy_name":"dual_ma"}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/users/u_test/runs/abc123/blotter":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"orders":[{"symbol":"600000"}],"trades":[]}`))
@@ -118,6 +121,17 @@ func TestRunBlotterAndPositionsProxy(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"items":[{"symbol":"600000","quantity":100}]}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/api/users/u_test/runs/abc123":
+			raw, _ := io.ReadAll(r.Body)
+			var payload struct {
+				Name string `json:"name"`
+			}
+			_ = json.Unmarshal(raw, &payload)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"abc123","name":"` + payload.Name + `","strategy_name":"dual_ma"}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/users/u_test/runs/abc123":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"abc123"}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -132,6 +146,13 @@ func TestRunBlotterAndPositionsProxy(t *testing.T) {
 	})
 	NewBacktestRouter(engine, func(c *gin.Context) { c.Next() }, srv.URL).ConfigRouter()
 
+	detailReq := httptest.NewRequest(http.MethodGet, "/api/v1/backtest/runs/abc123", nil)
+	detailRec := httptest.NewRecorder()
+	engine.ServeHTTP(detailRec, detailReq)
+	if detailRec.Code != http.StatusOK || !bytes.Contains(detailRec.Body.Bytes(), []byte("class S(Strategy)")) {
+		t.Fatalf("detail status=%d body=%s", detailRec.Code, detailRec.Body.String())
+	}
+
 	blotterReq := httptest.NewRequest(http.MethodGet, "/api/v1/backtest/runs/abc123/blotter", nil)
 	blotterRec := httptest.NewRecorder()
 	engine.ServeHTTP(blotterRec, blotterReq)
@@ -144,6 +165,30 @@ func TestRunBlotterAndPositionsProxy(t *testing.T) {
 	engine.ServeHTTP(posRec, posReq)
 	if posRec.Code != http.StatusOK || !bytes.Contains(posRec.Body.Bytes(), []byte("quantity")) {
 		t.Fatalf("positions status=%d body=%s", posRec.Code, posRec.Body.String())
+	}
+
+	renameBody, _ := json.Marshal(map[string]string{"name": "我的回测"})
+	renameReq := httptest.NewRequest(http.MethodPatch, "/api/v1/backtest/runs/abc123", bytes.NewReader(renameBody))
+	renameReq.Header.Set("Content-Type", "application/json")
+	renameRec := httptest.NewRecorder()
+	engine.ServeHTTP(renameRec, renameReq)
+	if renameRec.Code != http.StatusOK || !bytes.Contains(renameRec.Body.Bytes(), []byte("我的回测")) {
+		t.Fatalf("rename status=%d body=%s", renameRec.Code, renameRec.Body.String())
+	}
+
+	blankReq := httptest.NewRequest(http.MethodPatch, "/api/v1/backtest/runs/abc123", bytes.NewReader([]byte(`{"name":"  "}`)))
+	blankReq.Header.Set("Content-Type", "application/json")
+	blankRec := httptest.NewRecorder()
+	engine.ServeHTTP(blankRec, blankReq)
+	if blankRec.Code != http.StatusBadRequest {
+		t.Fatalf("blank rename status=%d body=%s", blankRec.Code, blankRec.Body.String())
+	}
+
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/v1/backtest/runs/abc123", nil)
+	delRec := httptest.NewRecorder()
+	engine.ServeHTTP(delRec, delReq)
+	if delRec.Code != http.StatusOK || !bytes.Contains(delRec.Body.Bytes(), []byte("abc123")) {
+		t.Fatalf("delete status=%d body=%s", delRec.Code, delRec.Body.String())
 	}
 }
 
@@ -293,6 +338,9 @@ func TestMarketBarsReturnsTypedSeries(t *testing.T) {
 func TestUniverseAndFinaProxy(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/api/indicators":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"items":[{"id":"pe_ttm","source":"kline","group":"估值","label":"市盈率 TTM"}]}`))
 		case r.URL.Path == "/api/universe/stocks":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"items":[{"code":"600000","name":"浦发银行","kind":"stock"}]}`))
@@ -320,6 +368,7 @@ func TestUniverseAndFinaProxy(t *testing.T) {
 	NewBacktestRouter(engine, func(c *gin.Context) { c.Next() }, srv.URL).ConfigRouter()
 
 	for _, path := range []string{
+		"/api/v1/backtest/indicators",
 		"/api/v1/backtest/universe/stocks?q=浦发",
 		"/api/v1/backtest/universe/indexes",
 		"/api/v1/backtest/universe/indexes/000300",
@@ -331,7 +380,9 @@ func TestUniverseAndFinaProxy(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s status = %d body = %s", path, rec.Code, rec.Body.String())
 		}
-		if !bytes.Contains(rec.Body.Bytes(), []byte("600000")) && !bytes.Contains(rec.Body.Bytes(), []byte("000300")) {
+		if !bytes.Contains(rec.Body.Bytes(), []byte("600000")) &&
+			!bytes.Contains(rec.Body.Bytes(), []byte("000300")) &&
+			!bytes.Contains(rec.Body.Bytes(), []byte("pe_ttm")) {
 			t.Fatalf("%s unexpected body = %s", path, rec.Body.String())
 		}
 	}

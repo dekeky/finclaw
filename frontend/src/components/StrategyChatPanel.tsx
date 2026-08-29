@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { IconAlertTriangle, IconBuildingStore, IconMessagePlus } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBuildingStore, IconChevronsRight, IconMessagePlus } from '@tabler/icons-react';
 import { ChatMainToolbar } from '@/components/chrome/ChatMainToolbar';
 import { ChatContainer } from '@/components/ChatContainer';
 import { ChatSlashHints, handleSlashInputKeyDown } from '@/components/ChatSlashHints';
@@ -32,6 +32,7 @@ interface StrategyChatPanelProps {
   strategyPath?: string | null;
   strategyReady: boolean;
   onStrategyFileChanged?: (agentName: string) => void;
+  onCollapse?: () => void;
   className?: string;
 }
 
@@ -40,6 +41,7 @@ export function StrategyChatPanel({
   strategyPath,
   strategyReady,
   onStrategyFileChanged,
+  onCollapse,
   className,
 }: StrategyChatPanelProps) {
   const { user } = useAuth();
@@ -146,6 +148,23 @@ export function StrategyChatPanel({
             <TooltipContent side="bottom">新对话</TooltipContent>
           </Tooltip>
         )}
+        {onCollapse ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className={TOOLBAR_ICON_BUTTON_CLASS}
+                aria-label="收起 AI"
+                onClick={onCollapse}
+              >
+                <IconChevronsRight className="size-[18px]" stroke={1.75} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">收起 AI</TooltipContent>
+          </Tooltip>
+        ) : null}
       </div>
 
       {sendError && (

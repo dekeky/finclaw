@@ -31,8 +31,11 @@ func (br *BacktestRouter) ConfigRouter() {
 	group.POST("/runs", br.submitRun)
 	group.GET("/runs", br.listRuns)
 	group.GET("/runs/:id", br.getRun)
+	group.PATCH("/runs/:id", br.renameRun)
+	group.DELETE("/runs/:id", br.deleteRun)
 	group.GET("/runs/:id/blotter", br.getRunBlotter)
 	group.GET("/runs/:id/positions", br.getRunPositions)
+	group.GET("/indicators", br.listIndicators)
 	group.GET("/symbols", br.listSymbols)
 	group.GET("/universe/stocks", br.universeStocks)
 	group.GET("/universe/indexes", br.universeIndexes)
@@ -140,6 +143,41 @@ func (br *BacktestRouter) getRun(c *gin.Context) {
 	writeRawJSON(c, raw)
 }
 
+type renameRunRequest struct {
+	Name string `json:"name"`
+}
+
+func (br *BacktestRouter) renameRun(c *gin.Context) {
+	var req renameRunRequest
+	ginx.PanicIfNotNil(c.ShouldBindJSON(&req))
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		ginx.NewRender(c, http.StatusBadRequest).Err(errors.New("回测名称不能为空"))
+		return
+	}
+	if len([]rune(name)) > 64 {
+		ginx.NewRender(c, http.StatusBadRequest).Err(errors.New("回测名称最长 64 个字符"))
+		return
+	}
+	username := fquant.UsernameForUser(getUserID(c))
+	raw, err := br.client.UpdateRunName(c.Request.Context(), username, strings.TrimSpace(c.Param("id")), name)
+	if err != nil {
+		writeFquantError(c, err)
+		return
+	}
+	writeRawJSON(c, raw)
+}
+
+func (br *BacktestRouter) deleteRun(c *gin.Context) {
+	username := fquant.UsernameForUser(getUserID(c))
+	raw, err := br.client.DeleteRun(c.Request.Context(), username, strings.TrimSpace(c.Param("id")))
+	if err != nil {
+		writeFquantError(c, err)
+		return
+	}
+	writeRawJSON(c, raw)
+}
+
 func (br *BacktestRouter) getRunBlotter(c *gin.Context) {
 	username := fquant.UsernameForUser(getUserID(c))
 	raw, err := br.client.GetRunBlotter(c.Request.Context(), username, strings.TrimSpace(c.Param("id")))
@@ -159,6 +197,15 @@ func (br *BacktestRouter) getRunPositions(c *gin.Context) {
 		c.Query("date"),
 		c.Query("symbol"),
 	)
+	if err != nil {
+		writeFquantError(c, err)
+		return
+	}
+	writeRawJSON(c, raw)
+}
+
+func (br *BacktestRouter) listIndicators(c *gin.Context) {
+	raw, err := br.client.ListIndicators(c.Request.Context())
 	if err != nil {
 		writeFquantError(c, err)
 		return

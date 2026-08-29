@@ -1,14 +1,25 @@
-import { useEffect, useRef, useState } from 'react';
-import { getBacktestRun, listBacktestRuns, type RunDetail, type RunListItem } from '@/api/backtest';
+import { IconTrash } from '@tabler/icons-react';
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import {
+  deleteBacktestRun,
+  getBacktestRun,
+  listBacktestRuns,
+  renameBacktestRun,
+  runDisplayName,
+  type RunDetail,
+  type RunListItem,
+} from '@/api/backtest';
 import { PanelResizeHandle } from '@/components/PanelResizeHandle';
 import { RunReport } from '@/components/backtest/RunReport';
 import RunConfigDialog from '@/components/backtest/RunConfigDialog';
+import SourceDialog from '@/components/backtest/SourceDialog';
 import {
   elapsedSince,
   formatDateMinute,
   formatDuration,
   STATUS_LABEL,
 } from '@/components/backtest/format';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useHorizontalResize } from '@/hooks/useHorizontalResize';
 import {
   PANEL_WIDTH_DEFAULTS,
@@ -16,6 +27,7 @@ import {
   PANEL_WIDTH_LIMITS,
 } from '@/lib/panelWidths';
 import { useAuth } from '@/state/auth';
+import { toast } from 'sonner';
 import './fquant-ui.css';
 
 function isLiveStatus(status?: string | null): boolean {
@@ -38,6 +50,7 @@ function placeholderRun(item: RunListItem): RunDetail {
   const request = item.request;
   return {
     id: item.id,
+    name: runDisplayName(item),
     status: item.status,
     created_at: item.created_at,
     updated_at: item.updated_at,
@@ -58,6 +71,7 @@ function placeholderRun(item: RunListItem): RunDetail {
       transfer_fee_rate: request?.transfer_fee_rate,
       slippage: request?.slippage,
       lot_size: request?.lot_size,
+      extra: request?.extra,
     },
   };
 }
@@ -77,6 +91,34 @@ function SettingsIcon() {
   );
 }
 
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none">
+      <path
+        d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function SourceIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none">
+      <path
+        d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function BacktestRunsPanel({
   refreshKey,
   focusRunId,
@@ -85,6 +127,7 @@ export function BacktestRunsPanel({
   focusRunId: string | null;
 }) {
   const { user } = useAuth();
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const runResize = useHorizontalResize({
     storageKey: PANEL_WIDTH_KEYS.backtestRuns,
     defaultWidth: PANEL_WIDTH_DEFAULTS.backtestRuns,
@@ -95,6 +138,10 @@ export function BacktestRunsPanel({
   const [selectedId, setSelectedId] = useState<string | null>(focusRunId);
   const [error, setError] = useState<string | null>(null);
   const [configItem, setConfigItem] = useState<RunListItem | null>(null);
+  const [sourceView, setSourceView] = useState<{ id: string; title: string; source: string } | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState('');
+  const ignoreBlurRef = useRef(false);
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
   const currentRef = useRef(current);
@@ -183,9 +230,96 @@ export function BacktestRunsPanel({
   function openRun(id: string) {
     if (id === selectedId) return;
     setError(null);
+    setEditingId(null);
     setSelectedId(id);
     const item = items.find((row) => row.id === id);
     if (item) setCurrent(placeholderRun(item));
+  }
+
+  function openSource(item: RunListItem, event: MouseEvent) {
+    event.stopPropagation();
+    const title = runDisplayName(item);
+    if (current?.id === item.id && current.source) {
+      setSourceView({ id: item.id, title, source: current.source });
+      return;
+    }
+    void getBacktestRun(item.id)
+      .then((detail) => {
+        if (!detail.source) {
+          toast.error('该回测没有源码快照');
+          return;
+        }
+        setSourceView({ id: item.id, title: runDisplayName(detail) || title, source: detail.source });
+        if (selectedIdRef.current === item.id) setCurrent(detail);
+      })
+      .catch((err: unknown) => {
+        toast.error(err instanceof Error ? err.message : '加载源码失败');
+      });
+  }
+
+  function startRename(item: RunListItem, event?: MouseEvent) {
+    event?.stopPropagation();
+    ignoreBlurRef.current = false;
+    if (item.id !== selectedId) openRun(item.id);
+    setEditingId(item.id);
+    setDraftName(runDisplayName(item));
+  }
+
+  async function commitRename(item: RunListItem) {
+    if (ignoreBlurRef.current) {
+      ignoreBlurRef.current = false;
+      return;
+    }
+    const next = draftName.trim();
+    const previous = runDisplayName(item);
+    setEditingId(null);
+    if (!next || next === previous) return;
+    try {
+      const updated = await renameBacktestRun(item.id, next);
+      setItems((list) => list.map((row) => (row.id === item.id ? { ...row, ...updated, name: next } : row)));
+      setCurrent((detail) => (detail?.id === item.id ? { ...detail, name: next } : detail));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '重命名失败');
+    }
+  }
+
+  async function handleDelete(item: RunListItem, event: MouseEvent) {
+    event.stopPropagation();
+    if (item.status === 'running') {
+      toast.error('回测进行中，结束后再删除');
+      return;
+    }
+    const label = runDisplayName(item);
+    if (!(await confirm({ title: `删除回测「${label}」`, description: '删除后无法恢复。', danger: true, confirmText: '删除' }))) {
+      return;
+    }
+    try {
+      await deleteBacktestRun(item.id);
+      const remaining = items.filter((row) => row.id !== item.id);
+      setItems(remaining);
+      if (selectedId === item.id) {
+        const next = remaining[0] ?? null;
+        setSelectedId(next?.id ?? null);
+        setCurrent(next ? placeholderRun(next) : null);
+      }
+      if (configItem?.id === item.id) setConfigItem(null);
+      if (sourceView?.id === item.id) setSourceView(null);
+      toast.success('已删除回测');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '删除失败');
+    }
+  }
+
+  function onRenameKey(event: KeyboardEvent<HTMLInputElement>, item: RunListItem) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      ignoreBlurRef.current = false;
+      void commitRename(item);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      ignoreBlurRef.current = true;
+      setEditingId(null);
+    }
   }
 
   const nowLive = items.some((item) => isLiveStatus(item.status));
@@ -199,22 +333,24 @@ export function BacktestRunsPanel({
   return (
     <div className="fquant-ui flex min-h-0 flex-1 flex-row overflow-hidden">
       <div
-        className="relative flex shrink-0 flex-col border-r"
-        style={{ width: runResize.width, borderColor: 'var(--line)', background: 'var(--bg-elev)' }}
+        className="rail run-rail relative shrink-0"
+        style={{ width: runResize.width }}
       >
-        <div className="flex h-9 items-center px-2.5 text-xs" style={{ color: 'var(--muted)', borderBottom: '1px solid var(--line)' }}>
-          回测记录
+        <div className="rail-head">
+          <span>回测记录</span>
         </div>
-        <div className="min-h-0 flex-1 overflow-auto py-1">
+        <div className="rail-list">
           {!user ? (
             <p className="empty muted">登录后查看回测记录。</p>
           ) : error ? (
             <p className="error">{error}</p>
           ) : items.length === 0 ? (
-            <p className="empty">暂无回测。在策略页保存 FinClaw 策略后点击「回测」。</p>
+            <p className="empty">暂无回测。在策略页保存后点击运行。</p>
           ) : (
             items.map((item) => {
               const duration = runListDuration(item, now);
+              const label = runDisplayName(item);
+              const editing = editingId === item.id;
               return (
                 <div
                   key={item.id}
@@ -224,24 +360,75 @@ export function BacktestRunsPanel({
                   <span className={`dot ${item.status}`} />
                   <span className="run-item-body">
                     <span className="run-item-main">
-                      <span className="run-item-name">{item.strategy_name}</span>
-                      <span className={`run-status ${item.status}`}>{STATUS_LABEL[item.status] ?? item.status}</span>
-                      {duration ? <span className="run-item-duration">{duration}</span> : null}
+                      {editing ? (
+                        <input
+                          className="run-item-rename"
+                          value={draftName}
+                          autoFocus
+                          maxLength={64}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={(event) => setDraftName(event.target.value)}
+                          onBlur={() => void commitRename(item)}
+                          onKeyDown={(event) => onRenameKey(event, item)}
+                          aria-label="回测名称"
+                        />
+                      ) : (
+                        <span
+                          className="run-item-name"
+                          title="双击重命名"
+                          onDoubleClick={(event) => startRename(item, event)}
+                        >
+                          {label}
+                        </span>
+                      )}
+                      <span className="run-item-name-actions">
+                        <button
+                          className="run-item-config"
+                          type="button"
+                          title="重命名"
+                          aria-label={`重命名 ${label}`}
+                          onClick={(event) => startRename(item, event)}
+                        >
+                          <PencilIcon />
+                        </button>
+                        <button
+                          className="run-item-config"
+                          type="button"
+                          title="回测源码"
+                          aria-label={`${label} 回测源码`}
+                          onClick={(event) => openSource(item, event)}
+                        >
+                          <SourceIcon />
+                        </button>
+                        <button
+                          className="run-item-config"
+                          type="button"
+                          title="回测配置"
+                          aria-label={`${label} 回测配置`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setConfigItem(item);
+                          }}
+                        >
+                          <SettingsIcon />
+                        </button>
+                        <button
+                          className="run-item-config danger"
+                          type="button"
+                          title={item.status === 'running' ? '回测进行中，结束后再删除' : '删除'}
+                          aria-label={`删除 ${label}`}
+                          onClick={(event) => void handleDelete(item, event)}
+                        >
+                          <IconTrash size={13} stroke={1.75} />
+                        </button>
+                      </span>
                     </span>
                     <span className="run-item-meta">
                       <span>{formatDateMinute(item.started_at || item.created_at)}</span>
-                      <button
-                        className="run-item-config"
-                        type="button"
-                        title="回测配置"
-                        aria-label={`${item.strategy_name} 回测配置`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setConfigItem(item);
-                        }}
-                      >
-                        <SettingsIcon />
-                      </button>
+                      <span className="run-item-meta-end">
+                        <span className={`run-status ${item.status}`}>{STATUS_LABEL[item.status] ?? item.status}</span>
+                        {duration ? <span className="run-item-duration">{duration}</span> : null}
+                      </span>
                     </span>
                   </span>
                 </div>
@@ -257,6 +444,14 @@ export function BacktestRunsPanel({
         <div className="report empty min-w-0 flex-1">选择一条回测查看报告。</div>
       )}
       {configItem ? <RunConfigDialog item={configItem} onClose={() => setConfigItem(null)} /> : null}
+      {sourceView ? (
+        <SourceDialog
+          source={sourceView.source}
+          title={sourceView.title}
+          onClose={() => setSourceView(null)}
+        />
+      ) : null}
+      {confirmDialog}
     </div>
   );
 }

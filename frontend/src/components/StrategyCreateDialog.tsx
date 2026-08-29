@@ -2,10 +2,8 @@ import type { FormEvent } from 'react';
 import { Dialog } from 'radix-ui';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { StrategyPlatformSelect } from '@/components/StrategyPlatformField';
 import { cn } from '@/lib/cn';
 import { strategyRelPath } from '@/api/strategies';
-import type { StrategyPlatform } from '@/lib/strategyPlatforms';
 import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 
 export interface StrategyCreateDialogProps {
@@ -13,8 +11,6 @@ export interface StrategyCreateDialogProps {
   onOpenChange: (open: boolean) => void;
   name: string;
   onNameChange: (name: string) => void;
-  platform: StrategyPlatform;
-  onPlatformChange: (platform: StrategyPlatform) => void;
   nameConflict?: boolean;
   busy?: boolean;
   error?: string | null;
@@ -27,8 +23,6 @@ export function StrategyCreateDialog({
   onOpenChange,
   name,
   onNameChange,
-  platform,
-  onPlatformChange,
   nameConflict = false,
   busy = false,
   error,
@@ -56,7 +50,7 @@ export function StrategyCreateDialog({
         >
           <Dialog.Title className="text-lg font-semibold tracking-tight text-foreground">新建策略</Dialog.Title>
           <Dialog.Description className="mt-1 text-xs text-muted-foreground">
-            每个策略对应一个 Python 文件，创建后可在编辑器中修改，或通过 AI 对话生成。
+            每个策略对应一个 Python 文件，创建后可在编辑器中修改，或通过 AI 对话生成。使用 FinClaw / akquant 格式，可在本页直接回测。
           </Dialog.Description>
 
           <form onSubmit={onSubmit} className="mt-4 space-y-4">
@@ -73,20 +67,6 @@ export function StrategyCreateDialog({
               {nameConflict && (
                 <p className="mt-1.5 text-[11px] text-destructive">已存在同名策略，请换一个名称。</p>
               )}
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-foreground">回测平台</label>
-              <StrategyPlatformSelect
-                value={platform}
-                onChange={onPlatformChange}
-                disabled={busy}
-              />
-              <p className="mt-1.5 text-[11px] text-muted-foreground">
-                {platform === 'finclaw'
-                  ? 'FinClaw 策略用 akquant 格式，可在本页直接回测。'
-                  : '聚宽策略保存后复制到聚宽控制台运行。'}
-              </p>
             </div>
 
             <p className="rounded-lg bg-muted/50 px-3 py-2 font-mono text-[11px] text-muted-foreground">

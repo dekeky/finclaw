@@ -113,6 +113,10 @@ export default function RunConfigDialog({
     { label: '过户费', value: formatRatePct(request.transfer_fee_rate) },
     { label: '滑点', value: formatRatePct(request.slippage) },
     { label: '手数', value: request.lot_size == null ? '—' : String(request.lot_size) },
+    {
+      label: '附加数据',
+      value: request.extra?.length ? request.extra.join('、') : '仅 OHLCV',
+    },
   ];
 
   return createPortal(

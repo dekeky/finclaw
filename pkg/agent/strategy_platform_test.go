@@ -9,8 +9,8 @@ func TestNormalizeStrategyPlatform(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{in: "", want: StrategyPlatformJoinQuant},
-		{in: "ths", want: StrategyPlatformJoinQuant},
+		{in: "", want: StrategyPlatformFinClaw},
+		{in: "ths", want: StrategyPlatformFinClaw},
 		{in: "joinquant", want: StrategyPlatformJoinQuant},
 		{in: "FinClaw", want: StrategyPlatformFinClaw},
 		{in: "ricequant", wantErr: true},
@@ -40,6 +40,9 @@ func TestDefaultStrategyScript(t *testing.T) {
 	fc := defaultStrategyScript(StrategyPlatformFinClaw)
 	if !strings.Contains(fc, "from akquant import") || !strings.Contains(fc, "class DualMAStrategy") || !strings.Contains(fc, "def on_bar") {
 		t.Fatalf("finclaw default script missing akquant Strategy:\n%s", fc)
+	}
+	if !strings.Contains(fc, "from fquant.indicators import pe_ttm") || !strings.Contains(fc, "extra = [pe_ttm]") || !strings.Contains(fc, "bar.extra.get(pe_ttm)") {
+		t.Fatalf("finclaw default script missing extra indicators:\n%s", fc)
 	}
 	if strings.Contains(fc, "fquant.symbols") || strings.Contains(fc, "symbols = lookup") {
 		t.Fatalf("finclaw default script still pins symbols in code:\n%s", fc)

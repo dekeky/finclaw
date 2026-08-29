@@ -1,12 +1,16 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from 'react';
 import { useLocation } from 'react-router-dom';
 import {
   IconBuildingWarehouse,
   IconChartAreaLine,
   IconCopy,
-  IconExternalLink,
+  IconLoader2,
+  IconPencil,
+  IconPlayerPlay,
   IconPlus,
   IconShare2,
+  IconSparkles,
+  IconTrash,
 } from '@tabler/icons-react';
 import { BacktestRunsPanel } from '@/components/backtest/BacktestRunsPanel';
 import '@/components/backtest/fquant-ui.css';
@@ -26,12 +30,14 @@ import {
 } from '@/lib/panelWidths';
 import { submitBacktestRun, type UniverseSelection } from '@/api/backtest';
 import { UniverseDialog } from '@/components/backtest/UniverseDialog';
+import type { BacktestRunParams } from '@/lib/backtestRunDraft';
 import {
   createStrategy,
   pullStrategyFromAgent,
   deleteStrategy,
   getStrategy,
   listStrategies,
+  renameStrategy,
   strategyRelPath,
   updateStrategy,
   type StrategySummary,
@@ -117,12 +123,16 @@ export default function BacktestPage() {
   const [form, setForm] = useState<EditorForm>(() => emptyForm());
   const [savedForm, setSavedForm] = useState<EditorForm>(() => emptyForm());
   const [dirty, setDirty] = useState(false);
+  const [editingName, setEditingName] = useState<string | null>(null);
+  const [renameSurface, setRenameSurface] = useState<'list' | 'header' | null>(null);
+  const [draftName, setDraftName] = useState('');
+  const ignoreRenameBlurRef = useRef(false);
+  const skipLoadRef = useRef(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState('');
-  const [createPlatform, setCreatePlatform] = useState<StrategyPlatform>(DEFAULT_STRATEGY_PLATFORM);
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
@@ -132,16 +142,6 @@ export default function BacktestPage() {
   const [shareError, setShareError] = useState<string | null>(null);
   const [shareSuccess, setShareSuccess] = useState(false);
   const [workspace, setWorkspace] = useState<'strategies' | 'runs'>('strategies');
-  const [runParams, setRunParams] = useState({
-    initial_cash: '100000',
-    start_time: '2020-01-01',
-    end_time: '2023-12-31',
-    commission_pct: '0.03',
-    min_commission: '5',
-    stamp_pct: '0.1',
-    transfer_pct: '0.001',
-    slippage_pct: '0.02',
-  });
   const [runBusy, setRunBusy] = useState(false);
   const [universeOpen, setUniverseOpen] = useState(false);
   const [runsRefreshKey, setRunsRefreshKey] = useState(0);
@@ -165,6 +165,22 @@ export default function BacktestPage() {
     ...PANEL_WIDTH_LIMITS.backtestChat,
     invertDelta: true,
   });
+  const [chatOpen, setChatOpen] = useState(() => {
+    try {
+      return localStorage.getItem('finclaw.backtestChatOpen') !== '0';
+    } catch {
+      return true;
+    }
+  });
+
+  function persistChatOpen(open: boolean) {
+    setChatOpen(open);
+    try {
+      localStorage.setItem('finclaw.backtestChatOpen', open ? '1' : '0');
+    } catch {
+      // ignore quota
+    }
+  }
 
   const refresh = useCallback(async () => {
     if (!user) {
@@ -240,6 +256,10 @@ export default function BacktestPage() {
 
   useEffect(() => {
     if (selectedName) {
+      if (skipLoadRef.current) {
+        skipLoadRef.current = false;
+        return;
+      }
       void loadDetail(selectedName);
     } else {
       setForm(emptyForm());
@@ -250,7 +270,6 @@ export default function BacktestPage() {
 
   const resetCreateForm = () => {
     setCreateName('');
-    setCreatePlatform(DEFAULT_STRATEGY_PLATFORM);
     setCreateError(null);
   };
 
@@ -323,7 +342,7 @@ export default function BacktestPage() {
     try {
       const detail = await createStrategy({
         name,
-        platform: createPlatform,
+        platform: DEFAULT_STRATEGY_PLATFORM,
         agent: currentAgent ?? undefined,
       });
       setCreateOpen(false);
@@ -397,17 +416,12 @@ export default function BacktestPage() {
       toast.error('仅 FinClaw 策略支持内置回测');
       return;
     }
-    const cash = Number(runParams.initial_cash);
-    if (!Number.isFinite(cash) || cash <= 0) {
-      toast.error('初始资金必须大于 0');
-      return;
-    }
     setSubmitError(null);
     setUniverseOpen(true);
   };
 
-  const handleConfirmUniverse = async (selection: UniverseSelection) => {
-    const cash = Number(runParams.initial_cash);
+  const handleConfirmUniverse = async (selection: UniverseSelection, params: BacktestRunParams) => {
+    const cash = Number(params.initial_cash);
     setRunBusy(true);
     setSubmitError(null);
     try {
@@ -416,16 +430,16 @@ export default function BacktestPage() {
       const run = await submitBacktestRun({
         strategy_name: strategyName,
         initial_cash: cash,
-        start_time: runParams.start_time,
-        end_time: runParams.end_time,
+        start_time: params.start_time,
+        end_time: params.end_time,
         universe: selection.universe,
         symbols: selection.symbols,
         index: selection.index,
-        commission_rate: Number(runParams.commission_pct) / 100,
-        min_commission: Number(runParams.min_commission),
-        stamp_tax_rate: Number(runParams.stamp_pct) / 100,
-        transfer_fee_rate: Number(runParams.transfer_pct) / 100,
-        slippage: Number(runParams.slippage_pct) / 100,
+        commission_rate: Number(params.commission_pct) / 100,
+        min_commission: Number(params.min_commission),
+        stamp_tax_rate: Number(params.stamp_pct) / 100,
+        transfer_fee_rate: Number(params.transfer_pct) / 100,
+        slippage: Number(params.slippage_pct) / 100,
       });
       setUniverseOpen(false);
       setFocusRunId(run.id);
@@ -440,6 +454,66 @@ export default function BacktestPage() {
       setRunBusy(false);
     }
   };
+
+  function startRename(name: string, surface: 'list' | 'header', event?: MouseEvent) {
+    event?.stopPropagation();
+    if (!requireAuth()) return;
+    ignoreRenameBlurRef.current = false;
+    setRenameSurface(surface);
+    setEditingName(name);
+    setDraftName(name);
+  }
+
+  async function commitRename(oldName: string) {
+    if (ignoreRenameBlurRef.current) {
+      ignoreRenameBlurRef.current = false;
+      return;
+    }
+    const next = draftName.trim();
+    setEditingName(null);
+    setRenameSurface(null);
+    if (!next || next === oldName) return;
+    if (strategies.some((s) => s.name === next && s.name !== oldName)) {
+      toast.error('已有同名策略');
+      return;
+    }
+    try {
+      const keep =
+        selectedName === oldName && savedForm.name === oldName && !detailLoading
+          ? { platform: savedForm.platform, script: savedForm.script }
+          : undefined;
+      const detail = await renameStrategy(oldName, next, keep);
+      setStrategies((list) =>
+        list.map((row) =>
+          row.name === oldName
+            ? { ...row, name: detail.name, path: detail.path, updated_at: detail.updated_at }
+            : row,
+        ),
+      );
+      setSelectedName((prev) => {
+        if (prev !== oldName) return prev;
+        skipLoadRef.current = true;
+        return detail.name;
+      });
+      setForm((prev) => (prev.name === oldName ? { ...prev, name: detail.name, path: detail.path } : prev));
+      setSavedForm((prev) => (prev.name === oldName ? { ...prev, name: detail.name, path: detail.path } : prev));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '重命名失败');
+    }
+  }
+
+  function onRenameKey(event: KeyboardEvent<HTMLInputElement>, name: string) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      ignoreRenameBlurRef.current = false;
+      void commitRename(name);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      ignoreRenameBlurRef.current = true;
+      setEditingName(null);
+      setRenameSurface(null);
+    }
+  }
 
   const handleDelete = async (name: string) => {
     if (!requireAuth()) return;
@@ -529,16 +603,17 @@ export default function BacktestPage() {
           className="relative flex shrink-0 flex-col border-r border-border/50 bg-muted/20"
           style={{ width: listResize.width }}
         >
-          <div className="flex h-9 shrink-0 items-center justify-between border-b border-border/50 px-3">
+          <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border/50 px-2.5">
             <span className="text-xs text-muted-foreground">策略管理</span>
-            <button
+            <Button
               type="button"
-              title="新建策略"
-              className="flex size-[22px] items-center justify-center rounded-sm border border-border text-muted-foreground hover:border-primary hover:text-primary"
+              size="xs"
+              className={cn('h-6 gap-0.5 px-2 text-[11px]', PRIMARY_BUTTON_CLASS)}
               onClick={openCreate}
             >
-              <IconPlus className="size-3.5" />
-            </button>
+              <IconPlus className="size-3.5" stroke={2} />
+              新建策略
+            </Button>
           </div>
           <div className="border-b border-border/50 p-2">
             <Input
@@ -569,53 +644,90 @@ export default function BacktestPage() {
               </div>
             ) : (
               <div className="py-1">
-                {sortedFiltered.map((s) => (
+                {sortedFiltered.map((s) => {
+                  const editing = editingName === s.name && renameSurface === 'list';
+                  return (
                   <div
                     key={s.name}
                     className={cn(
-                      'group flex items-center gap-1.5',
+                      'group flex items-start gap-1.5',
                       selectedName === s.name && 'bg-violet-500/10 shadow-[inset_2px_0_0_0] shadow-violet-600',
                     )}
                   >
-                    <button
-                      type="button"
-                      className={cn(
-                        'min-w-0 flex-1 px-2.5 py-[7px] text-left',
-                        selectedName !== s.name && 'hover:bg-muted/60',
-                      )}
-                      onClick={() => {
-                        setSelectedName(s.name);
-                        setShowLibrary(false);
-                        setLibraryEntry(null);
-                      }}
-                    >
-                      <span className="flex min-w-0 items-center gap-1">
-                        <span className="min-w-0 truncate text-[13px]">{s.name}</span>
-                        <span className="shrink-0 text-[11px] text-muted-foreground">.py</span>
-                      </span>
-                      <div className="mt-0.5 flex min-w-0 items-center justify-between gap-2">
-                        <StrategyPlatformBadge platform={s.platform} />
-                        <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/70">
-                          {formatUpdatedAt(s.updated_at)}
-                        </span>
+                    {editing ? (
+                      <div className="min-w-0 flex-1 px-2.5 py-[7px]">
+                        <input
+                          className="h-[22px] w-full min-w-0 rounded-sm border border-violet-500 bg-background px-1 text-[13px]"
+                          value={draftName}
+                          autoFocus
+                          maxLength={64}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={(event) => setDraftName(event.target.value)}
+                          onBlur={() => void commitRename(s.name)}
+                          onKeyDown={(event) => onRenameKey(event, s.name)}
+                          aria-label="策略名称"
+                        />
                       </div>
-                    </button>
-                    <button
-                      type="button"
+                    ) : (
+                      <button
+                        type="button"
+                        className={cn(
+                          'min-w-0 flex-1 px-2.5 py-[7px] text-left',
+                          selectedName !== s.name && 'hover:bg-muted/60',
+                        )}
+                        onClick={() => {
+                          setSelectedName(s.name);
+                          setShowLibrary(false);
+                          setLibraryEntry(null);
+                        }}
+                      >
+                        <span
+                          className="flex min-w-0 items-center gap-1"
+                          title="双击重命名"
+                          onDoubleClick={(event) => startRename(s.name, 'list', event)}
+                        >
+                          <span className="min-w-0 truncate text-[13px]">{s.name}</span>
+                          <span className="shrink-0 text-[11px] text-muted-foreground">.py</span>
+                        </span>
+                        <div className="mt-0.5 flex min-w-0 items-center gap-2">
+                          <span className="min-w-0 truncate text-[10px] tabular-nums text-muted-foreground/70">
+                            {formatUpdatedAt(s.updated_at)}
+                          </span>
+                          {s.platform !== 'finclaw' ? (
+                            <StrategyPlatformBadge platform={s.platform} />
+                          ) : null}
+                        </div>
+                      </button>
+                    )}
+                    <span
                       className={cn(
-                        'mr-1.5 flex size-[22px] shrink-0 items-center justify-center rounded-sm border border-border',
-                        'text-muted-foreground/50 opacity-0 transition-opacity',
-                        'group-hover:opacity-100 hover:border-destructive hover:text-destructive',
-                        selectedName === s.name && 'opacity-100',
+                        'mr-1.5 mt-[7px] flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity',
+                        'group-hover:opacity-100',
+                        (selectedName === s.name || editing) && 'opacity-100',
                       )}
-                      onClick={() => void handleDelete(s.name)}
-                      title="删除"
-                      aria-label={`删除策略 ${s.name}`}
                     >
-                      ×
-                    </button>
+                      <button
+                        type="button"
+                        className="flex size-[22px] items-center justify-center rounded-sm border border-border text-muted-foreground/50 hover:border-primary hover:text-primary"
+                        onClick={(event) => startRename(s.name, 'list', event)}
+                        title="重命名"
+                        aria-label={`重命名 ${s.name}`}
+                      >
+                        <IconPencil className="size-3.5" stroke={1.75} />
+                      </button>
+                      <button
+                        type="button"
+                        className="flex size-[22px] items-center justify-center rounded-sm border border-border text-muted-foreground/50 hover:border-destructive hover:text-destructive"
+                        onClick={() => void handleDelete(s.name)}
+                        title="删除"
+                        aria-label={`删除策略 ${s.name}`}
+                      >
+                        <IconTrash className="size-3.5" stroke={1.75} />
+                      </button>
+                    </span>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </ScrollArea>
@@ -678,7 +790,7 @@ export default function BacktestPage() {
               </div>
               <h2 className="text-base font-medium">量化策略管理</h2>
               <p className="max-w-md text-sm text-muted-foreground">
-                FinClaw 策略可在本页直接回测；聚宽策略保存后复制到聚宽控制台运行。右侧 AI 可直接修改当前策略文件。点击左侧「策略库」可查看社区分享的策略。
+                FinClaw 策略用 akquant 格式，可在本页直接回测。右侧 AI 可直接修改当前策略文件。点击左侧「策略库」可查看社区分享的策略。
               </p>
               <Button type="button" className={PRIMARY_BUTTON_CLASS} onClick={openCreate}>
                 <IconPlus className="size-4" />
@@ -688,34 +800,42 @@ export default function BacktestPage() {
           ) : (
             <>
               <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border/50 px-2.5">
-                <label className="flex items-center gap-0.5">
-                  <Input
-                    placeholder="策略名称"
-                    value={form.name}
-                    onChange={(e) => updateField('name', e.target.value)}
-                    className="h-[26px] max-w-[180px] border-transparent bg-transparent px-1.5 text-[13px] font-medium hover:border-border focus-visible:border-border"
-                    disabled={detailLoading}
-                  />
+                <div className="flex min-w-0 items-center gap-0.5">
+                  {selectedName && editingName === selectedName && renameSurface === 'header' ? (
+                    <input
+                      className="h-[26px] max-w-[180px] rounded-sm border border-violet-500 bg-background px-1.5 text-[13px] font-medium"
+                      value={draftName}
+                      autoFocus
+                      maxLength={64}
+                      onChange={(event) => setDraftName(event.target.value)}
+                      onBlur={() => void commitRename(selectedName)}
+                      onKeyDown={(event) => onRenameKey(event, selectedName)}
+                      aria-label="策略名称"
+                    />
+                  ) : (
+                    <>
+                      <span
+                        className="max-w-[180px] truncate px-1.5 text-[13px] font-medium"
+                        title="双击重命名"
+                        onDoubleClick={(event) => selectedName && startRename(selectedName, 'header', event)}
+                      >
+                        {form.name}
+                      </span>
+                      <button
+                        type="button"
+                        className="flex size-[22px] shrink-0 items-center justify-center rounded-sm text-muted-foreground/70 hover:bg-muted hover:text-foreground"
+                        disabled={detailLoading || !selectedName}
+                        title="重命名"
+                        aria-label={`重命名 ${form.name}`}
+                        onClick={(event) => selectedName && startRename(selectedName, 'header', event)}
+                      >
+                        <IconPencil className="size-3.5" stroke={1.75} />
+                      </button>
+                    </>
+                  )}
                   <span className="text-xs text-muted-foreground">.py</span>
-                </label>
-                <StrategyPlatformBadge platform={form.platform} />
-                {form.path && !platformConfig.nativeBacktest && platformConfig.backtestUrl ? (
-                  <Button
-                    asChild
-                    size="xs"
-                    className={cn('shrink-0 gap-1', PRIMARY_BUTTON_CLASS)}
-                  >
-                    <a
-                      href={platformConfig.backtestUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title={`前往${platformConfig.label}回测`}
-                    >
-                      {platformConfig.label}回测
-                      <IconExternalLink className="size-3" stroke={1.75} />
-                    </a>
-                  </Button>
-                ) : null}
+                </div>
+                {form.platform !== 'finclaw' ? <StrategyPlatformBadge platform={form.platform} /> : null}
                 <div className="ml-auto flex shrink-0 items-center gap-1.5">
                   {dirty && (
                     <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">
@@ -765,12 +885,18 @@ export default function BacktestPage() {
                   {platformConfig.nativeBacktest ? (
                     <Button
                       type="button"
-                      size="xs"
-                      className={cn('gap-1', PRIMARY_BUTTON_CLASS)}
+                      size="icon-xs"
+                      className={PRIMARY_BUTTON_CLASS}
                       disabled={runBusy || submitting || detailLoading || !form.script.trim()}
+                      title={runBusy ? '提交中…' : '运行回测'}
+                      aria-label={runBusy ? '提交中…' : '运行回测'}
                       onClick={handleRun}
                     >
-                      {runBusy ? '提交中…' : '回测'}
+                      {runBusy ? (
+                        <IconLoader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <IconPlayerPlay className="size-3.5" stroke={1.75} />
+                      )}
                     </Button>
                   ) : null}
                 </div>
@@ -794,109 +920,38 @@ export default function BacktestPage() {
                   />
                 )}
               </div>
-
-              {platformConfig.nativeBacktest ? (
-                <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t border-border/50 bg-muted/20 px-3 py-1 text-xs">
-                  <label className="flex items-center gap-2 text-muted-foreground">
-                    初始资金
-                    <Input
-                      type="number"
-                      min="0"
-                      step="1000"
-                      value={runParams.initial_cash}
-                      onChange={(e) => setRunParams((prev) => ({ ...prev, initial_cash: e.target.value }))}
-                      className="h-[26px] w-[110px] font-mono text-xs"
-                    />
-                  </label>
-                  <label className="flex items-center gap-2 text-muted-foreground">
-                    开始
-                    <Input
-                      type="date"
-                      value={runParams.start_time}
-                      onChange={(e) => setRunParams((prev) => ({ ...prev, start_time: e.target.value }))}
-                      className="h-[26px] w-[138px] text-xs"
-                    />
-                  </label>
-                  <label className="flex items-center gap-2 text-muted-foreground">
-                    结束
-                    <Input
-                      type="date"
-                      value={runParams.end_time}
-                      onChange={(e) => setRunParams((prev) => ({ ...prev, end_time: e.target.value }))}
-                      className="h-[26px] w-[138px] text-xs"
-                    />
-                  </label>
-                  <label className="flex items-center gap-2 text-muted-foreground" title="买卖都收，聚宽等平台常用万三">
-                    佣金%
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={runParams.commission_pct}
-                      onChange={(e) => setRunParams((prev) => ({ ...prev, commission_pct: e.target.value }))}
-                      className="h-[26px] w-[72px] font-mono text-xs"
-                    />
-                  </label>
-                  <label className="flex items-center gap-2 text-muted-foreground" title="单笔佣金下限，券商常用 5 元">
-                    最低佣金
-                    <Input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={runParams.min_commission}
-                      onChange={(e) => setRunParams((prev) => ({ ...prev, min_commission: e.target.value }))}
-                      className="h-[26px] w-[72px] font-mono text-xs"
-                    />
-                  </label>
-                  <label className="flex items-center gap-2 text-muted-foreground" title="仅卖出收取，回测常用千一">
-                    印花税%
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={runParams.stamp_pct}
-                      onChange={(e) => setRunParams((prev) => ({ ...prev, stamp_pct: e.target.value }))}
-                      className="h-[26px] w-[72px] font-mono text-xs"
-                    />
-                  </label>
-                  <label className="flex items-center gap-2 text-muted-foreground" title="中国结算过户费，买卖都收">
-                    过户费%
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.001"
-                      value={runParams.transfer_pct}
-                      onChange={(e) => setRunParams((prev) => ({ ...prev, transfer_pct: e.target.value }))}
-                      className="h-[26px] w-[72px] font-mono text-xs"
-                    />
-                  </label>
-                  <label className="flex items-center gap-2 text-muted-foreground" title="成交价相对信号价的不利偏移，常用万二">
-                    滑点%
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={runParams.slippage_pct}
-                      onChange={(e) => setRunParams((prev) => ({ ...prev, slippage_pct: e.target.value }))}
-                      className="h-[26px] w-[72px] font-mono text-xs"
-                    />
-                  </label>
-                </div>
-              ) : null}
             </>
           )}
         </div>
 
-        <div className="relative shrink-0" style={{ width: chatResize.width }}>
-          <PanelResizeHandle {...chatResize.handleProps} side="left" />
-          <StrategyChatPanel
-            className="h-full"
-            platform={form.platform}
-            strategyPath={form.path}
-            strategyReady={strategyReady}
-            onStrategyFileChanged={handleAgentFileChanged}
-          />
-        </div>
+        {chatOpen ? (
+          <div className="relative shrink-0" style={{ width: chatResize.width }}>
+            <PanelResizeHandle {...chatResize.handleProps} side="left" />
+            <StrategyChatPanel
+              className="h-full"
+              platform={form.platform}
+              strategyPath={form.path}
+              strategyReady={strategyReady}
+              onStrategyFileChanged={handleAgentFileChanged}
+              onCollapse={() => persistChatOpen(false)}
+            />
+          </div>
+        ) : (
+          <div className="flex h-full w-9 shrink-0 flex-col items-center gap-2 border-l border-border/50 bg-muted/20 pt-1.5">
+            <button
+              type="button"
+              className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-violet-500/10 hover:text-violet-600 dark:hover:text-violet-300"
+              onClick={() => persistChatOpen(true)}
+              title="展开 AI"
+              aria-label="展开 AI"
+            >
+              <IconSparkles className="size-4" stroke={1.75} />
+            </button>
+            <span className="select-none text-[10px] tracking-[0.18em] text-muted-foreground [writing-mode:vertical-rl]">
+              AI
+            </span>
+          </div>
+        )}
       </div>
       )}
 
@@ -905,8 +960,6 @@ export default function BacktestPage() {
         onOpenChange={setCreateOpen}
         name={createName}
         onNameChange={setCreateName}
-        platform={createPlatform}
-        onPlatformChange={setCreatePlatform}
         nameConflict={createNameConflict}
         busy={createBusy}
         error={createError}
@@ -917,7 +970,7 @@ export default function BacktestPage() {
         open={universeOpen}
         busy={runBusy}
         onOpenChange={setUniverseOpen}
-        onConfirm={(selection) => void handleConfirmUniverse(selection)}
+        onConfirm={(selection, params) => void handleConfirmUniverse(selection, params)}
       />
       <StrategyShareDialog
         open={shareOpen}

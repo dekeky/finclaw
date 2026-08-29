@@ -198,7 +198,7 @@ export function RunReport({ detail }: { detail: RunDetail }) {
       const row: Record<string, string | number | undefined> = { time };
       const strategyValue = strategy.get(time);
       if (strategyValue !== undefined) row.strategy = strategyValue;
-      const reached = !live || !lastStrategy || time <= lastStrategy;
+      const reached = !live || Boolean(lastStrategy && time <= lastStrategy);
       if (reached) {
         for (const item of overlays) {
           row[item.code] = overlayMaps[item.code]?.get(time);
@@ -257,23 +257,26 @@ export function RunReport({ detail }: { detail: RunDetail }) {
             </div>
           ) : null}
           {showFull && !statsOpen ? (
-            <button
-              type="button"
-              className="kpi-detail-btn"
-              title="绩效详情"
-              onClick={() => setStatsOpen(true)}
-            >
-              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-                <path fill="currentColor" d="M2 3.5h12v1.2H2zm0 4h12v1.2H2zm0 4h8v1.2H2z" />
-              </svg>
-              详情
-            </button>
+            <div className="report-side-btns">
+              <button
+                type="button"
+                className="kpi-detail-btn"
+                title="绩效详情"
+                onClick={() => setStatsOpen(true)}
+              >
+                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                  <path fill="currentColor" d="M2 3.5h12v1.2H2zm0 4h12v1.2H2zm0 4h8v1.2H2z" />
+                </svg>
+                详情
+              </button>
+            </div>
           ) : null}
 
           <div className="report-rest">
             <PnlPane
               chart={series.chart}
               overlays={overlays}
+              live={live}
               onAdd={(item) =>
                 setOverlays((prev) => (prev.some((row) => row.code === item.code) ? prev : [...prev, item]))
               }
@@ -350,6 +353,7 @@ function ReportSkeleton() {
 function PnlPane({
   chart,
   overlays,
+  live = false,
   onAdd,
   onRemove,
   stats,
@@ -363,6 +367,7 @@ function PnlPane({
 }: {
   chart: Record<string, string | number | undefined>[];
   overlays: OverlayItem[];
+  live?: boolean;
   onAdd: (item: OverlayItem) => void;
   onRemove: (code: string) => void;
   stats: ReturnType<typeof collectSymbolStats>;
@@ -387,7 +392,7 @@ function PnlPane({
         <div className="chart chart-return">
           <EquityReturnChart data={chart} overlays={overlays} onInspectDay={onInspectDay} />
         </div>
-      ) : (
+      ) : live ? null : (
         <div className="empty muted">没有净值序列。</div>
       )}
       {showBlotter ? (

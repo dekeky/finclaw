@@ -36,6 +36,13 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return body.body;
 }
 
+export type IndicatorItem = {
+  id: string;
+  source: string;
+  group: string;
+  label: string;
+};
+
 export type RunRequest = {
   strategy_name: string;
   symbols?: string[];
@@ -50,10 +57,12 @@ export type RunRequest = {
   transfer_fee_rate?: number;
   slippage?: number;
   lot_size?: number;
+  extra?: string[];
 };
 
 export type RunListItem = {
   id: string;
+  name?: string;
   status: string;
   strategy_name: string;
   created_at: string;
@@ -134,6 +143,7 @@ export type PositionSnapshot = {
 
 export type RunDetail = {
   id: string;
+  name?: string;
   status: string;
   created_at: string;
   updated_at: string;
@@ -143,6 +153,7 @@ export type RunDetail = {
   request: RunRequest & { symbols: string[] };
   result?: BacktestResult;
   live_equity?: EquityPoint[];
+  source?: string;
   error?: { message: string; traceback?: string | null };
 };
 
@@ -162,6 +173,9 @@ export type SubmitRunRequest = {
 };
 
 export const api = {
+  listIndicators: () =>
+    request<{ items: IndicatorItem[] }>(`${BACKTEST_API}/indicators`),
+
   submitRun: (payload: SubmitRunRequest) =>
     request<{ id: string; status: string }>(`${BACKTEST_API}/runs`, {
       method: 'POST',
@@ -174,6 +188,18 @@ export const api = {
 
   getRun: (id: string) =>
     request<RunDetail>(`${BACKTEST_API}/runs/${encodeURIComponent(id)}`),
+
+  renameRun: (id: string, name: string) =>
+    request<RunListItem>(`${BACKTEST_API}/runs/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }),
+
+  deleteRun: (id: string) =>
+    request<{ id: string }>(`${BACKTEST_API}/runs/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
 
   getRunBlotter: (id: string) =>
     request<{ orders: Record<string, unknown>[]; trades: Record<string, unknown>[] }>(
@@ -240,6 +266,18 @@ export async function listBacktestRuns(): Promise<RunListItem[]> {
 
 export async function getBacktestRun(id: string): Promise<RunDetail> {
   return api.getRun(id);
+}
+
+export function runDisplayName(item: { name?: string | null; strategy_name?: string | null }): string {
+  return item.name?.trim() || item.strategy_name?.trim() || '';
+}
+
+export async function renameBacktestRun(id: string, name: string): Promise<RunListItem> {
+  return api.renameRun(id, name);
+}
+
+export async function deleteBacktestRun(id: string): Promise<void> {
+  await api.deleteRun(id);
 }
 
 export async function listMarketSymbols(query?: { q?: string; kind?: 'stock' | 'index'; codes?: string }): Promise<MarketSymbol[]> {

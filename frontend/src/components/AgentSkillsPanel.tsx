@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { IconLoader2 } from '@tabler/icons-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { IconLoader2, IconUpload } from '@tabler/icons-react';
 import {
   getAgentSkills,
+  installAgentSkill,
   listAgentSkillDir,
   type AgentSkillItem,
   type SkillDirEntry,
@@ -14,7 +15,9 @@ import {
   AssetTreeDirRow,
   AssetTreeFileRow,
 } from '@/components/asset-tree-rows';
+import { HintTooltip } from '@/components/HintTooltip';
 import { cn } from '@/lib/cn';
+import { toast } from 'sonner';
 
 const SOURCE_ORDER = ['workspace', 'global', 'builtin'] as const;
 
@@ -563,10 +566,12 @@ export function AgentSkillsPanel({
   refreshRev,
 }: AgentSkillsPanelProps) {
   const [loading, setLoading] = useState(false);
+  const [installing, setInstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [skills, setSkills] = useState<AgentSkillItem[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
+  const loadSkills = useCallback(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -586,7 +591,31 @@ export function AgentSkillsPanel({
     return () => {
       cancelled = true;
     };
-  }, [agentName, refreshRev]);
+  }, [agentName]);
+
+  useEffect(() => {
+    return loadSkills();
+  }, [agentName, refreshRev, loadSkills]);
+
+  const handleInstallFile = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = '';
+      if (!file || installing) return;
+      setInstalling(true);
+      try {
+        const result = await installAgentSkill(agentName, file);
+        const dir = result.skill_dir || file.name;
+        toast.success(`已安装 Skill「${dir}」`);
+        loadSkills();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : '安装失败');
+      } finally {
+        setInstalling(false);
+      }
+    },
+    [agentName, installing, loadSkills],
+  );
 
   const grouped = useMemo(() => groupSkillsBySource(skills), [skills]);
   const ctx = useMemo<OpenCtx>(
@@ -605,6 +634,30 @@ export function AgentSkillsPanel({
 
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col', className)}>
+      <div className="flex shrink-0 items-center gap-1 border-b border-border/40 px-2 py-1.5">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".zip,.md,application/zip,application/x-zip-compressed,text/markdown"
+          className="hidden"
+          onChange={(e) => void handleInstallFile(e)}
+        />
+        <button
+          type="button"
+          className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[11px] font-medium text-violet-600 transition-colors hover:bg-violet-500/10 disabled:opacity-50 dark:text-violet-300"
+          disabled={installing}
+          onClick={() => fileInputRef.current?.click()}
+          title="上传本地 Skill 包"
+        >
+          {installing ? (
+            <IconLoader2 className="size-3.5 animate-spin" />
+          ) : (
+            <IconUpload className="size-3.5" stroke={1.75} />
+          )}
+          {installing ? '安装中…' : '安装'}
+        </button>
+        <HintTooltip text="上传 ZIP 或 SKILL.md 安装到当前 Agent 工作区。" />
+      </div>
       <ScrollArea className="min-h-0 flex-1 overflow-x-hidden">
         {loading ? (
           <div className="px-3 py-6 text-center text-[11px] text-muted-foreground">
@@ -617,7 +670,7 @@ export function AgentSkillsPanel({
           </div>
         ) : skills.length === 0 ? (
           <p className="px-3 py-6 text-center text-[11px] leading-relaxed text-muted-foreground">
-            暂无 Skill，可在工作区添加或请 Agent 协助安装
+            暂无 Skill，可点击左上角「安装」上传本地 Skill 包
           </p>
         ) : (
           <div className="w-full min-w-0 overflow-x-hidden px-1 pb-2 pt-1">

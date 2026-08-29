@@ -21,13 +21,17 @@ export const STRATEGY_PLATFORMS: Record<StrategyPlatform, StrategyPlatformConfig
     nativeBacktest: true,
     promptHint:
       '使用 FinClaw / akquant 策略 API：必须定义且仅定义一个 akquant.Strategy 子类，实现 on_bar；'
-      + '标的在点击回测时选择，不必写在策略里；不要写 if __name__ == "__main__"；'
-      + '不要使用聚宽的 initialize / handle_data。',
+      + '标的在点击回测时选择，不必写在策略里；'
+      + '可用 from fquant.indicators import pe_ttm 等字段，写进 extra，在 on_bar 里用 bar.extra.get 读取；不写 extra 则只有 OHLCV；'
+      + '不要写 if __name__ == "__main__"；不要使用聚宽的 initialize / handle_data。',
     defaultScript: `from akquant import Bar, Strategy
+from fquant.indicators import pe_ttm
 
 
 class DualMAStrategy(Strategy):
-    """双均线：MA5 上穿 MA20 买入，下穿卖出。标的在点击回测时选择。"""
+    """示例策略。标的在点击回测时选择。"""
+
+    extra = [pe_ttm]  # 可选。平台按名单加载，on_bar 里 bar.extra.get(同名) 读取；不写则只有 OHLCV
 
     def __init__(self) -> None:
         super().__init__()
@@ -40,11 +44,15 @@ class DualMAStrategy(Strategy):
         if len(closes) < self.long_window:
             return
 
+        pe = bar.extra.get(pe_ttm)
+        if pe is None:
+            return
+
         ma_short = closes[-self.short_window :].mean()
         ma_long = closes[-self.long_window :].mean()
         position = self.get_position(bar.symbol)
 
-        if ma_short > ma_long and position == 0:
+        if ma_short > ma_long and pe < 40 and position == 0:
             self.order_target_percent(symbol=bar.symbol, target_percent=0.95)
         elif ma_short < ma_long and position > 0:
             self.order_target_percent(symbol=bar.symbol, target_percent=0.0)
@@ -90,7 +98,7 @@ export function isStrategyPlatform(value: string): value is StrategyPlatform {
 
 export function normalizeStrategyPlatform(value?: string | null): StrategyPlatform {
   if (value && isStrategyPlatform(value)) return value;
-  return 'joinquant';
+  return 'finclaw';
 }
 
 export function getStrategyPlatformConfig(platform: StrategyPlatform): StrategyPlatformConfig {

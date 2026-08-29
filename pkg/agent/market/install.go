@@ -233,6 +233,105 @@ func InstallTemplateZip(zipPath, workspace, templateName string) (InstallResult,
 	return InstallResult{}, fmt.Errorf("template package is not installable: missing AGENT.md, SKILL.md, or workspace/")
 }
 
+// InstallSkillZip extracts a local skill ZIP into workspace/skills/<dir>/.
+// Unlike InstallTemplateZip, workspace/AGENT.md packages are rejected.
+func InstallSkillZip(zipPath, workspace, fallbackName string) (InstallResult, error) {
+	if strings.TrimSpace(workspace) == "" {
+		return InstallResult{}, fmt.Errorf("workspace path is required")
+	}
+	tmpDir, err := os.MkdirTemp("", "finclaw-skill-extract-*")
+	if err != nil {
+		return InstallResult{}, err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	if err := extractZip(zipPath, tmpDir); err != nil {
+		return InstallResult{}, err
+	}
+	src, ok := findShallowest(tmpDir, "SKILL.md")
+	if !ok {
+		return InstallResult{}, fmt.Errorf("skill package is not installable: missing SKILL.md")
+	}
+	return installSkillFromDir(src, workspace, fallbackName, tmpDir)
+}
+
+// InstallSkillMarkdown installs a single SKILL.md (or any markdown file written
+// as SKILL.md) into workspace/skills/<dir>/.
+func InstallSkillMarkdown(mdPath, workspace, fallbackName string) (InstallResult, error) {
+	if strings.TrimSpace(workspace) == "" {
+		return InstallResult{}, fmt.Errorf("workspace path is required")
+	}
+	tmpDir, err := os.MkdirTemp("", "finclaw-skill-md-*")
+	if err != nil {
+		return InstallResult{}, err
+	}
+	defer os.RemoveAll(tmpDir)
+	if err := copyFile(mdPath, filepath.Join(tmpDir, "SKILL.md")); err != nil {
+		return InstallResult{}, err
+	}
+	return installSkillFromDir(tmpDir, workspace, fallbackName, tmpDir)
+}
+
+func installSkillFromDir(src, workspace, fallbackName, extractRoot string) (InstallResult, error) {
+	skillDir := resolveSkillDirName(src, extractRoot, fallbackName)
+	dest := filepath.Join(workspace, "skills", skillDir)
+	if err := os.RemoveAll(dest); err != nil {
+		return InstallResult{}, err
+	}
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return InstallResult{}, err
+	}
+	if err := copyTree(src, dest); err != nil {
+		_ = os.RemoveAll(dest)
+		return InstallResult{}, fmt.Errorf("apply skill package: %w", err)
+	}
+	return InstallResult{Kind: "skill", SkillDir: skillDir}, nil
+}
+
+func resolveSkillDirName(src, extractRoot, fallbackName string) string {
+	if name := sanitizeSkillDir(frontmatterField(filepath.Join(src, "SKILL.md"), "name")); name != "" && name != "template" {
+		return name
+	}
+	if filepath.Clean(src) != filepath.Clean(extractRoot) {
+		if name := sanitizeSkillDir(filepath.Base(src)); name != "" && name != "template" {
+			return name
+		}
+	}
+	return sanitizeSkillDir(fallbackName)
+}
+
+func frontmatterField(skillMDPath, key string) string {
+	data, err := os.ReadFile(skillMDPath)
+	if err != nil {
+		return ""
+	}
+	content := strings.TrimPrefix(string(data), "\uFEFF")
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return ""
+	}
+	end := -1
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			end = i
+			break
+		}
+	}
+	if end == -1 {
+		return ""
+	}
+	prefix := key + ":"
+	for _, line := range lines[1:end] {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		val := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		return strings.Trim(val, `"'`)
+	}
+	return ""
+}
+
 // copyTree recursively copies the contents of src into dst (merging into
 // existing directories, overwriting existing files).
 func copyTree(src, dst string) error {

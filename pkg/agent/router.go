@@ -3,6 +3,7 @@ package agentruntime
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/dekeky/rssmanager/pkg/ginx"
 	"github.com/finclaw/internal/auth"
 	"github.com/finclaw/internal/config"
+	"github.com/finclaw/pkg/agent/market"
 	"github.com/finclaw/pkg/agent/picoclaw"
 	"github.com/gin-gonic/gin"
 	picoagent "github.com/sipeed/picoclaw/pkg/agent"
@@ -33,6 +35,7 @@ func (ar *AgentManagerRouter) ConfigRouter() {
 	group := ar.r.Group("/api/v1/agents", ar.authMiddleware)
 	group.POST("/:name/share", ar.createAssetShare)
 	group.GET("/:name/skills", ar.getAgentSkills)
+	group.POST("/:name/skills/install", ar.installSkill)
 	group.DELETE("/:name/skills", ar.deleteSkill)
 	group.GET("/:name/skills/dir", ar.listSkillDir)
 	group.GET("/:name/skills/download", ar.downloadSkillPath)
@@ -854,6 +857,78 @@ func (ar *AgentManagerRouter) resolveAgentWorkspace(userID, name string) (string
 	return picoclaw.AgentWorkspacePath(home, name), nil
 }
 
+const maxSkillUploadBytes = 20 << 20 // 20MB
+
+// POST /api/v1/agents/:name/skills/install — upload a local skill ZIP or SKILL.md.
+func (ar *AgentManagerRouter) installSkill(c *gin.Context) {
+	userID := getUserID(c)
+	name := c.Param("name")
+	workspace, err := ar.resolveAgentWorkspace(userID, name)
+	if err != nil {
+		ginx.NewRender(c, http.StatusNotFound).Err(err)
+		return
+	}
+	header, err := c.FormFile("file")
+	if err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(fmt.Errorf("skill package file is required"))
+		return
+	}
+	if header.Size > maxSkillUploadBytes {
+		ginx.NewRender(c, http.StatusBadRequest).Err(fmt.Errorf("skill package exceeds 20MB size limit"))
+		return
+	}
+
+	src, err := header.Open()
+	if err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(fmt.Errorf("open upload: %w", err))
+		return
+	}
+	defer src.Close()
+
+	tmp, err := os.CreateTemp("", "finclaw-skill-upload-*")
+	if err != nil {
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	written, err := io.Copy(tmp, io.LimitReader(src, maxSkillUploadBytes+1))
+	closeErr := tmp.Close()
+	if err != nil {
+		ginx.NewRender(c, http.StatusInternalServerError).Err(fmt.Errorf("save upload: %w", err))
+		return
+	}
+	if closeErr != nil {
+		ginx.NewRender(c, http.StatusInternalServerError).Err(closeErr)
+		return
+	}
+	if written > maxSkillUploadBytes {
+		ginx.NewRender(c, http.StatusBadRequest).Err(fmt.Errorf("skill package exceeds 20MB size limit"))
+		return
+	}
+
+	filename := filepath.Base(header.Filename)
+	ext := strings.ToLower(filepath.Ext(filename))
+	fallback := strings.TrimSuffix(filename, filepath.Ext(filename))
+
+	var result market.InstallResult
+	switch ext {
+	case ".zip":
+		result, err = market.InstallSkillZip(tmpPath, workspace, fallback)
+	case ".md":
+		result, err = market.InstallSkillMarkdown(tmpPath, workspace, fallback)
+	default:
+		ginx.NewRender(c, http.StatusBadRequest).Err(fmt.Errorf("unsupported file type %q: upload a .zip skill package or SKILL.md", ext))
+		return
+	}
+	if err != nil {
+		renderSkillErr(c, err)
+		return
+	}
+	ginx.NewRender(c, http.StatusCreated).Data(result)
+}
+
 // GET /api/v1/agents/:name/skills — list skills visible to the agent.
 func (ar *AgentManagerRouter) getAgentSkills(c *gin.Context) {
 	userID := getUserID(c)
@@ -1008,7 +1083,7 @@ func (ar *AgentManagerRouter) deleteSkill(c *gin.Context) {
 func renderSkillErr(c *gin.Context, err error) {
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "invalid") || strings.Contains(msg, "escapes") || strings.Contains(msg, "exceeds"):
+	case strings.Contains(msg, "invalid") || strings.Contains(msg, "escapes") || strings.Contains(msg, "exceeds") || strings.Contains(msg, "not installable"):
 		ginx.NewRender(c, http.StatusBadRequest).Err(err)
 	case strings.Contains(msg, "not found"):
 		ginx.NewRender(c, http.StatusNotFound).Err(err)

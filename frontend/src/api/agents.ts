@@ -501,6 +501,25 @@ export async function downloadAgentSkillPath(
   await saveResponseAsDownload(res, `${baseName}.zip`);
 }
 
+export interface InstallSkillResult {
+  kind: string;
+  skill_dir?: string;
+}
+
+/** POST /agents/:name/skills/install —— 上传本地 Skill 包（ZIP 或 SKILL.md）安装到工作区。 */
+export async function installAgentSkill(name: string, file: File): Promise<InstallSkillResult> {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  const res = await fetch(`${AGENTS_API}/${encodeURIComponent(name)}/skills/install`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: form,
+  });
+  const body = await parseGinx<InstallSkillResult | null>(res);
+  if (!body.body) throw new Error('empty body');
+  return body.body;
+}
+
 /** GET /agents/:name/workspace-files —— 读取人设 Markdown 文件。 */
 export async function getAgentWorkspaceFiles(name: string): Promise<AgentWorkspaceFilesBody> {
   const res = await fetch(`${AGENTS_API}/${encodeURIComponent(name)}/workspace-files`, { headers: authHeaders() });

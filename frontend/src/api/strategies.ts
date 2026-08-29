@@ -101,6 +101,20 @@ export async function updateStrategy(name: string, req: UpdateStrategyRequest): 
   return body.body;
 }
 
+/** Rename a strategy file, keeping platform and script. */
+export async function renameStrategy(
+  currentName: string,
+  nextName: string,
+  keep?: Pick<StrategyDetail, 'platform' | 'script'>,
+): Promise<StrategyDetail> {
+  const current = keep ?? (await getStrategy(currentName));
+  return updateStrategy(currentName, {
+    name: nextName,
+    platform: current.platform,
+    script: current.script,
+  });
+}
+
 /** POST /strategies/:name/sync — legacy no-op; strategies live under ~/.finclaw/{account}/strategies/. */
 export async function syncStrategyToAgent(name: string, agent: string): Promise<StrategyDetail> {
   const res = await fetch(`${STRATEGIES_API}/${encodeURIComponent(name)}/sync`, {

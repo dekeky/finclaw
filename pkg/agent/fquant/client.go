@@ -217,6 +217,26 @@ func (c *Client) GetRunPositions(ctx context.Context, username, runID, date, sym
 	return c.getRaw(ctx, c.userPath(username, "/runs/"+url.PathEscape(runID)+"/positions"), query)
 }
 
+func (c *Client) UpdateRunName(ctx context.Context, username, runID, name string) (json.RawMessage, error) {
+	var raw json.RawMessage
+	if err := c.doJSON(ctx, http.MethodPatch, c.userPath(username, "/runs/"+url.PathEscape(runID)), map[string]string{"name": name}, &raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+func (c *Client) DeleteRun(ctx context.Context, username, runID string) (json.RawMessage, error) {
+	var raw json.RawMessage
+	if err := c.doJSON(ctx, http.MethodDelete, c.userPath(username, "/runs/"+url.PathEscape(runID)), nil, &raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+func (c *Client) ListIndicators(ctx context.Context) (json.RawMessage, error) {
+	return c.getRaw(ctx, "/api/indicators", nil)
+}
+
 func (c *Client) ListSymbols(ctx context.Context, q, kind, codes string) (json.RawMessage, error) {
 	query := url.Values{}
 	if q != "" {

@@ -123,7 +123,7 @@ func (s *StrategyStore) writeScript(name, script string) error {
 func (s *StrategyStore) toSummary(name string, entry strategyIndexEntry) strategySummary {
 	platform := entry.Platform
 	if strings.TrimSpace(platform) == "" {
-		platform = StrategyPlatformJoinQuant
+		platform = StrategyPlatformFinClaw
 	}
 	return strategySummary{
 		Name:      name,
