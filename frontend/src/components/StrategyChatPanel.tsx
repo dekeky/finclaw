@@ -193,7 +193,7 @@ export function StrategyChatPanel({
                 创建 Agent 后即可通过对话智能生成量化策略脚本。
               </p>
               <Button asChild size="sm">
-                <Link to="/agents/market">前往 Agent 市场</Link>
+                <Link to="/agents" state={{ showMarket: true }}>前往 Agent 市场</Link>
               </Button>
             </>
           ) : (

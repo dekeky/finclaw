@@ -1,14 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Dialog } from 'radix-ui';
-import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
-import { IconAdjustmentsHorizontal, IconChevronDown, IconEye, IconEyeOff, IconFileDescription, IconMessageCircle, IconPuzzle, IconSparkles, IconTrash, IconUpload, IconUser } from '@tabler/icons-react';
-import { PanelResizeHandle } from '@/components/PanelResizeHandle';
-import { useHorizontalResize } from '@/hooks/useHorizontalResize';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  PANEL_WIDTH_DEFAULTS,
-  PANEL_WIDTH_KEYS,
-  PANEL_WIDTH_LIMITS,
-} from '@/lib/panelWidths';
+  IconAdjustmentsHorizontal,
+  IconArrowLeft,
+  IconBuildingWarehouse,
+  IconChevronDown,
+  IconEye,
+  IconEyeOff,
+  IconFileDescription,
+  IconPlus,
+  IconPuzzle,
+  IconRobot,
+  IconSparkles,
+  IconUpload,
+  IconUser,
+} from '@tabler/icons-react';
 import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { useAgents, findAgentSummary } from '../state/agents';
 import {
@@ -20,7 +27,8 @@ import {
   downloadAgentSkillPath,
   type AgentDetailBody,
 } from '../api/agents';
-import { AgentAvatar } from '../components/AgentAvatar';
+import { AgentGalleryTile } from '@/components/agent/AgentGalleryTile';
+import { AgentMarketPanel } from '@/components/AgentMarketPanel';
 import { AgentProfileSection } from '../components/AgentProfileSection';
 import { AgentCreateDialog } from '../components/AgentCreateDialog';
 import {
@@ -35,17 +43,23 @@ import { copyToClipboard } from '../lib/clipboard';
 import { DocReadingPanel } from '../components/DocReadingPanel';
 import { uploadAgentToMarket, generateMarketSummary } from '../api/agentMarket';
 import { useNavigationGuard } from '../state/navigationGuard';
+import { galleryShellClassName } from '@/components/strategy/strategyGallery';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { SegmentedControl } from '@/components/ui/segmented-control';
 import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { cn } from '@/lib/cn';
 import { toast } from 'sonner';
-import { PRIMARY_BUTTON_CLASS, PRIMARY_LIST_ITEM_SELECTED_CLASS, PRIMARY_TAB_ACTIVE_CLASS, PRIMARY_TAB_INACTIVE_CLASS, PRIMARY_AI_PANEL_CLASS, PRIMARY_AI_PANEL_HOVER_CLASS, PRIMARY_ICON_GRADIENT_CLASS } from '@/lib/primaryButton';
+import {
+  PRIMARY_BUTTON_CLASS,
+  PRIMARY_AI_PANEL_CLASS,
+  PRIMARY_AI_PANEL_HOVER_CLASS,
+  PRIMARY_ICON_GRADIENT_CLASS,
+} from '@/lib/primaryButton';
 
 type FormState = { name: string };
 const EMPTY_FORM: FormState = { name: '' };
@@ -111,11 +125,14 @@ export default function AgentsPage() {
   const { requireAuth } = useRequireAuth();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const agentParam = searchParams.get('agent');
   const appliedAgentParamRef = useRef(false);
 
-  const [search, setSearch] = useState('');
   const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [showMarket, setShowMarket] = useState(false);
+  const [marketDetailOpen, setMarketDetailOpen] = useState(false);
+  const [marketPanelKey, setMarketPanelKey] = useState(0);
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [selectedModel, setSelectedModel] = useState('');
@@ -135,11 +152,6 @@ export default function AgentsPage() {
   const [skillsRefreshRev, setSkillsRefreshRev] = useState(0);
   const { confirm, dialog: confirmDialog } = useConfirm();
   const { setNavigationGuard } = useNavigationGuard();
-  const agentsListResize = useHorizontalResize({
-    storageKey: PANEL_WIDTH_KEYS.agentsList,
-    defaultWidth: PANEL_WIDTH_DEFAULTS.agentsList,
-    ...PANEL_WIDTH_LIMITS.agentsList,
-  });
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -185,6 +197,8 @@ export default function AgentsPage() {
       if (detailTab === 'persona') {
         if (!(await confirmLeavePersona())) return;
       }
+      setShowMarket(false);
+      setMarketDetailOpen(false);
       setSelectedName(name);
     },
     [confirmLeavePersona, detailTab, selectedName],
@@ -205,30 +219,43 @@ export default function AgentsPage() {
 
   useEffect(() => { void refresh(); }, []);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return agents;
-    return agents.filter((a) => a.name.toLowerCase().includes(q));
-  }, [agents, search]);
+  useEffect(() => {
+    const state = location.state as { showMarket?: boolean } | null;
+    if (state?.showMarket) {
+      setShowMarket(true);
+      setSelectedName(null);
+      setMarketDetailOpen(false);
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
-  const sortedFiltered = useMemo(
-    () => [...filtered].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')),
-    [filtered],
+  useEffect(() => {
+    if (searchParams.get('market') !== '1') return;
+    setShowMarket(true);
+    setSelectedName(null);
+    setMarketDetailOpen(false);
+    navigate('/agents', { replace: true });
+  }, [searchParams, navigate]);
+
+  const sortedAgents = useMemo(
+    () => [...agents].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')),
+    [agents],
   );
 
-  // 仅在校正无效选中项时同步，避免切换列表项时因 currentAgent 变化触发多余更新
+  // 仅清除已删除的选中项；浏览态默认不自动选中
   useEffect(() => {
     setSelectedName((prev) => {
       if (prev && agentNames.includes(prev)) return prev;
-      if (currentAgent && agentNames.includes(currentAgent)) return currentAgent;
-      return agentNames[0] ?? null;
+      return null;
     });
-  }, [agentNames, currentAgent]);
+  }, [agentNames]);
 
   // 来自对话页「详情」跳转：?agent=xxx 时优先定位到该 Agent（仅应用一次，避免覆盖后续手动选择）
   useEffect(() => {
     if (appliedAgentParamRef.current) return;
     if (agentParam && agentNames.includes(agentParam)) {
+      setShowMarket(false);
+      setMarketDetailOpen(false);
       setSelectedName(agentParam);
       appliedAgentParamRef.current = true;
     }
@@ -242,8 +269,30 @@ export default function AgentsPage() {
     [navigate, selectAgent],
   );
 
+  const openMarket = useCallback(() => {
+    setShowMarket(true);
+    setSelectedName(null);
+    setMarketDetailOpen(false);
+  }, []);
+
+  const openMine = useCallback(() => {
+    setShowMarket(false);
+    setMarketDetailOpen(false);
+    setMarketPanelKey((n) => n + 1);
+  }, []);
+
+  const backToBrowse = useCallback(async () => {
+    if (detailTab === 'persona') {
+      if (!(await confirmLeavePersona())) return;
+    }
+    setSelectedName(null);
+    setMarketDetailOpen(false);
+  }, [confirmLeavePersona, detailTab]);
+
   const detailName = selectedName;
   const detailSummary = useMemo(() => findAgentSummary(agents, detailName), [agents, detailName]);
+  const browsing = !selectedName && !marketDetailOpen;
+  const browseMode = showMarket ? 'market' : 'mine';
 
   const openAddForm = useCallback(() => {
     if (!requireAuth()) return;
@@ -400,6 +449,8 @@ export default function AgentsPage() {
       await createAgent({ name: createdName, model: selectedModel });
       setForm(EMPTY_FORM);
       setAddOpen(false);
+      setShowMarket(false);
+      setMarketDetailOpen(false);
       setSelectedName(createdName);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : String(err));
@@ -482,145 +533,52 @@ export default function AgentsPage() {
     }
   };
 
-  if (searchParams.get('market') === '1') {
-    return <Navigate to="/agents/market" replace />;
-  }
-
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      {/* Header */}
-      <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border/50 px-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <SidebarExpandTrigger />
-          <h1 className="text-base font-medium tracking-tight text-foreground/90">Agent 管理</h1>
-          <Badge variant="outline" className="text-[10px]">{agents.length}</Badge>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <div className="flex gap-1 md:hidden">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/50 px-3">
+        <SidebarExpandTrigger />
+        {browsing ? (
+          <SegmentedControl
+            aria-label="Agent 视图"
+            value={browseMode}
+            options={[
+              { value: 'mine', label: '我的 Agent' },
+              { value: 'market', label: 'Agent 市场' },
+            ]}
+            onChange={(mode) => {
+              if (mode === 'market') openMarket();
+              else openMine();
+            }}
+          />
+        ) : selectedName ? (
+          <div className="flex min-w-0 items-center gap-1">
             <Button
+              type="button"
               variant="ghost"
-              size="sm"
-              className={cn('h-8 text-xs', PRIMARY_TAB_INACTIVE_CLASS)}
-              onClick={openAddForm}
+              size="icon"
+              className="size-7 shrink-0"
+              onClick={() => void backToBrowse()}
+              aria-label="返回 Agent 列表"
             >
-              添加 Agent
+              <IconArrowLeft className="size-4" />
             </Button>
+            <span className="max-w-[240px] truncate px-1.5 text-[13px] font-medium" title={selectedName}>
+              {selectedName}
+            </span>
           </div>
+        ) : null}
+        <div className="ml-auto">
           <ThemeToggle />
         </div>
       </div>
 
-      {/* Content */}
-      <div className="flex min-h-0 flex-1 gap-3 overflow-hidden p-3">
-        {/* Left Pane - Agent List */}
-        <div className="hidden min-h-0 shrink-0 md:flex">
-          <div
-            className="@container flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card"
-            style={{ width: agentsListResize.width }}
-          >
-          <div className="space-y-2 border-b border-border/50 p-4">
-            <Button
-              variant="outline"
-              size="sm"
-              className={cn('w-full text-xs', PRIMARY_TAB_INACTIVE_CLASS)}
-              onClick={openAddForm}
-            >
-              添加 Agent
-            </Button>
-            <Input
-              placeholder="搜索 Agent..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-8 text-sm"
-            />
-          </div>
-          <ScrollArea className="min-w-0 flex-1">
-            {filtered.length === 0 ? (
-              <div className="p-4 text-center text-sm text-muted-foreground">
-                {search.trim() ? '没有匹配的 Agent' : '暂无 Agent'}
-              </div>
-            ) : (
-              <div className="p-2">
-                {sortedFiltered.map((agent) => {
-                  const { name } = agent;
-                  const chatting = name === currentAgent;
-                  const selected = name === selectedName;
-                  const deleting = pendingDelete === name;
-                  return (
-                    <div
-                      key={name}
-                      className={cn(
-                        'grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center overflow-hidden rounded-lg',
-                        selected
-                          ? PRIMARY_LIST_ITEM_SELECTED_CLASS
-                          : cn('text-muted-foreground', PRIMARY_TAB_INACTIVE_CLASS),
-                      )}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => void handleSelectAgent(name)}
-                        className="flex min-w-0 items-center gap-2 overflow-hidden rounded-lg px-2 py-2 text-left"
-                        title={name}
-                      >
-                        <AgentAvatar
-                          name={name}
-                          hasAvatar={agent.has_avatar}
-                          avatarRevision={avatarRevision}
-                          size="sm"
-                          className="shrink-0"
-                        />
-                        <span className="min-w-0 flex-1 truncate text-sm text-foreground">{name}</span>
-                        {chatting && (
-                          <Badge variant="secondary" className="shrink-0 text-[10px]">
-                            当前
-                          </Badge>
-                        )}
-                      </button>
-                      <div className="flex shrink-0 items-center pr-0.5">
-                        <button
-                          type="button"
-                          className={cn(
-                            'flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 transition-colors',
-                            'hover:bg-violet-500/12 hover:text-violet-600 dark:hover:text-violet-300',
-                          )}
-                          onClick={() => handleChatWithAgent(name)}
-                          title="去对话"
-                          aria-label="与该 Agent 对话"
-                        >
-                          <IconMessageCircle className="size-3.5" stroke={1.75} />
-                        </button>
-                        <button
-                          type="button"
-                          className={cn(
-                            'flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 transition-colors',
-                            'hover:bg-destructive/10 hover:text-destructive',
-                            deleting && 'pointer-events-none opacity-50',
-                          )}
-                          onClick={() => void onDelete(name)}
-                          disabled={deleting}
-                          title="删除 Agent"
-                          aria-label="删除 Agent"
-                        >
-                          <IconTrash className="size-3.5" stroke={1.75} />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </ScrollArea>
-          </div>
-          <PanelResizeHandle overlay={false} {...agentsListResize.handleProps} />
-        </div>
-
-        {/* Right Pane - Detail */}
-        <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-border bg-card overflow-hidden">
-          {detailName ? (
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {selectedName && detailName ? (
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/50 px-4 py-2.5">
-                <nav className="flex flex-wrap gap-1.5">
-                  {DETAIL_TABS.map(({ id, label, icon: Icon }) => {
+              <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border/50 bg-card/80 px-2.5 backdrop-blur-sm">
+                <nav className="flex h-full items-stretch gap-0 self-stretch">
+                  {DETAIL_TABS.map(({ id, label }) => {
                     const active = detailTab === id;
                     return (
                       <button
@@ -628,27 +586,26 @@ export default function AgentsPage() {
                         type="button"
                         onClick={() => void handleDetailTabChange(id)}
                         className={cn(
-                          'inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm transition-colors',
+                          'h-full px-3 text-[12px] transition-colors',
                           active
-                            ? PRIMARY_TAB_ACTIVE_CLASS
-                            : cn('bg-muted/50', PRIMARY_TAB_INACTIVE_CLASS),
+                            ? 'border-b-2 border-violet-600 font-medium text-violet-700 dark:border-violet-400 dark:text-violet-300'
+                            : 'border-b-2 border-transparent text-muted-foreground hover:text-foreground',
                         )}
                       >
-                        <Icon className="h-4 w-4" stroke={active ? 2 : 1.75} />
                         {label}
                       </button>
                     );
                   })}
                 </nav>
-                <div className="flex flex-wrap gap-2">
+                <div className="ml-auto flex shrink-0 items-center gap-1.5">
                   <Button
                     variant="default"
-                    size="sm"
-                    className={PRIMARY_BUTTON_CLASS}
+                    size="xs"
+                    className={cn('gap-1', PRIMARY_BUTTON_CLASS)}
                     onClick={openUploadDialog}
                     disabled={uploading}
                   >
-                    <IconUpload className="mr-1.5 h-3.5 w-3.5" stroke={1.75} />
+                    <IconUpload className="size-3.5" stroke={1.75} />
                     发布到市场
                   </Button>
                 </div>
@@ -696,7 +653,9 @@ export default function AgentsPage() {
                 <ScrollArea className="flex-1">
                   <div className="max-w-3xl p-4 md:p-5">
                     {agentRuntimeError && (
-                      <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-destructive">⚠️ {agentRuntimeError}</div>
+                      <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-destructive">
+                        ⚠️ {agentRuntimeError}
+                      </div>
                     )}
 
                     {detailName && (
@@ -711,12 +670,97 @@ export default function AgentsPage() {
                 </ScrollArea>
               )}
             </div>
-          ) : (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-              <div className="text-4xl" aria-hidden>💬</div>
-              <div className="text-sm font-medium text-muted-foreground">选择左侧 Agent</div>
-              <p className="max-w-xs text-xs text-muted-foreground">点选列表中的条目进行管理</p>
+          ) : showMarket ? (
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <AgentMarketPanel
+                key={marketPanelKey}
+                existingAgents={agentNames}
+                hideTitle
+                onClose={openMine}
+                onDetailOpenChange={setMarketDetailOpen}
+                onInstalled={(name) => {
+                  setShowMarket(false);
+                  setMarketDetailOpen(false);
+                  setSelectedName(name);
+                  void refresh();
+                }}
+              />
             </div>
+          ) : (
+              <ScrollArea className="min-h-0 flex-1">
+                <div className="mx-auto w-full max-w-6xl p-4 sm:p-6">
+                  {sortedAgents.length === 0 ? (
+                    <div className="px-4 py-16 text-center">
+                      <div className="mx-auto flex max-w-md flex-col items-center gap-4">
+                        <div className="flex size-16 items-center justify-center rounded-2xl border border-border/60 bg-card shadow-sm">
+                          <IconRobot className="size-7 text-primary" stroke={1.5} />
+                        </div>
+                        <div className="space-y-1.5">
+                          <h3 className="text-base font-semibold tracking-tight">开始你的第一个 Agent</h3>
+                          <p className="text-sm leading-relaxed text-muted-foreground">
+                            从空白 Agent 起步，或从 Agent 市场安装社区模板，随后即可配置人设、Skills 与模型。
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-center gap-2">
+                          <Button type="button" className={PRIMARY_BUTTON_CLASS} onClick={openAddForm}>
+                            <IconPlus className="size-4" />
+                            新建 Agent
+                          </Button>
+                          <Button type="button" variant="outline" onClick={openMarket}>
+                            <IconBuildingWarehouse className="size-4" stroke={1.75} />
+                            浏览 Agent 市场
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                      {sortedAgents.map((agent) => {
+                        const { name } = agent;
+                        const chatting = name === currentAgent;
+                        return (
+                          <AgentGalleryTile
+                            key={name}
+                            title={name}
+                            avatar={{
+                              name,
+                              hasAvatar: agent.has_avatar,
+                              avatarRevision,
+                            }}
+                            corner={
+                              chatting ? (
+                                <span className="rounded-md border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                  当前
+                                </span>
+                              ) : null
+                            }
+                            onOpen={() => void handleSelectAgent(name)}
+                            onChat={() => handleChatWithAgent(name)}
+                            onDelete={() => void onDelete(name)}
+                            deleting={pendingDelete === name}
+                          />
+                        );
+                      })}
+                      <button
+                        type="button"
+                        onClick={openAddForm}
+                        className={cn(
+                          galleryShellClassName(),
+                          'min-h-[120px] items-center justify-center border-dashed bg-transparent p-4 text-muted-foreground',
+                          'hover:border-primary/40 hover:bg-muted/30 hover:text-foreground',
+                        )}
+                      >
+                        <span className="flex flex-col items-center gap-2">
+                          <span className="flex size-10 items-center justify-center rounded-xl border border-dashed border-current/30">
+                            <IconPlus className="size-5" stroke={1.75} />
+                          </span>
+                          <span className="text-sm font-medium">新建 Agent</span>
+                        </span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </ScrollArea>
           )}
         </div>
       </div>

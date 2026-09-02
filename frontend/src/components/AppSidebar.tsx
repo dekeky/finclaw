@@ -1,5 +1,4 @@
 import {
-  IconBuildingStore,
   IconChartAreaLine,
   IconCpu,
   IconNews,
@@ -29,7 +28,6 @@ import { cn } from '@/lib/cn';
 
 const AGENT_NAV = [
   { title: 'Agent', url: '/agents', icon: IconRobot },
-  { title: 'Agent 市场', url: '/agents/market', icon: IconBuildingStore },
   { title: '模型', url: '/models', icon: IconCpu },
 ] as const;
 
@@ -47,7 +45,7 @@ function isNavActive(currentPath: string, url: string): boolean {
     return currentPath === '/chat' || currentPath.startsWith('/chat/');
   }
   if (url === '/agents') {
-    return currentPath === '/agents';
+    return currentPath === '/agents' || currentPath.startsWith('/agents/');
   }
   return currentPath === url || currentPath.startsWith(`${url}/`);
 }

@@ -17,12 +17,13 @@ import {
 } from './AgentModelSetupSection';
 import { MarketFileTree } from './MarketFileTree';
 import { DocReadingPanel } from './DocReadingPanel';
+import { AgentGalleryTile } from '@/components/agent/AgentGalleryTile';
+import { StrategyGallerySkeleton } from '@/components/strategy/StrategyGallerySkeleton';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { GallerySearchInput } from '@/components/ui/gallery-search-input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/cn';
 import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
-
 const LAST_MODEL_KEY = 'finclaw.market.lastModelProfile';
 const MARKET_CATEGORY = 'picoclaw';
 
@@ -109,6 +110,8 @@ interface AgentMarketPanelProps {
   /** 搜索词（由页面顶栏传入时，面板内不再重复渲染搜索框）。 */
   search?: string;
   onSearchChange?: (value: string) => void;
+  /** 模板详情打开/关闭时通知父级（用于顶栏分段控件显隐）。 */
+  onDetailOpenChange?: (open: boolean) => void;
 }
 
 export function AgentMarketPanel({
@@ -118,6 +121,7 @@ export function AgentMarketPanel({
   hideTitle = false,
   search: searchProp,
   onSearchChange,
+  onDetailOpenChange,
 }: AgentMarketPanelProps) {
   const { requireAuth } = useRequireAuth();
   const [templates, setTemplates] = useState<MarketTemplate[]>([]);
@@ -177,6 +181,7 @@ export function AgentMarketPanel({
   const openTemplate = useCallback(
     async (tpl: MarketTemplate) => {
       setSelected(tpl);
+      onDetailOpenChange?.(true);
       setDetail(null);
       setOpenFilePath(null);
       setInstallDialogOpen(false);
@@ -197,8 +202,13 @@ export function AgentMarketPanel({
         setDetailLoading(false);
       }
     },
-    [existingAgents],
+    [existingAgents, onDetailOpenChange],
   );
+
+  const closeTemplate = useCallback(() => {
+    setSelected(null);
+    onDetailOpenChange?.(false);
+  }, [onDetailOpenChange]);
 
   const templateInstallable = useMemo(
     () => (detail?.files?.length ? isInstallableTemplate(detail.files) : true),
@@ -303,53 +313,61 @@ export function AgentMarketPanel({
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {!hideTitle && <div className="shrink-0 px-6 pt-6">{marketHeader}</div>}
 
-      <div className="shrink-0 border-b border-border/40 bg-card/90 px-4 py-3 backdrop-blur-sm sm:px-6">
-        {!searchInHeader && (
-          <div className="relative mb-3">
-            <Input
-              placeholder="搜索模板名称或描述…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-9 w-full text-sm"
-            />
-          </div>
-        )}
-        <div className="flex items-center justify-end gap-2">
-          {!loading && !error && (
-            <span className="text-[11px] tabular-nums text-muted-foreground">
-              {searchQuery ? `找到 ${filtered.length} 个` : `共 ${filtered.length} 个`}
-            </span>
-          )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0"
-            onClick={() => void loadTemplates()}
-            aria-label="刷新模板列表"
-          >
-            <IconRefresh className="size-4" stroke={1.75} />
-          </Button>
+      {hideTitle ? (
+        <div className="flex shrink-0 justify-center border-b border-border/40 px-4 py-3 sm:px-6">
+          <GallerySearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="搜索模板名称或描述…"
+          />
         </div>
-      </div>
+      ) : (
+        <div className="shrink-0 border-b border-border/40 bg-card/90 px-4 py-3 backdrop-blur-sm sm:px-6">
+          {!searchInHeader && (
+            <div className="mb-3 flex justify-center">
+              <GallerySearchInput
+                value={search}
+                onChange={setSearch}
+                placeholder="搜索模板名称或描述…"
+              />
+            </div>
+          )}
+          <div className="flex items-center justify-end gap-2">
+            {!loading && !error && (
+              <span className="text-[11px] tabular-nums text-muted-foreground">
+                {searchQuery ? `找到 ${filtered.length} 个` : `共 ${filtered.length} 个`}
+              </span>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              onClick={() => void loadTemplates()}
+              aria-label="刷新模板列表"
+            >
+              <IconRefresh className="size-4" stroke={1.75} />
+            </Button>
+          </div>
+        </div>
+      )}
 
-      <ScrollArea className="flex-1">
-        <div className="p-4 sm:p-6">
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="mx-auto w-full max-w-6xl p-4 sm:p-6">
           {error && (
             <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-destructive">
-              ⚠️ 无法连接 AgentHub 服务：{error}
+              无法连接 AgentHub 服务：{error}
             </div>
           )}
 
           {loading ? (
-            <p className="text-sm text-muted-foreground">加载模板中…</p>
+            <StrategyGallerySkeleton />
           ) : filtered.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border px-6 py-14 text-center">
+            <div className="px-4 py-12 text-center">
               {searchQuery ? (
                 <>
-                  <p className="text-sm text-foreground">
-                    没有找到与「<span className="font-medium text-violet-600 dark:text-violet-300">{searchQuery}</span>」相关的模板
+                  <p className="text-sm text-muted-foreground">
+                    未找到与「<span className="font-medium text-foreground">{searchQuery}</span>」相关的模板
                   </p>
-                  <p className="mt-2 text-xs text-muted-foreground">试试更短的关键词</p>
                   <Button
                     type="button"
                     variant="outline"
@@ -367,23 +385,23 @@ export function AgentMarketPanel({
               )}
             </div>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {filtered.map((tpl) => (
-                <button
+                <AgentGalleryTile
                   key={tpl.agentName}
-                  type="button"
-                  onClick={() => void openTemplate(tpl)}
-                  className="flex flex-col rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-primary/40 hover:bg-primary/5 hover:shadow-sm"
-                >
-                  <div className="mb-2 flex items-start justify-between gap-2">
-                    <span className="line-clamp-2 text-sm font-medium leading-snug text-foreground">
-                      {tpl.displayName || tpl.agentName}
-                    </span>
-                  </div>
-                  <p className="line-clamp-3 text-xs leading-relaxed text-muted-foreground">
-                    {tpl.summary || '暂无描述'}
-                  </p>
-                </button>
+                  title={tpl.displayName || tpl.agentName}
+                  subtitle={tpl.summary || '暂无描述'}
+                  metaLeft={tpl.agentName !== tpl.displayName ? tpl.agentName : undefined}
+                  updatedAt={tpl.updatedAt}
+                  corner={
+                    tpl.latestVersion ? (
+                      <span className="rounded-md border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">
+                        v{tpl.latestVersion}
+                      </span>
+                    ) : null
+                  }
+                  onOpen={() => void openTemplate(tpl)}
+                />
               ))}
             </div>
           )}
@@ -398,7 +416,7 @@ export function AgentMarketPanel({
               variant="ghost"
               size="icon"
               className="size-8 shrink-0"
-              onClick={() => setSelected(null)}
+              onClick={closeTemplate}
               aria-label="返回模板列表"
             >
               <IconArrowLeft className="size-4" />

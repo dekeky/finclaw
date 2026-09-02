@@ -35,7 +35,7 @@ export function ChatMainToolbar() {
   if (agents.length === 0) {
     return (
       <Button asChild variant="ghost" size="sm" className="h-8 gap-1 px-2 text-[15px] font-medium">
-        <Link to="/agents/market">创建 Agent</Link>
+        <Link to="/agents" state={{ showMarket: true }}>创建 Agent</Link>
       </Button>
     );
   }

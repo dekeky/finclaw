@@ -452,7 +452,7 @@ export default function ChatPage() {
                 请前往 Agent 市场，从模板快速创建一位 Agent 后即可开始对话。
               </p>
               <Button asChild className={PRIMARY_BUTTON_CLASS}>
-                <Link to="/agents/market">前往 Agent 市场</Link>
+                <Link to="/agents" state={{ showMarket: true }}>前往 Agent 市场</Link>
               </Button>
             </>
           ) : (
