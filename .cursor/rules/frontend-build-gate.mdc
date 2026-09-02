@@ -1,0 +1,19 @@
+---
+description: Frontend changes must pass production build before claiming done
+globs: frontend/**/*
+alwaysApply: true
+---
+
+# Frontend build gate
+
+Whenever you change anything under `frontend/` (or claim a frontend task is done):
+
+1. Run the production build from `frontend/`:
+   ```bash
+   npm run build
+   ```
+   (`tsc -b && vite build` — typecheck alone is not enough.)
+2. Fix any TypeScript or Vite build errors before finishing.
+3. Do not say the work is complete if `npm run build` failed or was skipped.
+
+This applies every time frontend code is modified in this repo.

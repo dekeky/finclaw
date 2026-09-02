@@ -36,7 +36,7 @@ import { cn } from '@/lib/cn';
 import {
   PRIMARY_BUTTON_CLASS,
   PRIMARY_LIST_ITEM_SELECTED_CLASS,
-  PRIMARY_TAB_INACTIVE_HOVER_CLASS,
+  PRIMARY_TAB_INACTIVE_CLASS,
 } from '@/lib/primaryButton';
 import { toast } from 'sonner';
 
@@ -282,7 +282,7 @@ export default function ModelsPage() {
               <Button
                 variant="outline"
                 size="sm"
-                className={cn('w-full text-xs', PRIMARY_TAB_INACTIVE_HOVER_CLASS, 'dark:hover:bg-violet-500/14')}
+                className={cn('w-full text-xs', PRIMARY_TAB_INACTIVE_CLASS)}
                 onClick={openCreate}
               >
                 <IconPlus className="mr-1.5 h-3.5 w-3.5" stroke={1.75} />
@@ -316,7 +316,7 @@ export default function ModelsPage() {
                           'grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center overflow-hidden rounded-lg',
                           selected
                             ? PRIMARY_LIST_ITEM_SELECTED_CLASS
-                            : cn('text-foreground', PRIMARY_TAB_INACTIVE_HOVER_CLASS),
+                            : cn('text-muted-foreground', PRIMARY_TAB_INACTIVE_CLASS),
                         )}
                       >
                         <button

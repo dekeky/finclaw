@@ -17,7 +17,7 @@ import {
   type BacktestRunParams,
 } from '@/lib/backtestRunDraft';
 import { cn } from '@/lib/cn';
-import { PRIMARY_BUTTON_CLASS, PRIMARY_TAB_ACTIVE_CLASS } from '@/lib/primaryButton';
+import { PRIMARY_BUTTON_CLASS, PRIMARY_TAB_ACTIVE_CLASS, PRIMARY_TAB_INACTIVE_CLASS } from '@/lib/primaryButton';
 
 const TABS: { id: UniverseKind; label: string }[] = [
   { id: 'picks', label: '自选股票' },
@@ -324,8 +324,8 @@ export function UniverseDialog({
                 key={item.id}
                 type="button"
                 className={cn(
-                  'h-7 rounded-md px-2.5 text-xs',
-                  tab === item.id ? PRIMARY_TAB_ACTIVE_CLASS : 'text-muted-foreground hover:text-foreground',
+                  'h-7 rounded-md px-2.5 text-xs transition-colors',
+                  tab === item.id ? PRIMARY_TAB_ACTIVE_CLASS : PRIMARY_TAB_INACTIVE_CLASS,
                 )}
                 onClick={() => setTab(item.id)}
               >

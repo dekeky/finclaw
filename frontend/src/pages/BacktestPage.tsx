@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from 'react';
 import { useLocation } from 'react-router-dom';
 import {
+  IconArrowLeft,
   IconBuildingWarehouse,
   IconChartAreaLine,
   IconCopy,
@@ -8,9 +9,8 @@ import {
   IconPencil,
   IconPlayerPlay,
   IconPlus,
+  IconMessageChatbot,
   IconShare2,
-  IconSparkles,
-  IconTrash,
 } from '@tabler/icons-react';
 import { BacktestRunsPanel } from '@/components/backtest/BacktestRunsPanel';
 import '@/components/backtest/fquant-ui.css';
@@ -20,8 +20,12 @@ import { StrategyCodeEditor } from '@/components/StrategyCodeEditor';
 import { StrategyCreateDialog } from '@/components/StrategyCreateDialog';
 import { StrategyShareDialog } from '@/components/StrategyShareDialog';
 import { StrategyPlatformBadge } from '@/components/StrategyPlatformField';
+import { StrategyGallerySkeleton } from '@/components/strategy/StrategyGallerySkeleton';
+import { StrategyGalleryTile } from '@/components/strategy/StrategyGalleryTile';
+import { galleryShellClassName } from '@/components/strategy/strategyGallery';
 import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
+import { SegmentedControl } from '@/components/ui/segmented-control';
 import { useHorizontalResize } from '@/hooks/useHorizontalResize';
 import {
   PANEL_WIDTH_DEFAULTS,
@@ -51,7 +55,6 @@ import {
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/cn';
 import { copyToClipboard } from '@/lib/clipboard';
@@ -82,20 +85,6 @@ function emptyForm(): EditorForm {
   };
 }
 
-function formatUpdatedAt(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return '';
-  }
-}
-
 function formFromDetail(detail: {
   name: string;
   platform: string;
@@ -118,13 +107,12 @@ export default function BacktestPage() {
   const [strategies, setStrategies] = useState<StrategySummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [form, setForm] = useState<EditorForm>(() => emptyForm());
   const [savedForm, setSavedForm] = useState<EditorForm>(() => emptyForm());
   const [dirty, setDirty] = useState(false);
   const [editingName, setEditingName] = useState<string | null>(null);
-  const [renameSurface, setRenameSurface] = useState<'list' | 'header' | null>(null);
+  const [renameSurface, setRenameSurface] = useState<'card' | 'header' | null>(null);
   const [draftName, setDraftName] = useState('');
   const ignoreRenameBlurRef = useRef(false);
   const skipLoadRef = useRef(false);
@@ -141,23 +129,16 @@ export default function BacktestPage() {
   const [shareBusy, setShareBusy] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
   const [shareSuccess, setShareSuccess] = useState(false);
-  const [workspace, setWorkspace] = useState<'strategies' | 'runs'>('strategies');
+  const [strategyPane, setStrategyPane] = useState<'code' | 'runs'>('code');
   const [runBusy, setRunBusy] = useState(false);
   const [universeOpen, setUniverseOpen] = useState(false);
   const [runsRefreshKey, setRunsRefreshKey] = useState(0);
   const [focusRunId, setFocusRunId] = useState<string | null>(null);
   const [showLibrary, setShowLibrary] = useState(false);
   const [libraryEntry, setLibraryEntry] = useState<StrategyLibrarySummary | null>(null);
-  const [libraryRefreshKey, setLibraryRefreshKey] = useState(0);
   const { confirm, dialog: confirmDialog } = useConfirm();
 
   const existingStrategyNames = useMemo(() => strategies.map((s) => s.name), [strategies]);
-
-  const listResize = useHorizontalResize({
-    storageKey: PANEL_WIDTH_KEYS.backtestList,
-    defaultWidth: PANEL_WIDTH_DEFAULTS.backtestList,
-    ...PANEL_WIDTH_LIMITS.backtestList,
-  });
 
   const chatResize = useHorizontalResize({
     storageKey: PANEL_WIDTH_KEYS.backtestChat,
@@ -197,7 +178,7 @@ export default function BacktestPage() {
       setStrategies(list);
       setSelectedName((prev) => {
         if (prev && list.some((s) => s.name === prev)) return prev;
-        return list[0]?.name ?? null;
+        return null;
       });
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : String(err));
@@ -219,16 +200,16 @@ export default function BacktestPage() {
     }
   }, [location.state]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return strategies;
-    return strategies.filter((s) => s.name.toLowerCase().includes(q));
-  }, [strategies, search]);
-
-  const sortedFiltered = useMemo(
-    () => [...filtered].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')),
-    [filtered],
-  );
+  const sortedStrategies = useMemo(() => {
+    const rows = [...strategies];
+    rows.sort((a, b) => {
+      const tb = new Date(b.updated_at).getTime();
+      const ta = new Date(a.updated_at).getTime();
+      if (tb !== ta) return tb - ta;
+      return a.name.localeCompare(b.name, 'zh-Hans-CN');
+    });
+    return rows;
+  }, [strategies]);
 
   const createNameConflict = useMemo(() => {
     const trimmed = createName.trim();
@@ -318,8 +299,7 @@ export default function BacktestPage() {
         summary: shareSummary.trim() || undefined,
       });
       setShareSuccess(true);
-      setLibraryRefreshKey((k) => k + 1);
-      toast.success('已发布到策略库');
+      toast.success('已发布到策略市场');
     } catch (err) {
       setShareError(err instanceof Error ? err.message : '发布失败');
     } finally {
@@ -347,6 +327,10 @@ export default function BacktestPage() {
       });
       setCreateOpen(false);
       resetCreateForm();
+      setShowLibrary(false);
+      setLibraryEntry(null);
+      setStrategyPane('code');
+      setFocusRunId(null);
       setSelectedName(detail.name);
       await refresh();
       toast.success('策略已创建');
@@ -444,7 +428,7 @@ export default function BacktestPage() {
       setUniverseOpen(false);
       setFocusRunId(run.id);
       setRunsRefreshKey((value) => value + 1);
-      setWorkspace('runs');
+      setStrategyPane('runs');
       toast.success('已提交回测');
     } catch (err) {
       const message = err instanceof Error ? err.message : '提交回测失败';
@@ -455,7 +439,7 @@ export default function BacktestPage() {
     }
   };
 
-  function startRename(name: string, surface: 'list' | 'header', event?: MouseEvent) {
+  function startRename(name: string, surface: 'card' | 'header', event?: MouseEvent) {
     event?.stopPropagation();
     if (!requireAuth()) return;
     ignoreRenameBlurRef.current = false;
@@ -566,194 +550,97 @@ export default function BacktestPage() {
   const strategyReady = !dirty && Boolean(form.path);
   const platformConfig = getStrategyPlatformConfig(form.platform);
 
+  const openLibrary = () => {
+    setShowLibrary(true);
+    setSelectedName(null);
+    setLibraryEntry(null);
+    setStrategyPane('code');
+    setFocusRunId(null);
+  };
+
+  const backToBrowse = () => {
+    setSelectedName(null);
+    setShowLibrary(false);
+    setLibraryEntry(null);
+    setStrategyPane('code');
+    setFocusRunId(null);
+  };
+
+  const browseMode = showLibrary ? 'library' : 'mine';
+  const browsing = !selectedName && !libraryEntry;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/50 px-3">
         <SidebarExpandTrigger />
-        <nav className="-mb-px flex h-full items-stretch gap-0">
-          {([
-            ['strategies', '策略'],
-            ['runs', '回测'],
-          ] as const).map(([id, label]) => (
-            <button
-              key={id}
+        {browsing ? (
+          <SegmentedControl
+            aria-label="策略视图"
+            value={browseMode}
+            options={[
+              { value: 'mine', label: '我的策略' },
+              { value: 'library', label: '策略市场' },
+            ]}
+            onChange={(mode) => {
+              if (mode === 'library') openLibrary();
+              else backToBrowse();
+            }}
+          />
+        ) : selectedName ? (
+          <div className="flex min-w-0 items-center gap-1">
+            <Button
               type="button"
-              className={cn(
-                'h-full px-4 text-[13px]',
-                workspace === id
-                  ? 'border-b-2 border-primary font-medium text-primary'
-                  : 'border-b-2 border-transparent text-muted-foreground hover:text-foreground',
-              )}
-              onClick={() => setWorkspace(id)}
+              variant="ghost"
+              size="icon"
+              className="size-7 shrink-0"
+              onClick={backToBrowse}
+              aria-label="返回策略列表"
             >
-              {label}
-            </button>
-          ))}
-        </nav>
+              <IconArrowLeft className="size-4" />
+            </Button>
+            <div className="flex min-w-0 items-center gap-0.5">
+              {editingName === selectedName && renameSurface === 'header' ? (
+                <input
+                  className="h-[26px] max-w-[200px] rounded-sm border border-violet-500 bg-background px-1.5 text-[13px] font-medium"
+                  value={draftName}
+                  autoFocus
+                  maxLength={64}
+                  onChange={(event) => setDraftName(event.target.value)}
+                  onBlur={() => void commitRename(selectedName)}
+                  onKeyDown={(event) => onRenameKey(event, selectedName)}
+                  aria-label="策略名称"
+                />
+              ) : (
+                <>
+                  <span
+                    className="max-w-[200px] truncate px-1.5 text-[13px] font-medium"
+                    title="双击重命名"
+                    onDoubleClick={(event) => startRename(selectedName, 'header', event)}
+                  >
+                    {form.name}
+                  </span>
+                  <button
+                    type="button"
+                    className="flex size-[22px] shrink-0 items-center justify-center rounded-sm text-muted-foreground/70 hover:bg-muted hover:text-foreground"
+                    disabled={detailLoading}
+                    title="重命名"
+                    aria-label={`重命名 ${form.name}`}
+                    onClick={(event) => startRename(selectedName, 'header', event)}
+                  >
+                    <IconPencil className="size-3.5" stroke={1.75} />
+                  </button>
+                </>
+              )}
+              <span className="text-xs text-muted-foreground">.py</span>
+            </div>
+          </div>
+        ) : null}
         <div className="ml-auto">
           <ThemeToggle />
         </div>
       </div>
 
-      {workspace === 'runs' ? (
-        <BacktestRunsPanel refreshKey={runsRefreshKey} focusRunId={focusRunId} />
-      ) : (
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <div
-          className="relative flex shrink-0 flex-col border-r border-border/50 bg-muted/20"
-          style={{ width: listResize.width }}
-        >
-          <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border/50 px-2.5">
-            <span className="text-xs text-muted-foreground">策略管理</span>
-            <Button
-              type="button"
-              size="xs"
-              className={cn('h-6 gap-0.5 px-2 text-[11px]', PRIMARY_BUTTON_CLASS)}
-              onClick={openCreate}
-            >
-              <IconPlus className="size-3.5" stroke={2} />
-              新建策略
-            </Button>
-          </div>
-          <div className="border-b border-border/50 p-2">
-            <Input
-              placeholder="搜索策略…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-8 text-sm"
-            />
-          </div>
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <ScrollArea className="min-h-0 flex-1">
-            {loading ? (
-              <p className="p-4 text-center text-xs text-muted-foreground">加载中…</p>
-            ) : loadError ? (
-              <div className="space-y-2 p-4 text-center">
-                <p className="text-xs text-destructive">{loadError}</p>
-                <Button type="button" variant="outline" size="sm" onClick={() => void refresh()}>
-                  重试
-                </Button>
-              </div>
-            ) : sortedFiltered.length === 0 ? (
-              <div className="flex flex-col items-center gap-2 p-6 text-center">
-                <IconChartAreaLine className="size-8 text-muted-foreground/50" />
-                <p className="text-xs text-muted-foreground">暂无策略</p>
-                <Button type="button" size="sm" variant="outline" onClick={openCreate}>
-                  创建第一个策略
-                </Button>
-              </div>
-            ) : (
-              <div className="py-1">
-                {sortedFiltered.map((s) => {
-                  const editing = editingName === s.name && renameSurface === 'list';
-                  return (
-                  <div
-                    key={s.name}
-                    className={cn(
-                      'group flex items-start gap-1.5',
-                      selectedName === s.name && 'bg-violet-500/10 shadow-[inset_2px_0_0_0] shadow-violet-600',
-                    )}
-                  >
-                    {editing ? (
-                      <div className="min-w-0 flex-1 px-2.5 py-[7px]">
-                        <input
-                          className="h-[22px] w-full min-w-0 rounded-sm border border-violet-500 bg-background px-1 text-[13px]"
-                          value={draftName}
-                          autoFocus
-                          maxLength={64}
-                          onClick={(event) => event.stopPropagation()}
-                          onChange={(event) => setDraftName(event.target.value)}
-                          onBlur={() => void commitRename(s.name)}
-                          onKeyDown={(event) => onRenameKey(event, s.name)}
-                          aria-label="策略名称"
-                        />
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className={cn(
-                          'min-w-0 flex-1 px-2.5 py-[7px] text-left',
-                          selectedName !== s.name && 'hover:bg-muted/60',
-                        )}
-                        onClick={() => {
-                          setSelectedName(s.name);
-                          setShowLibrary(false);
-                          setLibraryEntry(null);
-                        }}
-                      >
-                        <span
-                          className="flex min-w-0 items-center gap-1"
-                          title="双击重命名"
-                          onDoubleClick={(event) => startRename(s.name, 'list', event)}
-                        >
-                          <span className="min-w-0 truncate text-[13px]">{s.name}</span>
-                          <span className="shrink-0 text-[11px] text-muted-foreground">.py</span>
-                        </span>
-                        <div className="mt-0.5 flex min-w-0 items-center gap-2">
-                          <span className="min-w-0 truncate text-[10px] tabular-nums text-muted-foreground/70">
-                            {formatUpdatedAt(s.updated_at)}
-                          </span>
-                          {s.platform !== 'finclaw' ? (
-                            <StrategyPlatformBadge platform={s.platform} />
-                          ) : null}
-                        </div>
-                      </button>
-                    )}
-                    <span
-                      className={cn(
-                        'mr-1.5 mt-[7px] flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity',
-                        'group-hover:opacity-100',
-                        (selectedName === s.name || editing) && 'opacity-100',
-                      )}
-                    >
-                      <button
-                        type="button"
-                        className="flex size-[22px] items-center justify-center rounded-sm border border-border text-muted-foreground/50 hover:border-primary hover:text-primary"
-                        onClick={(event) => startRename(s.name, 'list', event)}
-                        title="重命名"
-                        aria-label={`重命名 ${s.name}`}
-                      >
-                        <IconPencil className="size-3.5" stroke={1.75} />
-                      </button>
-                      <button
-                        type="button"
-                        className="flex size-[22px] items-center justify-center rounded-sm border border-border text-muted-foreground/50 hover:border-destructive hover:text-destructive"
-                        onClick={() => void handleDelete(s.name)}
-                        title="删除"
-                        aria-label={`删除策略 ${s.name}`}
-                      >
-                        <IconTrash className="size-3.5" stroke={1.75} />
-                      </button>
-                    </span>
-                  </div>
-                  );
-                })}
-              </div>
-            )}
-          </ScrollArea>
-          <div className="shrink-0 border-t border-border/50 p-3">
-            <Button
-              type="button"
-              size="sm"
-              className={cn(
-                'h-8 w-full gap-1.5',
-                PRIMARY_BUTTON_CLASS,
-                (showLibrary || libraryEntry) && 'ring-2 ring-violet-400/60 ring-offset-1 ring-offset-background',
-              )}
-              onClick={() => {
-                setShowLibrary(true);
-                setSelectedName(null);
-                setLibraryEntry(null);
-              }}
-            >
-              <IconBuildingWarehouse className="size-4" stroke={1.75} />
-              策略库
-            </Button>
-          </div>
-          </div>
-          <PanelResizeHandle {...listResize.handleProps} />
-        </div>
-
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {libraryEntry ? (
             <StrategyLibraryDetailView
@@ -764,78 +651,137 @@ export default function BacktestPage() {
                 setShowLibrary(false);
                 setLibraryEntry(null);
                 setSelectedName(name);
+                setStrategyPane('code');
                 void refresh();
               }}
             />
-          ) : showLibrary ? (
-            <StrategyLibraryPanel
-              variant="cards"
-              hideTitle
-              existingStrategyNames={existingStrategyNames}
-              refreshKey={libraryRefreshKey}
-              onSelectEntry={(entry) => {
-                if (entry) setLibraryEntry(entry);
-              }}
-              onInstalled={(name) => {
-                setShowLibrary(false);
-                setLibraryEntry(null);
-                setSelectedName(name);
-                void refresh();
-              }}
-            />
-          ) : !selectedName ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-              <div className="flex size-14 items-center justify-center rounded-2xl bg-primary/10">
-                <IconChartAreaLine className="size-7 text-primary" />
-              </div>
-              <h2 className="text-base font-medium">量化策略管理</h2>
-              <p className="max-w-md text-sm text-muted-foreground">
-                FinClaw 策略用 akquant 格式，可在本页直接回测。右侧 AI 可直接修改当前策略文件。点击左侧「策略库」可查看社区分享的策略。
-              </p>
-              <Button type="button" className={PRIMARY_BUTTON_CLASS} onClick={openCreate}>
-                <IconPlus className="size-4" />
-                新建策略
-              </Button>
+          ) : browsing ? (
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              {showLibrary ? (
+                <StrategyLibraryPanel
+                  variant="cards"
+                  hideTitle
+                  hideHeader
+                  existingStrategyNames={existingStrategyNames}
+                  onSelectEntry={(entry) => {
+                    if (entry) setLibraryEntry(entry);
+                  }}
+                  onInstalled={(name) => {
+                    setShowLibrary(false);
+                    setLibraryEntry(null);
+                    setSelectedName(name);
+                    setStrategyPane('code');
+                    void refresh();
+                  }}
+                />
+              ) : (
+                <ScrollArea className="min-h-0 flex-1">
+                  <div className="mx-auto w-full max-w-6xl p-4 sm:p-6">
+                    {loading ? (
+                      <StrategyGallerySkeleton />
+                    ) : loadError ? (
+                      <div className="space-y-3 py-16 text-center">
+                        <p className="text-sm text-destructive">{loadError}</p>
+                        <Button type="button" variant="outline" size="sm" onClick={() => void refresh()}>
+                          重试
+                        </Button>
+                      </div>
+                    ) : sortedStrategies.length === 0 ? (
+                      <div className="px-4 py-16 text-center">
+                        <div className="mx-auto flex max-w-md flex-col items-center gap-4">
+                          <div className="flex size-16 items-center justify-center rounded-2xl border border-border/60 bg-card shadow-sm">
+                            <IconChartAreaLine className="size-7 text-primary" stroke={1.5} />
+                          </div>
+                          <div className="space-y-1.5">
+                            <h3 className="text-base font-semibold tracking-tight">开始你的第一个策略</h3>
+                            <p className="text-sm leading-relaxed text-muted-foreground">
+                              从空白策略起步，或从策略市场安装社区验证过的模板，随后即可编辑、回测与迭代。
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap items-center justify-center gap-2">
+                            <Button type="button" className={PRIMARY_BUTTON_CLASS} onClick={openCreate}>
+                              <IconPlus className="size-4" />
+                              新建策略
+                            </Button>
+                            <Button type="button" variant="outline" onClick={openLibrary}>
+                              <IconBuildingWarehouse className="size-4" stroke={1.75} />
+                              浏览策略市场
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                        {sortedStrategies.map((s) => {
+                          const editing = editingName === s.name && renameSurface === 'card';
+                          return (
+                            <StrategyGalleryTile
+                              key={s.name}
+                              title={s.name}
+                              platform={s.platform}
+                              updatedAt={s.updated_at}
+                              editing={editing}
+                              draftName={draftName}
+                              onDraftNameChange={setDraftName}
+                              onCommitRename={() => void commitRename(s.name)}
+                              onRenameKeyDown={(event) => onRenameKey(event, s.name)}
+                              onOpen={() => {
+                                setSelectedName(s.name);
+                                setShowLibrary(false);
+                                setLibraryEntry(null);
+                                setFocusRunId(null);
+                              }}
+                              onRename={(event) => startRename(s.name, 'card', event)}
+                              onDelete={() => void handleDelete(s.name)}
+                            />
+                          );
+                        })}
+                        <button
+                          type="button"
+                          onClick={openCreate}
+                          className={cn(
+                            galleryShellClassName(),
+                            'min-h-[120px] items-center justify-center border-dashed bg-transparent p-4 text-muted-foreground',
+                            'hover:border-primary/40 hover:bg-muted/30 hover:text-foreground',
+                          )}
+                        >
+                          <span className="flex flex-col items-center gap-2">
+                            <span className="flex size-10 items-center justify-center rounded-xl border border-dashed border-current/30">
+                              <IconPlus className="size-5" stroke={1.75} />
+                            </span>
+                            <span className="text-sm font-medium">新建策略</span>
+                          </span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
+              )}
             </div>
           ) : (
             <>
-              <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border/50 px-2.5">
-                <div className="flex min-w-0 items-center gap-0.5">
-                  {selectedName && editingName === selectedName && renameSurface === 'header' ? (
-                    <input
-                      className="h-[26px] max-w-[180px] rounded-sm border border-violet-500 bg-background px-1.5 text-[13px] font-medium"
-                      value={draftName}
-                      autoFocus
-                      maxLength={64}
-                      onChange={(event) => setDraftName(event.target.value)}
-                      onBlur={() => void commitRename(selectedName)}
-                      onKeyDown={(event) => onRenameKey(event, selectedName)}
-                      aria-label="策略名称"
-                    />
-                  ) : (
-                    <>
-                      <span
-                        className="max-w-[180px] truncate px-1.5 text-[13px] font-medium"
-                        title="双击重命名"
-                        onDoubleClick={(event) => selectedName && startRename(selectedName, 'header', event)}
-                      >
-                        {form.name}
-                      </span>
-                      <button
-                        type="button"
-                        className="flex size-[22px] shrink-0 items-center justify-center rounded-sm text-muted-foreground/70 hover:bg-muted hover:text-foreground"
-                        disabled={detailLoading || !selectedName}
-                        title="重命名"
-                        aria-label={`重命名 ${form.name}`}
-                        onClick={(event) => selectedName && startRename(selectedName, 'header', event)}
-                      >
-                        <IconPencil className="size-3.5" stroke={1.75} />
-                      </button>
-                    </>
-                  )}
-                  <span className="text-xs text-muted-foreground">.py</span>
-                </div>
+              <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border/50 bg-card/80 px-2.5 backdrop-blur-sm">
                 {form.platform !== 'finclaw' ? <StrategyPlatformBadge platform={form.platform} /> : null}
+                <nav className="flex h-full items-stretch gap-0 self-stretch">
+                  {([
+                    ['code', '代码'],
+                    ['runs', '回测'],
+                  ] as const).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={cn(
+                        'h-full px-3 text-[12px] transition-colors',
+                        strategyPane === id
+                          ? 'border-b-2 border-violet-600 font-medium text-violet-700 dark:border-violet-400 dark:text-violet-300'
+                          : 'border-b-2 border-transparent text-muted-foreground hover:text-foreground',
+                      )}
+                      onClick={() => setStrategyPane(id)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </nav>
                 <div className="ml-auto flex shrink-0 items-center gap-1.5">
                   {dirty && (
                     <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">
@@ -858,7 +804,7 @@ export default function BacktestPage() {
                     size="xs"
                     className={cn('gap-1', PRIMARY_BUTTON_CLASS)}
                     disabled={dirty || detailLoading}
-                    title={dirty ? '请先保存后再分享' : '分享到策略库'}
+                    title={dirty ? '请先保存后再分享' : '分享到策略市场'}
                     onClick={openShare}
                   >
                     <IconShare2 className="size-3.5" stroke={1.75} />
@@ -885,11 +831,10 @@ export default function BacktestPage() {
                   {platformConfig.nativeBacktest ? (
                     <Button
                       type="button"
-                      size="icon-xs"
-                      className={PRIMARY_BUTTON_CLASS}
+                      size="xs"
+                      className={cn('gap-1', PRIMARY_BUTTON_CLASS)}
                       disabled={runBusy || submitting || detailLoading || !form.script.trim()}
                       title={runBusy ? '提交中…' : '运行回测'}
-                      aria-label={runBusy ? '提交中…' : '运行回测'}
                       onClick={handleRun}
                     >
                       {runBusy ? (
@@ -897,6 +842,7 @@ export default function BacktestPage() {
                       ) : (
                         <IconPlayerPlay className="size-3.5" stroke={1.75} />
                       )}
+                      {runBusy ? '提交中…' : '回测'}
                     </Button>
                   ) : null}
                 </div>
@@ -908,18 +854,26 @@ export default function BacktestPage() {
                 </div>
               )}
 
-              <div className="relative flex min-h-0 flex-1 flex-col">
-                {detailLoading ? (
-                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    加载策略…
-                  </div>
-                ) : (
-                  <StrategyCodeEditor
-                    value={form.script}
-                    onChange={(script) => updateField('script', script)}
-                  />
-                )}
-              </div>
+              {strategyPane === 'runs' && selectedName ? (
+                <BacktestRunsPanel
+                  strategyName={selectedName}
+                  refreshKey={runsRefreshKey}
+                  focusRunId={focusRunId}
+                />
+              ) : (
+                <div className="relative flex min-h-0 flex-1 flex-col">
+                  {detailLoading ? (
+                    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                      加载策略…
+                    </div>
+                  ) : (
+                    <StrategyCodeEditor
+                      value={form.script}
+                      onChange={(script) => updateField('script', script)}
+                    />
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -937,23 +891,19 @@ export default function BacktestPage() {
             />
           </div>
         ) : (
-          <div className="flex h-full w-9 shrink-0 flex-col items-center gap-2 border-l border-border/50 bg-muted/20 pt-1.5">
+          <div className="flex h-full w-9 shrink-0 flex-col items-center border-l border-border/50 bg-muted/20 pt-1.5">
             <button
               type="button"
-              className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-violet-500/10 hover:text-violet-600 dark:hover:text-violet-300"
+              className="flex size-7 items-center justify-center rounded-md text-violet-600/80 transition-colors hover:bg-violet-500/10 hover:text-violet-600 dark:text-violet-300/80 dark:hover:text-violet-300"
               onClick={() => persistChatOpen(true)}
               title="展开 AI"
               aria-label="展开 AI"
             >
-              <IconSparkles className="size-4" stroke={1.75} />
+              <IconMessageChatbot className="size-[18px]" stroke={1.75} aria-hidden />
             </button>
-            <span className="select-none text-[10px] tracking-[0.18em] text-muted-foreground [writing-mode:vertical-rl]">
-              AI
-            </span>
           </div>
         )}
       </div>
-      )}
 
       <StrategyCreateDialog
         open={createOpen}

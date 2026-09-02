@@ -17,10 +17,15 @@ import {
 } from './PersonaGenerateDialog';
 import { AiPolishPromptPopover } from './AiPolishPromptPopover';
 import { Button } from '@/components/ui/button';
+import { SegmentedControl } from '@/components/ui/segmented-control';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { cn } from '@/lib/cn';
-import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
+import {
+  PRIMARY_BUTTON_CLASS,
+  PRIMARY_TAB_ACTIVE_CLASS,
+  PRIMARY_TAB_INACTIVE_CLASS,
+} from '@/lib/primaryButton';
 import { toast } from 'sonner';
 
 const PERSONA_TABS: PersonaFileName[] = ['AGENT.md', 'SOUL.md', 'USER.md'];
@@ -262,13 +267,13 @@ export function AgentPersonaEditor({ agentName, className, onDirtyChange }: Agen
                 className={cn(
                   'rounded-lg px-3 py-1.5 text-xs transition-colors',
                   activeTab === name
-                    ? 'bg-violet-500/15 font-medium text-violet-700 dark:text-violet-300'
-                    : 'text-muted-foreground hover:bg-muted/60',
+                    ? PRIMARY_TAB_ACTIVE_CLASS
+                    : cn('bg-muted/40', PRIMARY_TAB_INACTIVE_CLASS),
                 )}
               >
                 {label}
-                {isMissing && <span className="ml-1 text-[10px] text-amber-600">未创建</span>}
-                {isDirty && <span className="ml-1 text-[10px] text-violet-600">•</span>}
+                {isMissing && <span className="ml-1 text-[10px] text-amber-600 dark:text-amber-400">未创建</span>}
+                {isDirty && <span className="ml-1 text-[10px] opacity-80">•</span>}
               </button>
             );
           })}
@@ -299,21 +304,16 @@ export function AgentPersonaEditor({ agentName, className, onDirtyChange }: Agen
           <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => void onRefresh()}>
             刷新
           </Button>
-          <div className="flex rounded-lg border border-border/60 p-0.5">
-            {(['edit', 'preview'] as const).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => setViewMode(mode)}
-                className={cn(
-                  'rounded-md px-2.5 py-1 text-[11px] transition-colors',
-                  viewMode === mode ? 'bg-background font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {mode === 'edit' ? '编辑' : '预览'}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl
+            aria-label="编辑视图"
+            value={viewMode}
+            options={[
+              { value: 'edit', label: '编辑' },
+              { value: 'preview', label: '预览' },
+            ]}
+            onChange={setViewMode}
+            itemClassName="h-auto px-2.5 py-1 text-[11px]"
+          />
         </div>
       </div>
 

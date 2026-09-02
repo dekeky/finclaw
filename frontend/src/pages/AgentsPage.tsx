@@ -45,7 +45,7 @@ import { ThemeToggle } from '@/components/chrome/ThemeToggle';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { cn } from '@/lib/cn';
 import { toast } from 'sonner';
-import { PRIMARY_BUTTON_CLASS, PRIMARY_LIST_ITEM_SELECTED_CLASS, PRIMARY_TAB_ACTIVE_CLASS, PRIMARY_TAB_INACTIVE_HOVER_CLASS, PRIMARY_AI_PANEL_CLASS, PRIMARY_AI_PANEL_HOVER_CLASS, PRIMARY_ICON_GRADIENT_CLASS } from '@/lib/primaryButton';
+import { PRIMARY_BUTTON_CLASS, PRIMARY_LIST_ITEM_SELECTED_CLASS, PRIMARY_TAB_ACTIVE_CLASS, PRIMARY_TAB_INACTIVE_CLASS, PRIMARY_AI_PANEL_CLASS, PRIMARY_AI_PANEL_HOVER_CLASS, PRIMARY_ICON_GRADIENT_CLASS } from '@/lib/primaryButton';
 
 type FormState = { name: string };
 const EMPTY_FORM: FormState = { name: '' };
@@ -500,7 +500,7 @@ export default function AgentsPage() {
             <Button
               variant="ghost"
               size="sm"
-              className={cn('h-8 text-xs', PRIMARY_TAB_INACTIVE_HOVER_CLASS, 'dark:hover:bg-violet-500/14')}
+              className={cn('h-8 text-xs', PRIMARY_TAB_INACTIVE_CLASS)}
               onClick={openAddForm}
             >
               添加 Agent
@@ -522,7 +522,7 @@ export default function AgentsPage() {
             <Button
               variant="outline"
               size="sm"
-              className={cn('w-full text-xs', PRIMARY_TAB_INACTIVE_HOVER_CLASS, 'dark:hover:bg-violet-500/14')}
+              className={cn('w-full text-xs', PRIMARY_TAB_INACTIVE_CLASS)}
               onClick={openAddForm}
             >
               添加 Agent
@@ -553,7 +553,7 @@ export default function AgentsPage() {
                         'grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center overflow-hidden rounded-lg',
                         selected
                           ? PRIMARY_LIST_ITEM_SELECTED_CLASS
-                          : cn('text-foreground', PRIMARY_TAB_INACTIVE_HOVER_CLASS),
+                          : cn('text-muted-foreground', PRIMARY_TAB_INACTIVE_CLASS),
                       )}
                     >
                       <button
@@ -631,7 +631,7 @@ export default function AgentsPage() {
                           'inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm transition-colors',
                           active
                             ? PRIMARY_TAB_ACTIVE_CLASS
-                            : cn('bg-muted/50 text-muted-foreground', PRIMARY_TAB_INACTIVE_HOVER_CLASS),
+                            : cn('bg-muted/50', PRIMARY_TAB_INACTIVE_CLASS),
                         )}
                       >
                         <Icon className="h-4 w-4" stroke={active ? 2 : 1.75} />

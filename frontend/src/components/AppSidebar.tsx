@@ -205,9 +205,9 @@ export function AppSidebar({
 function cnYuanbaoNav(isActive: boolean, compact?: boolean) {
   return cn(
     'h-9 rounded-xl text-[14px] transition-colors',
-    compact && 'h-8 text-muted-foreground',
+    compact && 'h-8',
     isActive
-      ? 'bg-background font-medium text-foreground shadow-none ring-0'
-      : 'text-foreground/80 hover:bg-background/60',
+      ? 'bg-violet-500/12 font-medium text-violet-700 shadow-none ring-0 dark:bg-violet-500/18 dark:text-violet-200'
+      : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
   );
 }

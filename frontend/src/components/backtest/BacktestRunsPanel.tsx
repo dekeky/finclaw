@@ -119,10 +119,16 @@ function SourceIcon() {
   );
 }
 
+function belongsToStrategy(item: RunListItem, strategyName: string): boolean {
+  return item.strategy_name === strategyName;
+}
+
 export function BacktestRunsPanel({
+  strategyName,
   refreshKey,
   focusRunId,
 }: {
+  strategyName: string;
   refreshKey: number;
   focusRunId: string | null;
 }) {
@@ -146,11 +152,24 @@ export function BacktestRunsPanel({
   selectedIdRef.current = selectedId;
   const currentRef = useRef(current);
   currentRef.current = current;
+  const strategyNameRef = useRef(strategyName);
+  strategyNameRef.current = strategyName;
   const live = isLiveStatus(current?.status) || items.some((item) => isLiveStatus(item.status));
 
   useEffect(() => {
     if (focusRunId) setSelectedId(focusRunId);
   }, [focusRunId]);
+
+  useEffect(() => {
+    // Re-seed from focusRunId when strategy changes (caller clears focus when switching strategies).
+    setSelectedId(focusRunId);
+    setCurrent(null);
+    setEditingId(null);
+    setConfigItem(null);
+    setSourceView(null);
+    setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only reset when strategy changes
+  }, [strategyName]);
 
   useEffect(() => {
     if (!user) {
@@ -164,18 +183,22 @@ export function BacktestRunsPanel({
     listBacktestRuns()
       .then((list) => {
         if (cancelled) return;
-        setItems(list);
+        const scoped = list.filter((item) => belongsToStrategy(item, strategyNameRef.current));
+        setItems(scoped);
         const targetId =
-          selectedIdRef.current ||
-          list.find((item) => isLiveStatus(item.status))?.id ||
-          list[0]?.id ||
+          (selectedIdRef.current && scoped.some((item) => item.id === selectedIdRef.current)
+            ? selectedIdRef.current
+            : null) ||
+          scoped.find((item) => isLiveStatus(item.status))?.id ||
+          scoped[0]?.id ||
           null;
         if (!targetId) {
+          setSelectedId(null);
           setCurrent(null);
           return;
         }
-        if (!selectedIdRef.current) setSelectedId(targetId);
-        const item = list.find((row) => row.id === targetId);
+        if (selectedIdRef.current !== targetId) setSelectedId(targetId);
+        const item = scoped.find((row) => row.id === targetId);
         if (item && currentRef.current?.id !== targetId) setCurrent(placeholderRun(item));
       })
       .catch((err: Error) => {
@@ -184,14 +207,18 @@ export function BacktestRunsPanel({
     return () => {
       cancelled = true;
     };
-  }, [refreshKey, user]);
+  }, [refreshKey, user, strategyName]);
 
   useEffect(() => {
     if (!selectedId || !user) return;
     let cancelled = false;
     getBacktestRun(selectedId)
       .then((detail) => {
-        if (!cancelled && selectedIdRef.current === selectedId) setCurrent(detail);
+        if (cancelled || selectedIdRef.current !== selectedId) return;
+        if (detail.request?.strategy_name && detail.request.strategy_name !== strategyNameRef.current) {
+          return;
+        }
+        setCurrent(detail);
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -199,7 +226,7 @@ export function BacktestRunsPanel({
     return () => {
       cancelled = true;
     };
-  }, [selectedId, user]);
+  }, [selectedId, user, strategyName]);
 
   useEffect(() => {
     if (!live || !user) return;
@@ -209,9 +236,10 @@ export function BacktestRunsPanel({
         try {
           const list = await listBacktestRuns();
           if (cancelled) return;
-          setItems(list);
+          const scoped = list.filter((item) => belongsToStrategy(item, strategyNameRef.current));
+          setItems(scoped);
           const targetId = selectedIdRef.current;
-          const row = list.find((item) => item.id === targetId);
+          const row = scoped.find((item) => item.id === targetId);
           if (targetId && (Boolean(row && isLiveStatus(row.status)) || isLiveStatus(currentRef.current?.status))) {
             const detail = await getBacktestRun(targetId);
             if (!cancelled) setCurrent(detail);
@@ -225,7 +253,7 @@ export function BacktestRunsPanel({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [live, user]);
+  }, [live, user, strategyName]);
 
   function openRun(id: string) {
     if (id === selectedId) return;
@@ -298,7 +326,7 @@ export function BacktestRunsPanel({
       const remaining = items.filter((row) => row.id !== item.id);
       setItems(remaining);
       if (selectedId === item.id) {
-        const next = remaining[0] ?? null;
+        const next = remaining.filter((row) => belongsToStrategy(row, strategyName))[0] ?? remaining[0] ?? null;
         setSelectedId(next?.id ?? null);
         setCurrent(next ? placeholderRun(next) : null);
       }
@@ -337,7 +365,7 @@ export function BacktestRunsPanel({
         style={{ width: runResize.width }}
       >
         <div className="rail-head">
-          <span>回测记录</span>
+          <span>本策略回测</span>
         </div>
         <div className="rail-list">
           {!user ? (
@@ -345,7 +373,7 @@ export function BacktestRunsPanel({
           ) : error ? (
             <p className="error">{error}</p>
           ) : items.length === 0 ? (
-            <p className="empty">暂无回测。在策略页保存后点击运行。</p>
+            <p className="empty">本策略还没有回测。保存后点击运行即可开始。</p>
           ) : (
             items.map((item) => {
               const duration = runListDuration(item, now);

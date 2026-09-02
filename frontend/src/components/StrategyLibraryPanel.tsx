@@ -14,11 +14,14 @@ import {
   type StrategyLibraryDetail,
   type StrategyLibrarySummary,
 } from '@/api/strategyLibrary';
+import { StrategyGallerySkeleton } from '@/components/strategy/StrategyGallerySkeleton';
+import { StrategyGalleryTile } from '@/components/strategy/StrategyGalleryTile';
 import { StrategyCodeEditor } from '@/components/StrategyCodeEditor';
 import { StrategyPlatformBadge } from '@/components/StrategyPlatformField';
 import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { useAuth } from '@/state/auth';
 import { Button } from '@/components/ui/button';
+import { GallerySearchInput } from '@/components/ui/gallery-search-input';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useConfirm } from '@/components/ui/confirm-dialog';
@@ -106,7 +109,7 @@ function StrategyLibraryInstallDialog({
         <Dialog.Content className="fixed left-1/2 top-1/2 z-[1201] w-[min(92vw,24rem)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-background p-5 shadow-2xl">
           <Dialog.Title className="text-lg font-semibold">创建到我的策略</Dialog.Title>
           <Dialog.Description className="mt-1 text-xs text-muted-foreground">
-            从策略库「{entry?.title}」创建本地副本，之后可在量化中编辑。
+            从策略市场「{entry?.title}」创建本地副本，之后可在量化中编辑。
           </Dialog.Description>
           <form onSubmit={onInstall} className="mt-4 space-y-4">
             <div>
@@ -189,14 +192,14 @@ export function StrategyLibraryDetailView({
     if (!requireAuth()) return;
     const ok = await confirm({
       title: `下架策略「${entry.title}」`,
-      description: '将从策略库中移除该策略，已安装的用户副本不受影响。',
+      description: '将从策略市场中移除该策略，已安装的用户副本不受影响。',
       confirmText: '下架',
       danger: true,
     });
     if (!ok) return;
     try {
       await deleteStrategyLibraryEntry(entry.id);
-      toast.success('已从策略库下架');
+      toast.success('已从策略市场下架');
       onBack();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '下架失败');
@@ -292,6 +295,9 @@ interface StrategyLibraryPanelProps {
   selectedEntryId?: string | null;
   onSelectEntry?: (entry: StrategyLibrarySummary | null) => void;
   refreshKey?: number;
+  onBack?: () => void;
+  /** When true (cards), parent owns the gallery chrome; only the grid is rendered. */
+  hideHeader?: boolean;
 }
 
 export function StrategyLibraryPanel({
@@ -304,6 +310,8 @@ export function StrategyLibraryPanel({
   selectedEntryId,
   onSelectEntry,
   refreshKey = 0,
+  onBack,
+  hideHeader = false,
 }: StrategyLibraryPanelProps) {
   const { user } = useAuth();
   const { requireAuth } = useRequireAuth();
@@ -406,14 +414,14 @@ export function StrategyLibraryPanel({
     if (!requireAuth()) return;
     const ok = await confirm({
       title: `下架策略「${entry.title}」`,
-      description: '将从策略库中移除该策略，已安装的用户副本不受影响。',
+      description: '将从策略市场中移除该策略，已安装的用户副本不受影响。',
       confirmText: '下架',
       danger: true,
     });
     if (!ok) return;
     try {
       await deleteStrategyLibraryEntry(entry.id);
-      toast.success('已从策略库下架');
+      toast.success('已从策略市场下架');
       if (selected?.id === entry.id) {
         setSelected(null);
         setDetail(null);
@@ -427,32 +435,19 @@ export function StrategyLibraryPanel({
   const searchQuery = search.trim();
 
   const cardGrid = (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {filtered.map((entry) => (
-        <button
+        <StrategyGalleryTile
           key={entry.id}
-          type="button"
-          onClick={() => void openEntry(entry)}
-          className={cn(
-            'flex flex-col rounded-xl border border-border bg-card p-4 text-left transition-colors',
-            'hover:border-primary/40 hover:bg-primary/5 hover:shadow-sm',
-            selectedEntryId === entry.id && 'border-primary/50 bg-primary/5 ring-1 ring-primary/20',
-          )}
-        >
-          <div className="mb-2 flex items-start justify-between gap-2">
-            <span className="line-clamp-2 text-sm font-medium leading-snug text-foreground">
-              {entry.title}
-            </span>
-            <StrategyPlatformBadge platform={normalizeStrategyPlatform(entry.platform)} />
-          </div>
-          <p className="line-clamp-3 flex-1 text-xs leading-relaxed text-muted-foreground">
-            {entry.summary || '暂无描述'}
-          </p>
-          <div className="mt-3 flex items-center justify-between gap-2 text-[10px] text-muted-foreground/70">
-            <span>{entry.author_name || '匿名'}</span>
-            <span>{entry.install_count} 次使用 · {formatDate(entry.created_at)}</span>
-          </div>
-        </button>
+          title={entry.title}
+          platform={normalizeStrategyPlatform(entry.platform)}
+          subtitle={entry.summary || '暂无描述'}
+          metaLeft={entry.author_name || '匿名'}
+          metaRight={`${entry.install_count} 次使用`}
+          updatedAt={entry.created_at}
+          selected={selectedEntryId === entry.id}
+          onOpen={() => void openEntry(entry)}
+        />
       ))}
     </div>
   );
@@ -461,12 +456,16 @@ export function StrategyLibraryPanel({
     <>
       {error && (
         <div className={cn('rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-destructive', !isCards && 'mb-4')}>
-          加载策略库失败：{error}
+          加载策略市场失败：{error}
         </div>
       )}
 
       {loading ? (
-        <p className={cn('text-muted-foreground', isCards ? 'py-8 text-center text-sm' : 'text-sm')}>加载中…</p>
+        isCards ? (
+          <StrategyGallerySkeleton />
+        ) : (
+          <p className="text-sm text-muted-foreground">加载中…</p>
+        )
       ) : filtered.length === 0 ? (
         <div className={cn(
           isCards ? 'px-4 py-12 text-center' : 'rounded-xl border border-dashed border-border px-6 py-14 text-center',
@@ -488,7 +487,7 @@ export function StrategyLibraryPanel({
             </>
           ) : (
             <p className={cn('text-muted-foreground', isCards ? 'text-sm' : 'text-sm')}>
-              策略库暂无内容，选择策略后点击「分享」即可发布到这里。
+              策略市场暂无内容，选择策略后点击「分享」即可发布到这里。
             </p>
           )}
         </div>
@@ -501,36 +500,57 @@ export function StrategyLibraryPanel({
   if (isCards) {
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="shrink-0 border-b border-border/40 bg-card/90 px-4 py-3 backdrop-blur-sm">
-          <div className="flex items-center gap-2">
-            <IconBuildingWarehouse className="size-4 shrink-0 text-violet-500" stroke={1.75} />
-            <h2 className="min-w-0 flex-1 text-sm font-semibold text-foreground">策略库</h2>
-            {!loading && !error && (
-              <span className="text-[11px] tabular-nums text-muted-foreground">
-                {searchQuery ? `找到 ${filtered.length} 个` : `共 ${filtered.length} 个`}
-              </span>
-            )}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8 shrink-0"
-              onClick={() => void loadEntries()}
-              aria-label="刷新策略库"
-            >
-              <IconRefresh className="size-4" stroke={1.75} />
-            </Button>
+        {!hideHeader ? (
+          <div className="shrink-0 border-b border-border/40 bg-card/90 px-4 py-3 backdrop-blur-sm">
+            <div className="flex items-center gap-2">
+              {onBack ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 shrink-0"
+                  onClick={onBack}
+                  aria-label="返回我的策略"
+                >
+                  <IconArrowLeft className="size-4" />
+                </Button>
+              ) : null}
+              <IconBuildingWarehouse className="size-4 shrink-0 text-violet-500" stroke={1.75} />
+              <h2 className="min-w-0 flex-1 text-sm font-semibold text-foreground">策略市场</h2>
+              {!loading && !error && (
+                <span className="text-[11px] tabular-nums text-muted-foreground">
+                  {searchQuery ? `找到 ${filtered.length} 个` : `共 ${filtered.length} 个`}
+                </span>
+              )}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 shrink-0"
+                onClick={() => void loadEntries()}
+                aria-label="刷新策略市场"
+              >
+                <IconRefresh className="size-4" stroke={1.75} />
+              </Button>
+            </div>
+            <div className="mt-3 flex justify-center">
+              <GallerySearchInput
+                value={search}
+                onChange={setSearch}
+                placeholder="搜索策略名称或描述…"
+              />
+            </div>
           </div>
-          <div className="relative mt-3">
-            <Input
-              placeholder="搜索策略名称或描述…"
+        ) : (
+          <div className="flex shrink-0 justify-center border-b border-border/40 px-4 py-3 sm:px-6">
+            <GallerySearchInput
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-9 w-full text-sm"
+              onChange={setSearch}
+              placeholder="搜索策略名称或描述…"
             />
           </div>
-        </div>
+        )}
         <ScrollArea className="min-h-0 flex-1">
-          <div className="p-4 sm:p-6">{listContent}</div>
+          <div className="mx-auto w-full max-w-6xl p-4 sm:p-6">{listContent}</div>
         </ScrollArea>
         {confirmDialog}
       </div>
@@ -545,7 +565,7 @@ export function StrategyLibraryPanel({
             <div className="shrink-0 px-6 pt-6">
               <h2 className="flex items-center gap-2 text-lg font-semibold text-foreground">
                 <IconBuildingWarehouse className="size-5 text-violet-500" stroke={1.75} />
-                策略库
+                策略市场
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">浏览社区分享的量化策略，一键创建到本地。</p>
             </div>
@@ -553,12 +573,11 @@ export function StrategyLibraryPanel({
 
           <div className="shrink-0 border-b border-border/40 bg-card/90 px-4 py-3 backdrop-blur-sm sm:px-6">
             {!searchInHeader && (
-              <div className="relative mb-3">
-                <Input
-                  placeholder="搜索策略名称或描述…"
+              <div className="mb-3 flex justify-center">
+                <GallerySearchInput
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="h-9 w-full text-sm"
+                  onChange={setSearch}
+                  placeholder="搜索策略名称或描述…"
                 />
               </div>
             )}
@@ -573,7 +592,7 @@ export function StrategyLibraryPanel({
                 size="icon"
                 className="size-8 shrink-0"
                 onClick={() => void loadEntries()}
-                aria-label="刷新策略库"
+                aria-label="刷新策略市场"
               >
                 <IconRefresh className="size-4" stroke={1.75} />
               </Button>
@@ -659,7 +678,7 @@ export function StrategyLibraryPanel({
           <Dialog.Content className="fixed left-1/2 top-1/2 z-[1201] w-[min(92vw,24rem)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-background p-5 shadow-2xl">
             <Dialog.Title className="text-lg font-semibold">创建到我的策略</Dialog.Title>
             <Dialog.Description className="mt-1 text-xs text-muted-foreground">
-              从策略库「{selected?.title}」创建本地副本，之后可在量化中编辑。
+              从策略市场「{selected?.title}」创建本地副本，之后可在量化中编辑。
             </Dialog.Description>
             <form onSubmit={onInstall} className="mt-4 space-y-4">
               <div>

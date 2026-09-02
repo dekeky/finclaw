@@ -51,16 +51,16 @@ export function StrategyShareDialog({
             'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
           )}
         >
-          <Dialog.Title className="text-lg font-semibold tracking-tight text-foreground">分享到策略库</Dialog.Title>
+          <Dialog.Title className="text-lg font-semibold tracking-tight text-foreground">分享到策略市场</Dialog.Title>
           <Dialog.Description className="mt-1 text-xs text-muted-foreground">
-            将策略「{strategyName}」发布到策略库，供其他用户浏览和使用。
+            将策略「{strategyName}」发布到策略市场，供其他用户浏览和使用。
           </Dialog.Description>
 
           {success ? (
             <div className="mt-4 space-y-4">
               <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-4 text-center">
-                <p className="text-sm font-medium text-green-700 dark:text-green-300">已发布到策略库</p>
-                <p className="mt-1 text-xs text-muted-foreground">其他用户可在策略库中查看并创建副本。</p>
+                <p className="text-sm font-medium text-green-700 dark:text-green-300">已发布到策略市场</p>
+                <p className="mt-1 text-xs text-muted-foreground">其他用户可在策略市场中查看并创建副本。</p>
               </div>
               <div className="flex justify-end">
                 <Button type="button" size="sm" className={PRIMARY_BUTTON_CLASS} onClick={() => handleOpenChange(false)}>
@@ -75,7 +75,7 @@ export function StrategyShareDialog({
                 <Input
                   value={title}
                   onChange={(e) => onTitleChange(e.target.value)}
-                  placeholder="在策略库中显示的名称"
+                  placeholder="在策略市场中显示的名称"
                   className="h-10 text-sm"
                   disabled={busy}
                   autoFocus

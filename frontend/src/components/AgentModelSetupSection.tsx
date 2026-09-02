@@ -11,7 +11,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { listModels, modelDisplayName, type ModelProfileSummary } from '@/api/models';
 import { cn } from '@/lib/cn';
-import { PRIMARY_LIST_ITEM_SELECTED_CLASS, PRIMARY_TAB_INACTIVE_HOVER_CLASS } from '@/lib/primaryButton';
+import { PRIMARY_LIST_ITEM_SELECTED_CLASS, PRIMARY_TAB_INACTIVE_CLASS } from '@/lib/primaryButton';
 
 export interface AgentModelSetupSectionProps {
   selectedModel: string;
@@ -140,7 +140,7 @@ export function AgentModelSetupSection({
                   'flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors',
                   inUse
                     ? PRIMARY_LIST_ITEM_SELECTED_CLASS
-                    : cn('text-foreground', PRIMARY_TAB_INACTIVE_HOVER_CLASS),
+                    : cn('text-muted-foreground', PRIMARY_TAB_INACTIVE_CLASS),
                   (disabled || switching) && !inUse && 'opacity-60',
                 )}
               >
