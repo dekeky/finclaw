@@ -52,6 +52,7 @@ import { SegmentedControl } from '@/components/ui/segmented-control';
 import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { getAgentLastUsedAt } from '@/lib/chatPersistence';
 import { cn } from '@/lib/cn';
 import { toast } from 'sonner';
 import {
@@ -722,6 +723,7 @@ export default function AgentsPage() {
                           <AgentGalleryTile
                             key={name}
                             title={name}
+                            updatedAt={getAgentLastUsedAt(name)}
                             avatar={{
                               name,
                               hasAvatar: agent.has_avatar,

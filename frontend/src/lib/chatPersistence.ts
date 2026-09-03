@@ -435,6 +435,11 @@ export function listConversations(agentId: string): ConversationSummary[] {
     }));
 }
 
+/** 指定 agent 最近一次对话活动时间（ISO）；无对话记录时返回 undefined。 */
+export function getAgentLastUsedAt(agentId: string): string | undefined {
+  return listConversations(agentId)[0]?.updatedAt;
+}
+
 // ── 任务计时状态 ──
 
 /** 读取当前正在进行的思考任务起始时间（ms）；无任务时返回 null。 */
