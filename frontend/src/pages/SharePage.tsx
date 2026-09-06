@@ -7,11 +7,14 @@ import {
 } from '@tabler/icons-react';
 import { fetchPublicShare, publicShareDownloadUrl } from '../api/agentAssets';
 import { SharedMarkdownReader } from '../components/SharedMarkdownReader';
+import { SharedStrategyViewer } from '../components/SharedStrategyViewer';
+import type { RunDetail } from '@/api/backtest';
 import { FinclawMark } from '../components/FinclawMark';
 import { GitHubMarkIcon } from '../components/icons/GitHubMarkIcon';
 import { Button } from '@/components/ui/button';
 
 const FINCLAW_GITHUB_URL = 'https://github.com/dekeky/finclaw';
+const FINCLAW_ONLINE_URL = 'https://finclaw.chat/';
 
 /** 顶部品牌行：紧凑、去饱和，避免地推广告观感。 */
 function BrandBar({ children }: { children?: React.ReactNode }) {
@@ -27,7 +30,7 @@ function BrandBar({ children }: { children?: React.ReactNode }) {
         <span className="font-semibold text-foreground/90">Finclaw</span>
         <span className="hidden text-muted-foreground/70 sm:inline">·</span>
         <span className="hidden text-muted-foreground sm:inline">
-          AI × 金融 · 开源多 Agent 投研平台
+          AI × 金融 × 量化 多 Agent 投研平台
         </span>
         <GitHubMarkIcon className="size-3.5 opacity-60 transition-opacity group-hover:opacity-100" />
       </a>
@@ -40,18 +43,15 @@ function BrandBar({ children }: { children?: React.ReactNode }) {
 function FinclawAttribution() {
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-      <span>
-        由{' '}
-        <a
-          href={FINCLAW_GITHUB_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-medium text-foreground/80 transition-colors hover:text-foreground hover:underline"
-        >
-          Finclaw
-        </a>{' '}
-        提供 · 开源 · Apache-2.0
-      </span>
+      <a
+        href={FINCLAW_ONLINE_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground hover:underline"
+      >
+        在线体验
+        <IconExternalLink className="size-3" />
+      </a>
       <a
         href={FINCLAW_GITHUB_URL}
         target="_blank"
@@ -114,7 +114,7 @@ export default function SharePage() {
           {meta && (
             <div className="flex min-w-0 items-center gap-2">
               <span className="hidden text-[11px] text-muted-foreground sm:inline">
-                分享文件
+                {meta.kind === 'strategy' ? '分享策略' : '分享文件'}
               </span>
               <span
                 className="max-w-[10rem] truncate text-xs font-medium text-foreground sm:max-w-[20rem]"
@@ -146,6 +146,14 @@ export default function SharePage() {
           <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-8 text-center text-sm text-destructive">
             {error}
           </div>
+        ) : meta?.kind === 'strategy' && meta.script != null ? (
+          <SharedStrategyViewer
+            name={meta.name}
+            platform={meta.platform}
+            script={meta.script}
+            shareToken={token}
+            runs={Array.isArray(meta.runs) ? (meta.runs as RunDetail[]) : []}
+          />
         ) : meta?.content ? (
           <SharedMarkdownReader
             content={meta.content}

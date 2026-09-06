@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dekeky/rssmanager/pkg/ginx"
+	"github.com/finclaw/internal/auth"
 	"github.com/finclaw/pkg/agent/fquant"
 	"github.com/gin-gonic/gin"
 )
@@ -17,13 +18,15 @@ type StrategyRouter struct {
 	r              *gin.Engine
 	authMiddleware gin.HandlerFunc
 	fquantClient   *fquant.Client
+	authStore      *auth.Store
 }
 
-func NewStrategyRouter(r *gin.Engine, authMiddleware gin.HandlerFunc, fquantAddr string) *StrategyRouter {
+func NewStrategyRouter(r *gin.Engine, authMiddleware gin.HandlerFunc, fquantAddr string, authStore *auth.Store) *StrategyRouter {
 	return &StrategyRouter{
 		r:              r,
 		authMiddleware: authMiddleware,
 		fquantClient:   fquant.New(fquantAddr),
+		authStore:      authStore,
 	}
 }
 
@@ -33,6 +36,7 @@ func (sr *StrategyRouter) ConfigRouter() {
 	group.GET("", sr.listStrategies)
 	group.POST("", sr.createStrategy)
 	group.PUT("/:name", sr.updateStrategy)
+	group.POST("/:name/share", sr.createStrategyShare)
 	group.POST("/:name/pull", sr.pullStrategy)
 	group.POST("/:name/sync", sr.syncStrategy)
 	group.DELETE("/:name", sr.deleteStrategy)

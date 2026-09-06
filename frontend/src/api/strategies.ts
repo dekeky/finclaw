@@ -139,6 +139,30 @@ export async function pullStrategyFromAgent(name: string, agent: string): Promis
   return body.body;
 }
 
+export interface CreateStrategyPublicShareRequest {
+  run_ids?: string[];
+}
+
+export interface CreateStrategyPublicShareResult {
+  token: string;
+  url: string;
+}
+
+/** POST /strategies/:name/share — create a public snapshot link. */
+export async function createStrategyPublicShare(
+  name: string,
+  req: CreateStrategyPublicShareRequest = {},
+): Promise<CreateStrategyPublicShareResult> {
+  const res = await fetch(`${STRATEGIES_API}/${encodeURIComponent(name)}/share`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(req),
+  });
+  const body = await parseGinx<CreateStrategyPublicShareResult | null>(res);
+  if (!body.body) throw new Error('empty body');
+  return body.body;
+}
+
 /** DELETE /strategies/:name — remove a strategy. */
 export async function deleteStrategy(name: string): Promise<void> {
   const res = await fetch(`${STRATEGIES_API}/${encodeURIComponent(name)}`, {

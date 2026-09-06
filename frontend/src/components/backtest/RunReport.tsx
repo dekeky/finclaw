@@ -1,5 +1,6 @@
-import { memo, useEffect, useMemo, useState } from 'react';
-import { api, type PositionSnapshot, type PricePoint, type RunDetail } from '@/api/backtest';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { fetchPublicShareBars } from '@/api/agentAssets';
+import { api, type PositionSnapshot, type RunDetail } from '@/api/backtest';
 import BenchmarkPicker, { type OverlayItem } from './BenchmarkPicker';
 import EquityReturnChart from './EquityReturnChart';
 import Hint from './Hint';
@@ -26,11 +27,20 @@ import {
   RebalancePane,
 } from './RebalanceTable';
 
-const EMPTY_PRICES: PricePoint[] = [];
 const HS300: OverlayItem = { code: '000300', name: '沪深300', kind: 'index' };
 const PNL_PAGE_SIZE = 20;
 
-export function RunReport({ detail }: { detail: RunDetail }) {
+export function RunReport({
+  detail,
+  active = true,
+  readOnly = false,
+  shareToken,
+}: {
+  detail: RunDetail;
+  active?: boolean;
+  readOnly?: boolean;
+  shareToken?: string;
+}) {
   const [statsOpen, setStatsOpen] = useState(false);
   const [overlays, setOverlays] = useState<OverlayItem[]>([HS300]);
   const [overlayMaps, setOverlayMaps] = useState<Record<string, Map<string, number>>>({});
@@ -121,6 +131,20 @@ export function RunReport({ detail }: { detail: RunDetail }) {
       setTrades([]);
       return;
     }
+    if (readOnly) {
+      const snapshotOrders = detail.result?.orders ?? [];
+      const snapshotRebalances = (detail.result?.rebalances as RebalanceEvent[]) ?? [];
+      setTrades(detail.result?.trades ?? []);
+      setFillOrders(snapshotOrders);
+      setFillActionDays(detail.result?.action_days ?? []);
+      setFillRebalances(snapshotRebalances);
+      setOrders(snapshotOrders);
+      setRebalances(snapshotRebalances);
+      setFillsReady(true);
+      setBlotterReady(true);
+      setFillsLoading(false);
+      return;
+    }
     let cancelled = false;
     setFillsLoading(true);
     api
@@ -147,9 +171,10 @@ export function RunReport({ detail }: { detail: RunDetail }) {
     return () => {
       cancelled = true;
     };
-  }, [detail.id, detail.status, hasResult]);
+  }, [detail.id, detail.status, hasResult, readOnly, detail.result?.trades, detail.result?.orders, detail.result?.action_days, detail.result?.rebalances]);
 
   useEffect(() => {
+    if (readOnly) return;
     if (detail.status !== 'succeeded' || !hasResult || !logPane || blotterReady) {
       if (detail.status !== 'succeeded' || !hasResult) {
         setOrders([]);
@@ -185,9 +210,14 @@ export function RunReport({ detail }: { detail: RunDetail }) {
     return () => {
       cancelled = true;
     };
-  }, [detail.id, detail.status, hasResult, logPane, blotterReady]);
+  }, [detail.id, detail.status, hasResult, logPane, blotterReady, readOnly]);
 
   useEffect(() => {
+    if (readOnly) {
+      setHoldingBook(detail.result?.holdings ?? []);
+      setHoldingsLoading(false);
+      return;
+    }
     if (detail.status !== 'succeeded' || !hasResult) {
       setHoldingBook([]);
       setHoldingsLoading(false);
@@ -209,9 +239,10 @@ export function RunReport({ detail }: { detail: RunDetail }) {
     return () => {
       cancelled = true;
     };
-  }, [detail.id, detail.status, hasResult]);
+  }, [detail.id, detail.status, hasResult, readOnly, detail.result?.holdings]);
 
   useEffect(() => {
+    if (readOnly) return;
     const codes = [...new Set([...symbols, ...overlays.map((item) => item.code)])];
     if (!codes.length) return;
     let cancelled = false;
@@ -261,7 +292,7 @@ export function RunReport({ detail }: { detail: RunDetail }) {
       setOverlayMaps((prev) => ({ ...prev, ...local }));
     }
     if (!remote.length) return;
-    if (!detail.request.start_time || !detail.request.end_time) return;
+    if (readOnly || !detail.request.start_time || !detail.request.end_time) return;
 
     api
       .getBars(
@@ -283,7 +314,7 @@ export function RunReport({ detail }: { detail: RunDetail }) {
     };
     // overlayMaps is read only to skip already-loaded codes; including it would refetch/cancel.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overlays, storedBenchmarks, detail.request.start_time, detail.request.end_time]);
+  }, [overlays, storedBenchmarks, detail.request.start_time, detail.request.end_time, readOnly]);
 
   const series = useMemo(() => {
     const strategy = cumulativePct(equity, Number(detail.request.initial_cash));
@@ -314,6 +345,12 @@ export function RunReport({ detail }: { detail: RunDetail }) {
       })),
     };
   }, [equity, overlays, overlayMaps, detail.request.initial_cash, detail.request.start_time, detail.request.end_time, live]);
+
+  const loadSharePrices = useCallback(
+    (code: string, start: string, end: string) =>
+      shareToken ? fetchPublicShareBars(shareToken, code, start, end) : Promise.resolve([]),
+    [shareToken],
+  );
 
   function openSymbol(next: string, focusDate?: string | null) {
     setInspectFocusDate(focusDate ? dayKey(focusDate) : null);
@@ -420,6 +457,7 @@ export function RunReport({ detail }: { detail: RunDetail }) {
               chart={series.chart}
               overlays={overlays}
               live={live}
+              chartActive={active}
               onAdd={(item) =>
                 setOverlays((prev) => (prev.some((row) => row.code === item.code) ? prev : [...prev, item]))
               }
@@ -432,6 +470,7 @@ export function RunReport({ detail }: { detail: RunDetail }) {
               onSelectSymbol={openSymbol}
               onInspectDay={showFull ? openHoldings : undefined}
               showBlotter={showFull}
+              hideBenchmarkPicker={readOnly}
               rebalances={datedRebalances}
               rejects={rejects}
               orders={orders}
@@ -464,7 +503,10 @@ export function RunReport({ detail }: { detail: RunDetail }) {
               endTime={detail.request.end_time}
               orders={blotterReady ? orders : fillOrders}
               rebalances={blotterReady ? rebalances : fillRebalances}
-              seedPrices={EMPTY_PRICES}
+              seedPrices={
+                (detail.result?.prices ?? []).filter((point) => point.symbol === inspectSymbol)
+              }
+              loadPrices={shareToken ? loadSharePrices : undefined}
               focusDate={inspectFocusDate}
               onClose={() => {
                 setInspectSymbol(null);
@@ -501,6 +543,7 @@ function PnlPane({
   chart,
   overlays,
   live = false,
+  chartActive = true,
   onAdd,
   onRemove,
   stats,
@@ -517,10 +560,12 @@ function PnlPane({
   actionDays = [],
   logsLoading = false,
   onOpenLogs,
+  hideBenchmarkPicker = false,
 }: {
   chart: Record<string, string | number | undefined>[];
   overlays: OverlayItem[];
   live?: boolean;
+  chartActive?: boolean;
   onAdd: (item: OverlayItem) => void;
   onRemove: (code: string) => void;
   stats: ReturnType<typeof collectSymbolStats>;
@@ -537,6 +582,7 @@ function PnlPane({
   actionDays?: string[];
   logsLoading?: boolean;
   onOpenLogs?: () => void;
+  hideBenchmarkPicker?: boolean;
 }) {
   const [pane, setPane] = useState<'pnl' | 'rebalance'>('pnl');
   return (
@@ -546,7 +592,7 @@ function PnlPane({
           <i className="strategy" />
           策略收益率走势
         </span>
-        <BenchmarkPicker selected={overlays} onAdd={onAdd} onRemove={onRemove} />
+        {hideBenchmarkPicker ? null : <BenchmarkPicker selected={overlays} onAdd={onAdd} onRemove={onRemove} />}
       </div>
       {chart.length > 0 ? (
         <div className="chart chart-return">
@@ -555,6 +601,7 @@ function PnlPane({
             overlays={overlays}
             onInspectDay={onInspectDay}
             actionDays={actionDays}
+            active={chartActive}
           />
         </div>
       ) : live ? null : (

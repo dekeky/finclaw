@@ -55,7 +55,7 @@ func doCreateStrategy(t *testing.T, fquantAddr string, payload createStrategyReq
 		c.Set("userId", "u_test")
 		c.Next()
 	})
-	NewStrategyRouter(engine, func(c *gin.Context) { c.Next() }, fquantAddr).ConfigRouter()
+	NewStrategyRouter(engine, func(c *gin.Context) { c.Next() }, fquantAddr, nil).ConfigRouter()
 
 	body, err := json.Marshal(payload)
 	if err != nil {

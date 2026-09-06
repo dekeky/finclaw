@@ -124,6 +124,8 @@ export type BacktestResult = {
   prices?: PricePoint[];
   benchmarks?: BenchmarkSeries[];
   action_days?: string[];
+  rebalances?: Record<string, unknown>[];
+  holdings?: PositionSnapshot[];
   positions?: {
     symbol: string;
     quantity?: number | null;

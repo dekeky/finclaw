@@ -47,11 +47,13 @@ export default function EquityReturnChart({
   overlays,
   onInspectDay,
   actionDays,
+  active = true,
 }: {
   data: ReturnChartRow[];
   overlays: OverlayItem[];
   onInspectDay?: (day: string) => void;
   actionDays?: string[];
+  active?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const dateRef = useRef<HTMLSpanElement>(null);
@@ -72,8 +74,11 @@ export default function EquityReturnChart({
   const hadStrategyRef = useRef(false);
   const dataRef = useRef(data);
   const overlaysRef = useRef(overlays);
+  const activeRef = useRef(active);
+  const layoutRef = useRef<(width: number, height: number) => void>(() => {});
   dataRef.current = data;
   overlaysRef.current = overlays;
+  activeRef.current = active;
 
   const paintHud = (row?: ReturnChartRow) => {
     if (!row) return;
@@ -113,6 +118,8 @@ export default function EquityReturnChart({
     const chart = chartRef.current;
     const strategySeries = strategySeriesRef.current;
     if (!chart || !strategySeries) return;
+    const host = hostRef.current;
+    if (!activeRef.current || !host || host.clientWidth < 160 || host.clientHeight < 80) return;
     const nextData = dataRef.current;
     const nextOverlays = overlaysRef.current;
 
@@ -331,6 +338,7 @@ export default function EquityReturnChart({
       layout(host.clientWidth, host.clientHeight);
     }, { threshold: 0.01 });
     visible.observe(host);
+    layoutRef.current = layout;
     layout(host.clientWidth, host.clientHeight);
     return () => {
       observer.disconnect();
@@ -352,6 +360,13 @@ export default function EquityReturnChart({
   useEffect(() => {
     applySeries();
   }, [data, overlays]);
+
+  useEffect(() => {
+    activeRef.current = active;
+    const host = hostRef.current;
+    if (!active || !host) return;
+    layoutRef.current(host.clientWidth, host.clientHeight);
+  }, [active]);
 
   useEffect(() => {
     const series = strategySeriesRef.current;

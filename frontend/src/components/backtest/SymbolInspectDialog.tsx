@@ -17,6 +17,7 @@ export default function SymbolInspectDialog({
   orders,
   rebalances = [],
   seedPrices,
+  loadPrices,
   focusDate,
   onClose,
 }: {
@@ -27,6 +28,7 @@ export default function SymbolInspectDialog({
   orders: Record<string, unknown>[];
   rebalances?: RebalanceEvent[];
   seedPrices: PricePoint[];
+  loadPrices?: (code: string, startTime: string, endTime: string) => Promise<PricePoint[]>;
   focusDate?: string | null;
   onClose: () => void;
 }) {
@@ -50,11 +52,14 @@ export default function SymbolInspectDialog({
     setError(null);
     setLoading(seedPrices.length === 0);
     let cancelled = false;
-    api
-      .getBars([code], startTime, endTime)
-      .then((payload) => {
+    const fetchPrices = loadPrices
+      ? loadPrices(code, startTime, endTime)
+      : api.getBars([code], startTime, endTime).then(
+          (payload) => payload.items.find((item) => item.code === code)?.series ?? [],
+        );
+    fetchPrices
+      .then((series) => {
         if (cancelled) return;
-        const series = payload.items.find((item) => item.code === code)?.series ?? [];
         if (series.length) setPrices(series);
       })
       .catch((err: unknown) => {
@@ -68,7 +73,7 @@ export default function SymbolInspectDialog({
     return () => {
       cancelled = true;
     };
-  }, [code, seedPrices, startTime, endTime]);
+  }, [code, seedPrices, startTime, endTime, loadPrices]);
 
   const candles = useMemo(() => buildCandles(code, prices, orders, rebalances), [code, prices, orders, rebalances]);
   const returns = useMemo(() => symbolStrategyPnl(code, orders, prices), [code, orders, prices]);

@@ -52,3 +52,14 @@ export function shouldFetchLiveRun(detail: RunDetail | null, selectedId: string 
   if (!detail || detail.id !== selectedId) return true;
   return isLiveStatus(detail.status);
 }
+
+export type LivePollState = {
+  cancelled: boolean;
+  currentStatus?: string | null;
+  hasLiveItems: boolean;
+};
+
+export function shouldContinueLivePoll(state: LivePollState): boolean {
+  if (state.cancelled) return false;
+  return isLiveStatus(state.currentStatus) || state.hasLiveItems;
+}

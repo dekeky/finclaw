@@ -132,7 +132,7 @@ func (fr *FinClawRouter) fquantAddr() string {
 }
 
 func (fr *FinClawRouter) strategyRouter() {
-	strategyRouter := agentruntime.NewStrategyRouter(fr.r, auth.AuthMiddleware(fr.authStore), fr.fquantAddr())
+	strategyRouter := agentruntime.NewStrategyRouter(fr.r, auth.AuthMiddleware(fr.authStore), fr.fquantAddr(), fr.authStore)
 	strategyRouter.ConfigRouter()
 }
 

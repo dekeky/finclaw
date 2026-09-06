@@ -8,7 +8,20 @@ import (
 
 	"github.com/finclaw/internal/auth"
 	"github.com/finclaw/pkg/agent/picoclaw"
+	"github.com/gin-gonic/gin"
 )
+
+// PublicShareURL builds the absolute public share URL from the request host.
+func PublicShareURL(c *gin.Context, token string) string {
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+	if forwarded := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")); forwarded != "" {
+		scheme = strings.Split(forwarded, ",")[0]
+	}
+	return fmt.Sprintf("%s://%s/share/%s", scheme, c.Request.Host, token)
+}
 
 // ValidateShareAsset rejects directory targets; only files may be shared.
 func ValidateShareAsset(workspace, kind, path, source, skillDir string) error {

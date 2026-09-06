@@ -10,7 +10,7 @@ func migrate(db *gorm.DB) error {
 	if err := migrateUsersSchema(db); err != nil {
 		return err
 	}
-	return db.AutoMigrate(&EmailVerificationCode{}, &AssetShare{}, &StrategyLibraryEntry{})
+	return db.AutoMigrate(&EmailVerificationCode{}, &AssetShare{}, &StrategyLibraryEntry{}, &StrategyShare{})
 }
 
 func migrateUsersSchema(db *gorm.DB) error {

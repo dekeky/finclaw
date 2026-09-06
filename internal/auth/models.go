@@ -54,3 +54,17 @@ type StrategyLibraryEntry struct {
 }
 
 func (StrategyLibraryEntry) TableName() string { return "strategy_library_entries" }
+
+// StrategyShare is a public snapshot of a strategy and optional backtest runs.
+type StrategyShare struct {
+	Token        string    `gorm:"primaryKey;size:64" json:"token"`
+	UserID       string    `gorm:"index;not null;size:64" json:"user_id"`
+	StrategyName string    `gorm:"column:strategy_name;not null;size:128" json:"strategy_name"`
+	Title        string    `gorm:"not null;size:128" json:"title"`
+	Platform     string    `gorm:"not null;size:32" json:"platform"`
+	Script       string    `gorm:"type:text;not null" json:"script"`
+	RunsJSON     string    `gorm:"column:runs_json;type:text;not null;default:'[]'" json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+func (StrategyShare) TableName() string { return "strategy_shares" }

@@ -9,6 +9,7 @@ import {
   IconPencil,
   IconPlayerPlay,
   IconPlus,
+  IconLink,
   IconShare2,
   IconSparkles,
 } from '@tabler/icons-react';
@@ -18,6 +19,7 @@ import { PanelResizeHandle } from '@/components/PanelResizeHandle';
 import { StrategyChatPanel } from '@/components/StrategyChatPanel';
 import { StrategyCodeEditor } from '@/components/StrategyCodeEditor';
 import { StrategyCreateDialog } from '@/components/StrategyCreateDialog';
+import { StrategyLinkShareDialog } from '@/components/StrategyLinkShareDialog';
 import { StrategyShareDialog } from '@/components/StrategyShareDialog';
 import { StrategyPlatformBadge } from '@/components/StrategyPlatformField';
 import { StrategyGallerySkeleton } from '@/components/strategy/StrategyGallerySkeleton';
@@ -131,6 +133,7 @@ export default function BacktestPage() {
   const [shareBusy, setShareBusy] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
   const [shareSuccess, setShareSuccess] = useState(false);
+  const [linkShareOpen, setLinkShareOpen] = useState(false);
   const [strategyPane, setStrategyPane] = useState<'code' | 'runs'>('code');
   const [runsReady, setRunsReady] = useState(false);
   const [runBusy, setRunBusy] = useState(false);
@@ -306,7 +309,6 @@ export default function BacktestPage() {
         summary: shareSummary.trim() || undefined,
       });
       setShareSuccess(true);
-      toast.success('已发布到策略市场');
     } catch (err) {
       setShareError(err instanceof Error ? err.message : '发布失败');
     } finally {
@@ -340,7 +342,6 @@ export default function BacktestPage() {
       setFocusRunId(null);
       setSelectedName(detail.name);
       await refresh();
-      toast.success('策略已创建');
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : '创建失败');
     } finally {
@@ -436,7 +437,6 @@ export default function BacktestPage() {
       setFocusRunId(run.id);
       setRunsRefreshKey((value) => value + 1);
       setStrategyPane('runs');
-      toast.success('已提交回测');
     } catch (err) {
       const message = err instanceof Error ? err.message : '提交回测失败';
       setSubmitError(message);
@@ -642,6 +642,34 @@ export default function BacktestPage() {
               )}
               <span className="text-xs text-muted-foreground">.py</span>
             </div>
+            <Button
+              type="button"
+              size="xs"
+              className={cn('ml-0.5 shrink-0 gap-1', PRIMARY_BUTTON_CLASS)}
+              disabled={dirty || detailLoading}
+              title={dirty ? '请先保存后再发布' : '发布整个策略到策略市场'}
+              aria-label="发布至市场"
+              onClick={openShare}
+            >
+              <IconShare2 className="size-3.5" stroke={1.75} />
+              发布至市场
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              className="ml-0.5 shrink-0 gap-1"
+              disabled={detailLoading}
+              title="生成无需登录即可查看的分享链接"
+              aria-label="分享策略"
+              onClick={() => {
+                if (!requireAuth() || !selectedName) return;
+                setLinkShareOpen(true);
+              }}
+            >
+              <IconLink className="size-3.5" stroke={1.75} />
+              分享
+            </Button>
           </div>
         ) : null}
         <div className="ml-auto">
@@ -811,17 +839,6 @@ export default function BacktestPage() {
                     </Button>
                     <Button
                       type="button"
-                      size="xs"
-                      className={cn('gap-1', PRIMARY_BUTTON_CLASS)}
-                      disabled={dirty || detailLoading}
-                      title={dirty ? '请先保存后再分享' : '分享到策略市场'}
-                      onClick={openShare}
-                    >
-                      <IconShare2 className="size-3.5" stroke={1.75} />
-                      分享
-                    </Button>
-                    <Button
-                      type="button"
                       variant="ghost"
                       size="xs"
                       disabled={!dirty || submitting || detailLoading}
@@ -888,6 +905,7 @@ export default function BacktestPage() {
                       strategyName={selectedName}
                       refreshKey={runsRefreshKey}
                       focusRunId={focusRunId}
+                      active={strategyPane === 'runs'}
                     />
                   </div>
                 ) : null}
@@ -966,6 +984,11 @@ export default function BacktestPage() {
         success={shareSuccess}
         onSubmit={handleShareSubmit}
         onCancel={resetShareForm}
+      />
+      <StrategyLinkShareDialog
+        open={linkShareOpen}
+        onOpenChange={setLinkShareOpen}
+        strategyName={selectedName ?? ''}
       />
       {confirmDialog}
     </div>

@@ -59,6 +59,51 @@ func (s *Store) GetAssetShare(token string) (*AssetShare, error) {
 	return &share, nil
 }
 
+// CreateStrategyShare stores a public snapshot of a strategy and selected runs.
+func (s *Store) CreateStrategyShare(share *StrategyShare) (*StrategyShare, error) {
+	if share == nil {
+		return nil, fmt.Errorf("share is required")
+	}
+	share.UserID = strings.TrimSpace(share.UserID)
+	share.StrategyName = strings.TrimSpace(share.StrategyName)
+	share.Title = strings.TrimSpace(share.Title)
+	share.Platform = strings.TrimSpace(share.Platform)
+	if share.UserID == "" || share.StrategyName == "" {
+		return nil, fmt.Errorf("user_id and strategy_name are required")
+	}
+	if share.Title == "" {
+		share.Title = share.StrategyName
+	}
+	if strings.TrimSpace(share.RunsJSON) == "" {
+		share.RunsJSON = "[]"
+	}
+	token, err := newShareToken()
+	if err != nil {
+		return nil, err
+	}
+	share.Token = token
+	if share.CreatedAt.IsZero() {
+		share.CreatedAt = time.Now()
+	}
+	if err := s.db.Create(share).Error; err != nil {
+		return nil, fmt.Errorf("create strategy share: %w", err)
+	}
+	return share, nil
+}
+
+// GetStrategyShare returns a strategy snapshot share by token.
+func (s *Store) GetStrategyShare(token string) (*StrategyShare, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, fmt.Errorf("token is required")
+	}
+	var share StrategyShare
+	if err := s.db.Where("token = ?", token).First(&share).Error; err != nil {
+		return nil, fmt.Errorf("share not found")
+	}
+	return &share, nil
+}
+
 func newShareToken() (string, error) {
 	buf := make([]byte, 24)
 	if _, err := rand.Read(buf); err != nil {

@@ -60,6 +60,17 @@ export interface InstallLibraryEntryRequest {
   name: string;
 }
 
+export interface GenerateStrategySummaryRequest {
+  strategy_name: string;
+  prompt?: string;
+  current_summary?: string;
+  title?: string;
+}
+
+export interface GenerateStrategySummaryBody {
+  summary: string;
+}
+
 /** GET /strategy-library — list shared strategies. */
 export async function listStrategyLibrary(search?: string): Promise<StrategyLibrarySummary[]> {
   const qs = search?.trim() ? `?search=${encodeURIComponent(search.trim())}` : '';
@@ -96,6 +107,24 @@ export async function installStrategyFromLibrary(id: string, req: InstallLibrary
     body: JSON.stringify(req),
   });
   const body = await parseGinx<StrategyDetail | null>(res);
+  if (!body.body) throw new Error('empty body');
+  return body.body;
+}
+
+/** POST /agents/:name/strategy-summary/generate —— 用当前 Agent 模型润色策略市场简介。 */
+export async function generateStrategyLibrarySummary(
+  agentName: string,
+  req: GenerateStrategySummaryRequest,
+): Promise<GenerateStrategySummaryBody> {
+  const res = await fetch(
+    `/api/v1/agents/${encodeURIComponent(agentName)}/strategy-summary/generate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(req),
+    },
+  );
+  const body = await parseGinx<GenerateStrategySummaryBody | null>(res);
   if (!body.body) throw new Error('empty body');
   return body.body;
 }

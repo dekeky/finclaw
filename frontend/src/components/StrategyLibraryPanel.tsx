@@ -93,7 +93,6 @@ function StrategyLibraryInstallDialog({
     try {
       const created = await installStrategyFromLibrary(entry.id, { name: installName.trim() });
       onOpenChange(false);
-      toast.success(`策略「${created.name}」已创建`);
       onInstalled(created.name);
     } catch (err) {
       setInstallError(err instanceof Error ? err.message : String(err));
@@ -401,7 +400,6 @@ export function StrategyLibraryPanel({
     try {
       const created = await installStrategyFromLibrary(selected.id, { name: installName.trim() });
       setInstallOpen(false);
-      toast.success(`策略「${created.name}」已创建`);
       onInstalled(created.name);
     } catch (err) {
       setInstallError(err instanceof Error ? err.message : String(err));
@@ -487,7 +485,7 @@ export function StrategyLibraryPanel({
             </>
           ) : (
             <p className={cn('text-muted-foreground', isCards ? 'text-sm' : 'text-sm')}>
-              策略市场暂无内容，选择策略后点击「分享」即可发布到这里。
+              策略市场暂无内容，选择策略后点击「发布至市场」即可发布到这里。
             </p>
           )}
         </div>

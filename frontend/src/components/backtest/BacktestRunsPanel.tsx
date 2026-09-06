@@ -30,7 +30,13 @@ import {
 } from '@/lib/panelWidths';
 import { useAuth } from '@/state/auth';
 import { toast } from 'sonner';
-import { isLiveStatus, mergeLiveDetail, sameLiveSnapshot, shouldFetchLiveRun } from './liveRun';
+import {
+  isLiveStatus,
+  mergeLiveDetail,
+  sameLiveSnapshot,
+  shouldContinueLivePoll,
+  shouldFetchLiveRun,
+} from './liveRun';
 import './fquant-ui.css';
 
 function patchListItemFromDetail(row: RunListItem, detail: RunDetail): RunListItem {
@@ -144,10 +150,12 @@ export function BacktestRunsPanel({
   strategyName,
   refreshKey,
   focusRunId,
+  active = true,
 }: {
   strategyName: string;
   refreshKey: number;
   focusRunId: string | null;
+  active?: boolean;
 }) {
   const { user } = useAuth();
   const { confirm, dialog: confirmDialog } = useConfirm();
@@ -172,6 +180,8 @@ export function BacktestRunsPanel({
   const strategyNameRef = useRef(strategyName);
   strategyNameRef.current = strategyName;
   const live = isLiveStatus(current?.status) || items.some((item) => isLiveStatus(item.status));
+  const liveRef = useRef(live);
+  liveRef.current = live;
 
   useEffect(() => {
     if (focusRunId) setSelectedId(focusRunId);
@@ -263,7 +273,7 @@ export function BacktestRunsPanel({
       const started = Date.now();
       try {
         const targetId = selectedIdRef.current;
-        if (targetId && isLiveStatus(currentRef.current?.status)) {
+        if (targetId && shouldFetchLiveRun(currentRef.current, targetId)) {
           const detail = await getFquantBacktestRun(targetId);
           if (cancelled) return;
           if (!sameLiveSnapshot(currentRef.current, detail)) {
@@ -311,7 +321,13 @@ export function BacktestRunsPanel({
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       } finally {
-        if (!cancelled && isLiveStatus(currentRef.current?.status)) {
+        if (
+          shouldContinueLivePoll({
+            cancelled,
+            currentStatus: currentRef.current?.status,
+            hasLiveItems: liveRef.current,
+          })
+        ) {
           timer = window.setTimeout(tick, Math.max(0, 1000 - (Date.now() - started)));
         }
       }
@@ -531,7 +547,7 @@ export function BacktestRunsPanel({
         <PanelResizeHandle {...runResize.handleProps} />
       </div>
       {current ? (
-        <RunReport key={current.id} detail={current} />
+        <RunReport key={current.id} detail={current} active={active} />
       ) : (
         <div className="report empty min-w-0 flex-1">选择一条回测查看报告。</div>
       )}

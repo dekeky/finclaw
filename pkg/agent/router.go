@@ -58,6 +58,7 @@ func (ar *AgentManagerRouter) ConfigRouter() {
 	group.PATCH("/:name/profile", ar.patchAgentProfile)
 	group.PATCH("/:name/llm-settings", ar.patchAgentLLMSettings)
 	group.POST("/:name/market-summary/generate", ar.generateMarketSummary)
+	group.POST("/:name/strategy-summary/generate", ar.generateStrategySummary)
 	group.GET("/:name", ar.getAgent)
 	group.GET("", ar.listAgents)
 	group.POST("", ar.createAgent)
@@ -1232,6 +1233,55 @@ func (ar *AgentManagerRouter) generateMarketSummary(c *gin.Context) {
 	ginx.NewRender(c).Data(generateMarketSummaryResp{Summary: summary})
 }
 
+type generateStrategySummaryReq struct {
+	StrategyName   string `json:"strategy_name" binding:"required"`
+	Prompt         string `json:"prompt,omitempty"`
+	CurrentSummary string `json:"current_summary,omitempty"`
+	Title          string `json:"title,omitempty"`
+}
+
+// POST /api/v1/agents/:name/strategy-summary/generate — AI draft or polish a strategy-library listing summary.
+func (ar *AgentManagerRouter) generateStrategySummary(c *gin.Context) {
+	userID := getUserID(c)
+	name := c.Param("name")
+	cfg, err := ar.resolveAgentConfig(userID, name)
+	if err != nil {
+		ginx.NewRender(c, http.StatusNotFound).Err(err)
+		return
+	}
+	var req generateStrategySummaryReq
+	ginx.PanicIfNotNil(c.ShouldBindJSON(&req))
+
+	strategyName := strings.TrimSpace(req.StrategyName)
+	if strategyName == "" {
+		ginx.NewRender(c, http.StatusBadRequest).Err(fmt.Errorf("strategy name is required"))
+		return
+	}
+	detail, err := NewStrategyStore(userID).Get(strategyName)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		ginx.NewRender(c, status).Err(err)
+		return
+	}
+
+	summary, err := picoclaw.GenerateStrategyLibrarySummary(c.Request.Context(), cfg, picoclaw.GenerateStrategyLibrarySummaryRequest{
+		Prompt:         req.Prompt,
+		CurrentSummary: req.CurrentSummary,
+		Title:          req.Title,
+		StrategyName:   detail.Name,
+		Platform:       detail.Platform,
+		Script:         detail.Script,
+	})
+	if err != nil {
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	ginx.NewRender(c).Data(generateMarketSummaryResp{Summary: summary})
+}
+
 type docListResp struct {
 	Files []DocFileEntry `json:"files"`
 }
@@ -1622,16 +1672,8 @@ func (ar *AgentManagerRouter) createAssetShare(c *gin.Context) {
 	ginx.NewRender(c, http.StatusCreated).Data(createAssetShareResp{Token: share.Token, URL: url})
 }
 
-// shareURL builds the absolute public share URL from the request host.
 func (ar *AgentManagerRouter) shareURL(c *gin.Context, token string) string {
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	if forwarded := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")); forwarded != "" {
-		scheme = strings.Split(forwarded, ",")[0]
-	}
-	return fmt.Sprintf("%s://%s/share/%s", scheme, c.Request.Host, token)
+	return PublicShareURL(c, token)
 }
 
 // Ensure config import is used (for FinclawHomePath in non-user contexts).

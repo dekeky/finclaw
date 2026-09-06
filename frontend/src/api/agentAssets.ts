@@ -1,5 +1,6 @@
 import type { GinxResponse } from '../types/rss';
 import { getToken } from './auth';
+import type { PricePoint } from './backtest';
 
 const AGENTS_API = '/api/v1/agents';
 
@@ -55,13 +56,16 @@ export async function createAccountDocShare(path: string): Promise<CreateShareRe
 
 export interface PublicShareMeta {
   token: string;
-  kind: 'doc' | 'skill';
+  kind: 'doc' | 'skill' | 'strategy';
   name: string;
   path?: string;
   is_dir: boolean;
   size?: number;
   content?: string;
   agent_name?: string;
+  platform?: string;
+  script?: string;
+  runs?: unknown[];
 }
 
 /** GET /api/public/share/:token?format=json —— 无需登录读取分享内容元数据。 */
@@ -75,4 +79,25 @@ export async function fetchPublicShare(token: string): Promise<PublicShareMeta> 
 
 export function publicShareDownloadUrl(token: string): string {
   return `/api/public/share/${encodeURIComponent(token)}?download=1`;
+}
+
+/** GET /api/public/share/:token/bars —— 分享页个股 K 线，无需登录。 */
+export async function fetchPublicShareBars(
+  token: string,
+  code: string,
+  startTime: string,
+  endTime: string,
+): Promise<PricePoint[]> {
+  const params = new URLSearchParams({
+    code,
+    start_time: startTime,
+    end_time: endTime,
+  });
+  const res = await fetch(`/api/public/share/${encodeURIComponent(token)}/bars?${params}`);
+  const json = (await res.json()) as GinxResponse<{ items?: { code: string; series?: PricePoint[] }[] } | null> & {
+    error?: string;
+  };
+  if (!res.ok) throw new Error(json.errMsg || json.error || `HTTP ${res.status}`);
+  const items = json.body?.items ?? [];
+  return items.find((item) => item.code === code)?.series ?? items[0]?.series ?? [];
 }
