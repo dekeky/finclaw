@@ -26,7 +26,7 @@ export interface CreateShareResult {
   url: string;
 }
 
-/** POST /agents/:name/share —— 创建公开分享链接。 */
+/** POST /agents/:name/share —— 创建公开分享链接（skills 等 per-agent 资产）。 */
 export async function createAgentAssetShare(
   name: string,
   body: CreateShareBody,
@@ -35,6 +35,18 @@ export async function createAgentAssetShare(
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(body),
+  });
+  const json = (await res.json()) as GinxResponse<CreateShareResult | null>;
+  if (!res.ok) throw new Error(json.errMsg || `HTTP ${res.status}`);
+  return parseGinx(json);
+}
+
+/** POST /account/docs/share —— 为账户共享文档创建公开分享链接。 */
+export async function createAccountDocShare(path: string): Promise<CreateShareResult> {
+  const res = await fetch('/api/v1/account/docs/share', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ path }),
   });
   const json = (await res.json()) as GinxResponse<CreateShareResult | null>;
   if (!res.ok) throw new Error(json.errMsg || `HTTP ${res.status}`);

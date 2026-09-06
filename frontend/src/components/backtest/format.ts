@@ -255,11 +255,16 @@ export function formatDuration(seconds?: number | null): string {
   return `${secs}秒`;
 }
 
-export function elapsedSince(from?: string | null, now = Date.now()): number | null {
-  if (!from) return null;
+export function elapsedBetween(from?: string | null, to?: string | number | null): number | null {
+  if (!from || to == null || to === '') return null;
   const start = new Date(from).getTime();
-  if (Number.isNaN(start)) return null;
-  return Math.max(0, Math.round((now - start) / 1000));
+  const end = typeof to === 'number' ? to : new Date(to).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end)) return null;
+  return Math.max(0, Math.round((end - start) / 1000));
+}
+
+export function elapsedSince(from?: string | null, now = Date.now()): number | null {
+  return elapsedBetween(from, now);
 }
 
 export function dayKey(value?: string | number | null): string {

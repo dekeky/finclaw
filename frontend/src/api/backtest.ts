@@ -123,6 +123,7 @@ export type BacktestResult = {
   orders: Record<string, unknown>[];
   prices?: PricePoint[];
   benchmarks?: BenchmarkSeries[];
+  action_days?: string[];
   positions?: {
     symbol: string;
     quantity?: number | null;
@@ -201,10 +202,34 @@ export const api = {
       method: 'DELETE',
     }),
 
-  getRunBlotter: (id: string) =>
-    request<{ orders: Record<string, unknown>[]; trades: Record<string, unknown>[] }>(
-      `${BACKTEST_API}/runs/${encodeURIComponent(id)}/blotter`,
-    ),
+  getRunBlotter: (id: string, query?: { page?: number; page_size?: number; from?: string; to?: string; symbol?: string; fill_day?: string; days_only?: boolean; full?: boolean; fills?: boolean }) => {
+    const params = new URLSearchParams();
+    if (query?.page) params.set('page', String(query.page));
+    if (query?.page_size) params.set('page_size', String(query.page_size));
+    if (query?.from) params.set('from', query.from);
+    if (query?.to) params.set('to', query.to);
+    if (query?.symbol) params.set('symbol', query.symbol);
+    if (query?.fill_day) params.set('fill_day', query.fill_day);
+    if (query?.days_only) params.set('days_only', '1');
+    if (query?.full) params.set('full', '1');
+    if (query?.fills) params.set('fills', '1');
+    const suffix = params.toString();
+    return request<{
+      orders: Record<string, unknown>[];
+      trades: Record<string, unknown>[];
+      rebalances?: Record<string, unknown>[];
+      rejects?: Record<string, unknown>[];
+      logs?: Record<string, unknown>[];
+      indicators?: { points?: Record<string, unknown>[]; truncated?: boolean };
+      page?: number;
+      page_size?: number;
+      total?: number;
+      min_time?: string;
+      max_time?: string;
+      symbols?: string[];
+      action_days?: string[];
+    }>(`${BACKTEST_API}/runs/${encodeURIComponent(id)}/blotter${suffix ? `?${suffix}` : ''}`);
+  },
 
   getRunPositions: (id: string, query?: { date?: string; symbol?: string }) => {
     const params = new URLSearchParams();
@@ -262,6 +287,28 @@ export async function submitBacktestRun(req: SubmitRunRequest): Promise<{ id: st
 export async function listBacktestRuns(): Promise<RunListItem[]> {
   const body = await api.listRuns();
   return body.items ?? [];
+}
+
+export type BacktestRuntime = {
+  fquant_addr: string;
+  username: string;
+};
+
+let runtimePromise: Promise<BacktestRuntime> | null = null;
+
+export function getBacktestRuntime(): Promise<BacktestRuntime> {
+  if (!runtimePromise) {
+    runtimePromise = request<BacktestRuntime>(`${BACKTEST_API}/runtime`);
+  }
+  return runtimePromise;
+}
+
+export function resetBacktestRuntime() {
+  runtimePromise = null;
+}
+
+export async function getFquantBacktestRun(id: string): Promise<RunDetail> {
+  return request<RunDetail>(`${BACKTEST_API}/runs/${encodeURIComponent(id)}?live=1`);
 }
 
 export async function getBacktestRun(id: string): Promise<RunDetail> {

@@ -109,6 +109,16 @@ export function defaultScriptForPlatform(platform: StrategyPlatform): string {
   return STRATEGY_PLATFORMS[platform].defaultScript;
 }
 
+/** Derive ~/.finclaw/{account}/backtests/{strategy} from a strategies/{name}.py path. */
+export function strategyBacktestsDir(strategyPath?: string | null): string | undefined {
+  const raw = strategyPath?.trim();
+  if (!raw) return undefined;
+  const sep = raw.includes('\\') ? '\\' : '/';
+  const replaced = raw.replace(/[\\/]strategies[\\/]([^\\/]+)\.py$/i, `${sep}backtests${sep}$1`);
+  if (replaced === raw) return undefined;
+  return replaced;
+}
+
 /** Build the user message sent to Agent with platform context and strategy file path. */
 export function buildStrategyAgentPrompt(
   platform: StrategyPlatform,
@@ -131,6 +141,14 @@ export function buildStrategyAgentPrompt(
       `【策略文件】${strategyPath}`,
       '请直接读取并修改上述策略文件，将改动写入文件；不要只在对话中贴出完整代码。',
     );
+    const resultsDir = platform === 'finclaw' ? strategyBacktestsDir(strategyPath) : undefined;
+    if (resultsDir) {
+      lines.push(
+        '',
+        `【回测结果目录】${resultsDir}`,
+        '该策略的回测结果以本地文件保存在上述目录：每个回测名称一个子目录，内含 summary.md（摘要与关键指标）、result.json（完整结果）、request.json、source.py，以及 blotter.json（成交明细，若已拉取）。分析回测请先 read_file 阅读最新的 summary.md，需要细节再读 JSON；不要凭记忆编造指标。',
+      );
+    }
   }
 
   lines.push('', `用户需求：${trimmed}`);

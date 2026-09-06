@@ -19,6 +19,12 @@ import (
 const (
 	defaultMaxToolIterations = 1024
 	defaultContextWindow     = 256 * 1024 // 256k tokens
+
+	// accountDocsDirName matches agentruntime.AccountDocsDirName. Kept in sync
+	// to avoid an import cycle between picoclaw and its parent agentruntime.
+	accountDocsDirName = "docs"
+	// accountBacktestsDirName matches agentruntime.AccountBacktestsDirName.
+	accountBacktestsDirName = "backtests"
 )
 
 func applyFinclawAgentDefaults(conf *picoclawconfig.Config) {
@@ -42,6 +48,8 @@ func LoadAgentByConfig(rootDir, agentName string) (*agent.AgentLoop, *bus.Messag
 	workspace := agentWorkspacePath(rootDir, agentName)
 	conf.Agents.Defaults.Workspace = workspace
 	applyStrategiesWhitelist(rootDir, conf)
+	applyAccountDocsWhitelist(rootDir, conf)
+	applyAccountBacktestsWhitelist(rootDir, conf)
 	if err := picoclawconfig.SaveConfig(configPath, conf); err != nil {
 		return nil, nil, fmt.Errorf("save agent config: %w", err)
 	}
@@ -86,6 +94,8 @@ func NewPicoclawAgent(rootDir string, msgBus *bus.MessageBus, modelConf *picocla
 		return nil, err
 	}
 	applyStrategiesWhitelist(rootDir, picoConf)
+	applyAccountDocsWhitelist(rootDir, picoConf)
+	applyAccountBacktestsWhitelist(rootDir, picoConf)
 	picoclawconfig.SaveConfig(agentConfigPath(rootDir, agentName), picoConf)
 
 	// picoConf 在此之后的改动不影响上面已创建的 provider（例如 HTTP request_timeout 须在 CreateProviderFromConfig 之前写入 modelConf）。
@@ -117,6 +127,8 @@ func SwitchAgentModel(loop *agent.AgentLoop, rootDir, agentName string, modelCon
 		return err
 	}
 	applyStrategiesWhitelist(rootDir, picoConf)
+	applyAccountDocsWhitelist(rootDir, picoConf)
+	applyAccountBacktestsWhitelist(rootDir, picoConf)
 	if err := picoclawconfig.SaveConfig(agentConfigPath(rootDir, agentName), picoConf); err != nil {
 		return fmt.Errorf("save agent config: %w", err)
 	}
@@ -204,7 +216,7 @@ func applyStrategiesWhitelist(agentHome string, conf *picoclawconfig.Config) {
 	}
 	dir := filepath.Join(agentHome, "strategies")
 	_ = os.MkdirAll(dir, 0o755)
-	pattern, err := strategiesAllowPathPattern(dir)
+	pattern, err := dirAllowPathPattern(dir)
 	if err != nil {
 		return
 	}
@@ -212,7 +224,40 @@ func applyStrategiesWhitelist(agentHome string, conf *picoclawconfig.Config) {
 	conf.Tools.AllowWritePaths = appendUniquePathPattern(conf.Tools.AllowWritePaths, pattern)
 }
 
-func strategiesAllowPathPattern(absDir string) (string, error) {
+// applyAccountDocsWhitelist lets every agent of the account read and write the
+// account-level shared docs directory (~/.finclaw/{account}/docs) via absolute
+// paths, so documents are no longer bound to a single agent workspace.
+func applyAccountDocsWhitelist(agentHome string, conf *picoclawconfig.Config) {
+	if conf == nil {
+		return
+	}
+	dir := filepath.Join(agentHome, accountDocsDirName)
+	_ = os.MkdirAll(dir, 0o755)
+	pattern, err := dirAllowPathPattern(dir)
+	if err != nil {
+		return
+	}
+	conf.Tools.AllowReadPaths = appendUniquePathPattern(conf.Tools.AllowReadPaths, pattern)
+	conf.Tools.AllowWritePaths = appendUniquePathPattern(conf.Tools.AllowWritePaths, pattern)
+}
+
+// applyAccountBacktestsWhitelist lets agents read local backtest result files
+// under ~/.finclaw/{account}/backtests so they can analyze runs with read_file.
+func applyAccountBacktestsWhitelist(agentHome string, conf *picoclawconfig.Config) {
+	if conf == nil {
+		return
+	}
+	dir := filepath.Join(agentHome, accountBacktestsDirName)
+	_ = os.MkdirAll(dir, 0o755)
+	pattern, err := dirAllowPathPattern(dir)
+	if err != nil {
+		return
+	}
+	conf.Tools.AllowReadPaths = appendUniquePathPattern(conf.Tools.AllowReadPaths, pattern)
+	conf.Tools.AllowWritePaths = appendUniquePathPattern(conf.Tools.AllowWritePaths, pattern)
+}
+
+func dirAllowPathPattern(absDir string) (string, error) {
 	clean, err := filepath.Abs(filepath.Clean(absDir))
 	if err != nil {
 		return "", err

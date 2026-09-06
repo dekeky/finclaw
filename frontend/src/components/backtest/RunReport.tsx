@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { api, type PositionSnapshot, type PricePoint, type RunDetail } from '@/api/backtest';
 import BenchmarkPicker, { type OverlayItem } from './BenchmarkPicker';
 import EquityReturnChart from './EquityReturnChart';
@@ -18,21 +18,39 @@ import { axisDays, cumulativePct, lastMapValue, toEquity } from './series';
 import { collectSymbolStats } from './symbolStats';
 import { closesToReturn } from './klineData';
 import SymbolInspectDialog from './SymbolInspectDialog';
-import { virtualWindow } from './VirtualList';
+import {
+  actionFillDay,
+  isSuccessfulAction,
+  type RebalanceEvent,
+  type RejectRow,
+  RebalancePane,
+} from './RebalanceTable';
 
 const EMPTY_PRICES: PricePoint[] = [];
 const HS300: OverlayItem = { code: '000300', name: '沪深300', kind: 'index' };
-const PNL_ROW_HEIGHT = 34;
+const PNL_PAGE_SIZE = 20;
 
 export function RunReport({ detail }: { detail: RunDetail }) {
   const [statsOpen, setStatsOpen] = useState(false);
   const [overlays, setOverlays] = useState<OverlayItem[]>([HS300]);
   const [overlayMaps, setOverlayMaps] = useState<Record<string, Map<string, number>>>({});
   const [inspectSymbol, setInspectSymbol] = useState<string | null>(null);
+  const [inspectFocusDate, setInspectFocusDate] = useState<string | null>(null);
   const [holdingsDate, setHoldingsDate] = useState<string | null>(null);
-  const [holdingRows, setHoldingRows] = useState<PositionSnapshot[]>([]);
+  const [holdingBook, setHoldingBook] = useState<PositionSnapshot[]>([]);
   const [orders, setOrders] = useState<Record<string, unknown>[]>([]);
   const [trades, setTrades] = useState<Record<string, unknown>[]>([]);
+  const [rebalances, setRebalances] = useState<RebalanceEvent[]>([]);
+  const [rejects, setRejects] = useState<RejectRow[]>([]);
+  const [fillOrders, setFillOrders] = useState<Record<string, unknown>[]>([]);
+  const [fillRebalances, setFillRebalances] = useState<RebalanceEvent[]>([]);
+  const [fillActionDays, setFillActionDays] = useState<string[]>([]);
+  const [fillsReady, setFillsReady] = useState(false);
+  const [holdingsLoading, setHoldingsLoading] = useState(false);
+  const [fillsLoading, setFillsLoading] = useState(false);
+  const [blotterLoading, setBlotterLoading] = useState(false);
+  const [blotterReady, setBlotterReady] = useState(false);
+  const [logPane, setLogPane] = useState(false);
   const [boundRunId, setBoundRunId] = useState(detail.id);
   if (detail.id !== boundRunId) {
     setBoundRunId(detail.id);
@@ -40,10 +58,22 @@ export function RunReport({ detail }: { detail: RunDetail }) {
     setOverlayMaps({});
     setStatsOpen(false);
     setInspectSymbol(null);
+    setInspectFocusDate(null);
     setHoldingsDate(null);
-    setHoldingRows([]);
+    setHoldingBook([]);
     setOrders([]);
     setTrades([]);
+    setRebalances([]);
+    setRejects([]);
+    setFillOrders([]);
+    setFillRebalances([]);
+    setFillActionDays([]);
+    setFillsReady(false);
+    setHoldingsLoading(false);
+    setFillsLoading(false);
+    setBlotterLoading(false);
+    setBlotterReady(false);
+    setLogPane(false);
   }
   const live = detail.status === 'queued' || detail.status === 'running';
   const hasResult = Boolean(detail.result);
@@ -54,38 +84,65 @@ export function RunReport({ detail }: { detail: RunDetail }) {
     return [...new Set((detail.result?.prices ?? []).map((point) => point.symbol))];
   }, [detail.request.symbols, detail.result?.prices]);
   const stats = useMemo(
-    () => collectSymbolStats(symbols, trades, orders, [], detail.result?.positions),
-    [symbols, trades, orders, detail.result?.positions],
+    () => collectSymbolStats(symbols, trades, blotterReady ? orders : fillOrders, [], detail.result?.positions),
+    [symbols, trades, blotterReady, orders, fillOrders, detail.result?.positions],
   );
   const [symbolNames, setSymbolNames] = useState<Record<string, string>>({});
-  const storedBenchmarks = detail.result?.benchmarks ?? [];
+  const storedBenchmarks = detail.result?.benchmarks;
 
   useEffect(() => {
     setStatsOpen(false);
     setInspectSymbol(null);
+    setInspectFocusDate(null);
     setHoldingsDate(null);
-    setHoldingRows([]);
+    setHoldingBook([]);
+    setOrders([]);
+    setTrades([]);
+    setRebalances([]);
+    setRejects([]);
+    setFillOrders([]);
+    setFillRebalances([]);
+    setFillActionDays([]);
+    setFillsReady(false);
+    setHoldingsLoading(false);
+    setFillsLoading(false);
+    setBlotterLoading(false);
+    setBlotterReady(false);
+    setLogPane(false);
   }, [detail.id]);
 
   useEffect(() => {
     if (detail.status !== 'succeeded' || !hasResult) {
-      setOrders([]);
+      setFillOrders([]);
+      setFillRebalances([]);
+      setFillActionDays([]);
+      setFillsReady(false);
+      setFillsLoading(false);
       setTrades([]);
       return;
     }
     let cancelled = false;
+    setFillsLoading(true);
     api
-      .getRunBlotter(detail.id)
+      .getRunBlotter(detail.id, { fills: true })
       .then((payload) => {
         if (cancelled) return;
-        setOrders(payload.orders);
-        setTrades(payload.trades);
+        setFillOrders(payload.orders || []);
+        setFillRebalances((payload.rebalances as RebalanceEvent[]) || []);
+        setFillActionDays(payload.action_days || []);
+        setTrades(payload.trades || []);
+        setFillsReady(true);
       })
       .catch(() => {
-        if (!cancelled) {
-          setOrders([]);
-          setTrades([]);
-        }
+        if (cancelled) return;
+        setFillOrders([]);
+        setFillRebalances([]);
+        setFillActionDays([]);
+        setTrades([]);
+        setFillsReady(true);
+      })
+      .finally(() => {
+        if (!cancelled) setFillsLoading(false);
       });
     return () => {
       cancelled = true;
@@ -93,23 +150,66 @@ export function RunReport({ detail }: { detail: RunDetail }) {
   }, [detail.id, detail.status, hasResult]);
 
   useEffect(() => {
-    if (!holdingsDate || detail.status !== 'succeeded') {
-      setHoldingRows([]);
+    if (detail.status !== 'succeeded' || !hasResult || !logPane || blotterReady) {
+      if (detail.status !== 'succeeded' || !hasResult) {
+        setOrders([]);
+        setRebalances([]);
+        setRejects([]);
+        setBlotterLoading(false);
+        setBlotterReady(false);
+      }
       return;
     }
     let cancelled = false;
+    setBlotterLoading(true);
     api
-      .getRunPositions(detail.id, { date: holdingsDate })
+      .getRunBlotter(detail.id, { full: true })
       .then((payload) => {
-        if (!cancelled) setHoldingRows(payload.items);
+        if (cancelled) return;
+        setOrders(payload.orders || []);
+        setTrades(payload.trades || []);
+        setRebalances((payload.rebalances as RebalanceEvent[]) || []);
+        setRejects((payload.rejects as RejectRow[]) || []);
+        setBlotterReady(true);
       })
       .catch(() => {
-        if (!cancelled) setHoldingRows([]);
+        if (cancelled) return;
+        setOrders([]);
+        setRebalances([]);
+        setRejects([]);
+        setBlotterReady(true);
+      })
+      .finally(() => {
+        if (!cancelled) setBlotterLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [detail.id, detail.status, holdingsDate]);
+  }, [detail.id, detail.status, hasResult, logPane, blotterReady]);
+
+  useEffect(() => {
+    if (detail.status !== 'succeeded' || !hasResult) {
+      setHoldingBook([]);
+      setHoldingsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setHoldingsLoading(true);
+    api
+      .getRunPositions(detail.id)
+      .then((payload) => {
+        if (!cancelled) setHoldingBook(payload.items);
+      })
+      .catch(() => {
+        if (!cancelled) setHoldingBook([]);
+      })
+      .finally(() => {
+        if (!cancelled) setHoldingsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [detail.id, detail.status, hasResult]);
 
   useEffect(() => {
     const codes = [...new Set([...symbols, ...overlays.map((item) => item.code)])];
@@ -150,7 +250,7 @@ export function RunReport({ detail }: { detail: RunDetail }) {
     const local: Record<string, Map<string, number>> = {};
     const remote: OverlayItem[] = [];
     for (const item of missing) {
-      const stored = storedBenchmarks.find((bench) => bench.code === item.code);
+      const stored = storedBenchmarks?.find((bench) => bench.code === item.code);
       if (stored) {
         local[item.code] = closesToReturn(stored.series);
         continue;
@@ -161,6 +261,7 @@ export function RunReport({ detail }: { detail: RunDetail }) {
       setOverlayMaps((prev) => ({ ...prev, ...local }));
     }
     if (!remote.length) return;
+    if (!detail.request.start_time || !detail.request.end_time) return;
 
     api
       .getBars(
@@ -186,14 +287,13 @@ export function RunReport({ detail }: { detail: RunDetail }) {
 
   const series = useMemo(() => {
     const strategy = cumulativePct(equity, Number(detail.request.initial_cash));
-    const overlayDayKeys = overlays.flatMap((item) => [...(overlayMaps[item.code]?.keys() ?? [])]);
+    const lastStrategy = equity.length ? equity[equity.length - 1].time : '';
     const axis = axisDays(
       detail.request.start_time,
       detail.request.end_time,
-      overlayDayKeys,
-      strategy.keys(),
+      live ? [] : overlays.flatMap((item) => [...(overlayMaps[item.code]?.keys() ?? [])]),
+      live ? [] : strategy.keys(),
     );
-    const lastStrategy = equity.length ? equity[equity.length - 1].time : '';
     const chart = axis.map((time) => {
       const row: Record<string, string | number | undefined> = { time };
       const strategyValue = strategy.get(time);
@@ -215,7 +315,8 @@ export function RunReport({ detail }: { detail: RunDetail }) {
     };
   }, [equity, overlays, overlayMaps, detail.request.initial_cash, detail.request.start_time, detail.request.end_time, live]);
 
-  function openSymbol(next: string) {
+  function openSymbol(next: string, focusDate?: string | null) {
+    setInspectFocusDate(focusDate ? dayKey(focusDate) : null);
     setInspectSymbol(next);
   }
 
@@ -223,6 +324,36 @@ export function RunReport({ detail }: { detail: RunDetail }) {
     const day = dayKey(next);
     if (day) setHoldingsDate(day);
   }
+
+  const datedRebalances = useMemo(
+    () =>
+      rebalances
+        .map((row) => {
+          const fillDay = actionFillDay(row, orders);
+          return fillDay && fillDay !== dayKey(row.time) ? { ...row, time: fillDay } : row;
+        })
+        .sort((left, right) => dayKey(left.time).localeCompare(dayKey(right.time))),
+    [orders, rebalances],
+  );
+  const chartActions = useMemo(
+    () =>
+      fillRebalances
+        .filter((row) => isSuccessfulAction(row, fillOrders))
+        .map((row) => {
+          const fillDay = actionFillDay(row, fillOrders);
+          return fillDay && fillDay !== dayKey(row.time) ? { ...row, time: fillDay } : row;
+        }),
+    [fillOrders, fillRebalances],
+  );
+  const dayActions = useMemo(
+    () => (holdingsDate ? chartActions.filter((row) => dayKey(row.time) === holdingsDate) : []),
+    [chartActions, holdingsDate],
+  );
+  const actionDays = fillsReady ? fillActionDays : [];
+  const holdingRows = useMemo(
+    () => (holdingsDate ? holdingBook.filter((row) => dayKey(row.time) === holdingsDate) : []),
+    [holdingBook, holdingsDate],
+  );
 
   const liveMessage = live
     ? equity.length
@@ -239,41 +370,53 @@ export function RunReport({ detail }: { detail: RunDetail }) {
       {pending ? <ReportSkeleton /> : null}
 
       {showFull || live ? (
-        <div className={`report-split ${statsOpen && showFull ? 'open' : ''}`}>
+        <div className="report-split">
           {showFull ? (
-            <div className="kpi-grid kpi-grid-6">
-              {HEAD_KPIS.map((spec) => {
-                const value = metrics[spec.key];
-                return (
-                  <div className="kpi" key={spec.key}>
-                    <div className="label">
-                      {spec.label}
-                      <Hint text={spec.hint} />
+            <div className={`report-head ${statsOpen ? 'open' : ''}`}>
+              <div className="kpi-grid kpi-grid-6">
+                {HEAD_KPIS.map((spec) => {
+                  const value = metrics[spec.key];
+                  return (
+                    <div className="kpi" key={spec.key}>
+                      <div className="label">
+                        {spec.label}
+                        <Hint text={spec.hint} />
+                      </div>
+                      <div className={`value ${metricClass(value, spec)}`}>{formatMetric(value, spec.kind)}</div>
                     </div>
-                    <div className={`value ${metricClass(value, spec)}`}>{formatMetric(value, spec.kind)}</div>
+                  );
+                })}
+              </div>
+              {!statsOpen ? (
+                <div className="report-side-btns">
+                  <button
+                    type="button"
+                    className="kpi-detail-btn"
+                    title="绩效详情"
+                    onClick={() => setStatsOpen(true)}
+                  >
+                    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                      <path fill="currentColor" d="M2 3.5h12v1.2H2zm0 4h12v1.2H2zm0 4h8v1.2H2z" />
+                    </svg>
+                    详情
+                  </button>
+                </div>
+              ) : (
+                <aside className="stats-pane">
+                  <div className="stats-pane-bar">
+                    <button type="button" className="stats-pane-close" onClick={() => setStatsOpen(false)} aria-label="关闭">
+                      ×
+                    </button>
                   </div>
-                );
-              })}
-            </div>
-          ) : null}
-          {showFull && !statsOpen ? (
-            <div className="report-side-btns">
-              <button
-                type="button"
-                className="kpi-detail-btn"
-                title="绩效详情"
-                onClick={() => setStatsOpen(true)}
-              >
-                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-                  <path fill="currentColor" d="M2 3.5h12v1.2H2zm0 4h12v1.2H2zm0 4h8v1.2H2z" />
-                </svg>
-                详情
-              </button>
+                  <StatsPane metrics={metrics} overlayReturns={series.overlayReturns} />
+                </aside>
+              )}
             </div>
           ) : null}
 
           <div className="report-rest">
             <PnlPane
+              key={detail.id}
               chart={series.chart}
               overlays={overlays}
               live={live}
@@ -289,6 +432,12 @@ export function RunReport({ detail }: { detail: RunDetail }) {
               onSelectSymbol={openSymbol}
               onInspectDay={showFull ? openHoldings : undefined}
               showBlotter={showFull}
+              rebalances={datedRebalances}
+              rejects={rejects}
+              orders={orders}
+              actionDays={actionDays}
+              logsLoading={logPane && blotterLoading && !blotterReady}
+              onOpenLogs={() => setLogPane(true)}
             />
           </div>
 
@@ -296,10 +445,14 @@ export function RunReport({ detail }: { detail: RunDetail }) {
             <PositionHoldingsDialog
               date={holdingsDate}
               rows={holdingRows}
+              loading={holdingsLoading && holdingRows.length === 0}
+              actionsLoading={fillsLoading && dayActions.length === 0}
               names={symbolNames}
+              actions={dayActions}
+              orders={fillOrders}
               closeOnEscape={!inspectSymbol}
               onClose={() => setHoldingsDate(null)}
-              onSelectSymbol={openSymbol}
+              onSelectSymbol={(code) => openSymbol(code, holdingsDate)}
             />
           ) : null}
 
@@ -309,21 +462,15 @@ export function RunReport({ detail }: { detail: RunDetail }) {
               name={formatSymbolLabel(inspectSymbol, symbolNames)}
               startTime={detail.request.start_time}
               endTime={detail.request.end_time}
-              orders={orders}
+              orders={blotterReady ? orders : fillOrders}
+              rebalances={blotterReady ? rebalances : fillRebalances}
               seedPrices={EMPTY_PRICES}
-              onClose={() => setInspectSymbol(null)}
+              focusDate={inspectFocusDate}
+              onClose={() => {
+                setInspectSymbol(null);
+                setInspectFocusDate(null);
+              }}
             />
-          ) : null}
-
-          {showFull && statsOpen ? (
-            <aside className="stats-pane">
-              <div className="stats-pane-bar">
-                <button type="button" className="stats-pane-close" onClick={() => setStatsOpen(false)} aria-label="关闭">
-                  ×
-                </button>
-              </div>
-              <StatsPane metrics={metrics} overlayReturns={series.overlayReturns} />
-            </aside>
           ) : null}
         </div>
       ) : null}
@@ -364,6 +511,12 @@ function PnlPane({
   onSelectSymbol,
   onInspectDay,
   showBlotter = true,
+  rebalances = [],
+  rejects = [],
+  orders = [],
+  actionDays = [],
+  logsLoading = false,
+  onOpenLogs,
 }: {
   chart: Record<string, string | number | undefined>[];
   overlays: OverlayItem[];
@@ -378,7 +531,14 @@ function PnlPane({
   onSelectSymbol: (symbol: string) => void;
   onInspectDay?: (day: string) => void;
   showBlotter?: boolean;
+  rebalances?: RebalanceEvent[];
+  rejects?: RejectRow[];
+  orders?: Record<string, unknown>[];
+  actionDays?: string[];
+  logsLoading?: boolean;
+  onOpenLogs?: () => void;
 }) {
+  const [pane, setPane] = useState<'pnl' | 'rebalance'>('pnl');
   return (
     <div className="bt-returns">
       <div className="chart-title">
@@ -390,21 +550,56 @@ function PnlPane({
       </div>
       {chart.length > 0 ? (
         <div className="chart chart-return">
-          <EquityReturnChart data={chart} overlays={overlays} onInspectDay={onInspectDay} />
+          <EquityReturnChart
+            data={chart}
+            overlays={overlays}
+            onInspectDay={onInspectDay}
+            actionDays={actionDays}
+          />
         </div>
       ) : live ? null : (
         <div className="empty muted">没有净值序列。</div>
       )}
       {showBlotter ? (
         <div className="pnl-table">
-          <SymbolPnlTable
-            stats={stats}
-            names={names}
-            initialCash={initialCash}
-            accountPnl={accountPnl}
-            accountReturnPct={accountReturnPct}
-            onSelectSymbol={onSelectSymbol}
-          />
+          <div className="analysis-tabs">
+            <button type="button" className={pane === 'pnl' ? 'active' : ''} onClick={() => setPane('pnl')}>
+              个股盈亏
+            </button>
+            <button
+              type="button"
+              className={pane === 'rebalance' ? 'active' : ''}
+              onClick={() => {
+                setPane('rebalance');
+                onOpenLogs?.();
+              }}
+            >
+              回测日志
+            </button>
+          </div>
+          {pane === 'pnl' ? (
+            <SymbolPnlTable
+              stats={stats}
+              names={names}
+              initialCash={initialCash}
+              accountPnl={accountPnl}
+              accountReturnPct={accountReturnPct}
+              onSelectSymbol={onSelectSymbol}
+            />
+          ) : null}
+          {pane === 'rebalance' ? (
+            logsLoading ? (
+              <div className="empty muted">正在加载回测日志…</div>
+            ) : (
+              <RebalancePane
+                rows={rebalances}
+                rejects={rejects}
+                orders={orders}
+                names={names}
+                onSelectSymbol={onSelectSymbol}
+              />
+            )
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -470,22 +665,17 @@ function SymbolPnlTable({
 }) {
   const [sortKey, setSortKey] = useState<PnlSortKey>('pnl');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  const [scrollTop, setScrollTop] = useState(0);
-  const [viewport, setViewport] = useState(PNL_ROW_HEIGHT * 12);
-  const scrollerRef = useRef<HTMLDivElement>(null);
+  const [page, setPage] = useState(0);
   const visible = useMemo(
     () => [...stats].sort((a, b) => compareSort(pnlSortValue(a, sortKey, names), pnlSortValue(b, sortKey, names), sortDir)),
     [stats, sortKey, sortDir, names],
   );
+  const totalPages = Math.max(1, Math.ceil(visible.length / PNL_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageRows = visible.slice(safePage * PNL_PAGE_SIZE, safePage * PNL_PAGE_SIZE + PNL_PAGE_SIZE);
   useEffect(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    const update = () => setViewport(el.clientHeight || PNL_ROW_HEIGHT * 12);
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [stats.length]);
+    setPage(0);
+  }, [sortKey, sortDir, stats.length]);
   if (stats.length === 0) return <div className="empty">没有个股数据。</div>;
   const net = stats.reduce((sum, item) => sum + item.pnl, 0);
   const trades = stats.reduce((sum, item) => sum + item.trades, 0);
@@ -513,44 +703,30 @@ function SymbolPnlTable({
   }
 
   return (
-    <div
-      className="table-wrap blotter virtual-blotter"
-      ref={scrollerRef}
-      onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
-    >
-      <table className="blotter-table">
-        <thead>
-          <tr>
-            {PNL_COLUMNS.map((col) => (
-              <th key={col.key} className={col.numeric ? 'num' : undefined}>
-                <span className="th-inner">
-                  <button type="button" className="sort-btn" onClick={() => toggleSort(col.key, col.numeric)}>
-                    {col.label}
-                    <span className={`sort-mark ${sortKey === col.key ? 'active' : ''}`}>
-                      {sortKey === col.key ? (sortDir === 'desc' ? '↓' : '↑') : '↕'}
-                    </span>
-                  </button>
-                  {col.hint ? <Hint text={col.hint} /> : null}
-                </span>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {(() => {
-            const { start, end } = virtualWindow(visible.length, scrollTop, viewport, PNL_ROW_HEIGHT);
-            const rows = [];
-            if (start > 0) {
-              rows.push(
-                <tr key="pad-top" className="virtual-pad">
-                  <td colSpan={PNL_COLUMNS.length} style={{ height: start * PNL_ROW_HEIGHT }} />
-                </tr>,
-              );
-            }
-            for (let index = start; index < end; index += 1) {
-              const item = visible[index];
+    <>
+      <div className="table-wrap blotter">
+        <table className="blotter-table">
+          <thead>
+            <tr>
+              {PNL_COLUMNS.map((col) => (
+                <th key={col.key} className={col.numeric ? 'num' : undefined}>
+                  <span className="th-inner">
+                    <button type="button" className="sort-btn" onClick={() => toggleSort(col.key, col.numeric)}>
+                      {col.label}
+                      <span className={`sort-mark ${sortKey === col.key ? 'active' : ''}`}>
+                        {sortKey === col.key ? (sortDir === 'desc' ? '↓' : '↑') : '↕'}
+                      </span>
+                    </button>
+                    {col.hint ? <Hint text={col.hint} /> : null}
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {pageRows.map((item) => {
               const winRate = item.trades ? item.wins / item.trades : null;
-              rows.push(
+              return (
                 <tr key={item.symbol}>
                   <td>
                     <button type="button" className="symbol-link" onClick={() => onSelectSymbol(item.symbol)}>
@@ -569,36 +745,54 @@ function SymbolPnlTable({
                   <td className="num">{formatMetric(item.transferFee, 'money')}</td>
                   <td className="num">{formatMetric(item.slippageCost, 'money')}</td>
                   <td className="num">{formatMetric(item.fills, 'integer')}</td>
-                </tr>,
+                </tr>
               );
-            }
-            if (end < visible.length) {
-              rows.push(
-                <tr key="pad-bottom" className="virtual-pad">
-                  <td colSpan={PNL_COLUMNS.length} style={{ height: (visible.length - end) * PNL_ROW_HEIGHT }} />
-                </tr>,
-              );
-            }
-            return rows;
-          })()}
-        </tbody>
-        <tfoot>
-          <tr>
-            <td>合计 {stats.length} 只</td>
-            <td className={`num ${signedClass(footerPnl, true)}`}>{formatMetric(footerPnl, 'money')}</td>
-            <td className={`num ${signedClass(netReturn, true)}`}>{formatMetric(netReturn, 'percent')}</td>
-            <td className="num">{trades ? formatMetric((wins / trades) * 100, 'percent') : '—'}</td>
-            <td className="num">{formatMetric(wins, 'integer')}</td>
-            <td className="num">{formatMetric(losses, 'integer')}</td>
-            <td className="num">{formatMetric(commissionFee, 'money')}</td>
-            <td className="num">{formatMetric(stampTax, 'money')}</td>
-            <td className="num">{formatMetric(transferFee, 'money')}</td>
-            <td className="num">{formatMetric(slippageCost, 'money')}</td>
-            <td className="num">{formatMetric(fills, 'integer')}</td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
+            })}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td>合计 {stats.length} 只</td>
+              <td className={`num ${signedClass(footerPnl, true)}`}>{formatMetric(footerPnl, 'money')}</td>
+              <td className={`num ${signedClass(netReturn, true)}`}>{formatMetric(netReturn, 'percent')}</td>
+              <td className="num">{trades ? formatMetric((wins / trades) * 100, 'percent') : '—'}</td>
+              <td className="num">{formatMetric(wins, 'integer')}</td>
+              <td className="num">{formatMetric(losses, 'integer')}</td>
+              <td className="num">{formatMetric(commissionFee, 'money')}</td>
+              <td className="num">{formatMetric(stampTax, 'money')}</td>
+              <td className="num">{formatMetric(transferFee, 'money')}</td>
+              <td className="num">{formatMetric(slippageCost, 'money')}</td>
+              <td className="num">{formatMetric(fills, 'integer')}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      {visible.length > PNL_PAGE_SIZE ? (
+        <div className="blotter-pager">
+          <span>共 {visible.length} 条</span>
+          <button type="button" disabled={safePage <= 0} onClick={() => setPage(safePage - 1)}>
+            上一页
+          </button>
+          <label>
+            第
+            <input
+              type="number"
+              min={1}
+              max={totalPages}
+              value={safePage + 1}
+              onChange={(event) => {
+                const next = Number(event.currentTarget.value);
+                if (!Number.isFinite(next)) return;
+                setPage(Math.min(totalPages, Math.max(1, Math.round(next))) - 1);
+              }}
+            />
+            / {totalPages} 页
+          </label>
+          <button type="button" disabled={safePage >= totalPages - 1} onClick={() => setPage(safePage + 1)}>
+            下一页
+          </button>
+        </div>
+      ) : null}
+    </>
   );
 }
 

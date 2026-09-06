@@ -14,11 +14,20 @@ import {
   type Time,
   createChart,
 } from 'lightweight-charts';
-import { type RangeSync, fullLogicalRange, isFullLogicalRange, sameLogicalRange } from './rangeSync';
+import { placeFocusLine } from './chartFocusLine';
+import {
+  type RangeSync,
+  focusedLogicalRange,
+  fullLogicalRange,
+  indexForDay,
+  isFullLogicalRange,
+  sameLogicalRange,
+} from './rangeSync';
 
 export type FillMark = {
   price: number;
   quantity: number;
+  reason?: string;
 };
 
 export type CandlePoint = {
@@ -59,12 +68,51 @@ function formatPrice(value: number): string {
   return value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 }
 
-function formatQty(value: number): string {
-  return Math.round(value).toLocaleString('zh-CN');
+function formatMarkPrice(value: number): string {
+  const digits = value >= 100 ? 2 : value >= 1 ? 2 : 3;
+  return value.toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
-function formatAmount(value: number): string {
-  return value.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+function formatMarkAmt(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 10000) {
+    const wan = abs / 10000;
+    const digits = wan >= 100 ? 0 : 1;
+    return `${value < 0 ? '-' : ''}${wan.toFixed(digits).replace(/\.0+$/, '')}万`;
+  }
+  return value.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+}
+
+function formatShareQty(value: number): string {
+  return Math.round(Math.abs(value)).toLocaleString('zh-CN');
+}
+
+function markerText(mark: FillMark, side: 'B' | 'S'): string {
+  const reason = mark.reason?.trim();
+  if (!reason) return side;
+  const text = reason.length > 18 ? `${reason.slice(0, 18)}…` : reason;
+  return `${side} ${text}`;
+}
+
+function paintFill(node: HTMLElement | null, side: 'buy' | 'sell', mark?: FillMark) {
+  if (!node) return;
+  node.replaceChildren();
+  if (!mark) {
+    node.hidden = true;
+    node.title = '';
+    return;
+  }
+  node.hidden = false;
+  node.className = `kline-hud-fill ${side}`;
+  const action = side === 'buy' ? '买入' : '卖出';
+  const price = document.createElement('b');
+  price.textContent = formatMarkPrice(mark.price);
+  const qty = document.createElement('b');
+  qty.textContent = formatShareQty(mark.quantity);
+  const amt = document.createElement('b');
+  amt.textContent = formatMarkAmt(mark.price * mark.quantity);
+  node.append(price, '价格', action, qty, '股，成交金额', amt);
+  node.title = mark.reason || `${formatMarkPrice(mark.price)}价格${action}${formatShareQty(mark.quantity)}股`;
 }
 
 function formatVolume(value: number): string {
@@ -114,13 +162,17 @@ export default function KLineChart({
   height,
   rangeSync,
   timeAxis = true,
+  focusDate,
 }: {
   data: CandlePoint[];
   height?: number;
   rangeSync?: RangeSync;
   timeAxis?: boolean;
+  focusDate?: string | null;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const focusLineRef = useRef<HTMLDivElement>(null);
+  const focusBarRef = useRef('');
   const dateRef = useRef<HTMLSpanElement>(null);
   const openRef = useRef<HTMLElement>(null);
   const highRef = useRef<HTMLElement>(null);
@@ -177,22 +229,8 @@ export default function KLineChart({
     setText(ma5Ref.current, mas.ma5.has(candle.time) ? formatPrice(mas.ma5.get(candle.time)!) : '--');
     setText(ma10Ref.current, mas.ma10.has(candle.time) ? formatPrice(mas.ma10.get(candle.time)!) : '--');
     setText(ma20Ref.current, mas.ma20.has(candle.time) ? formatPrice(mas.ma20.get(candle.time)!) : '--');
-    if (candle.buy) {
-      setText(
-        buyRef.current,
-        `买 ${formatPrice(candle.buy.price)} × ${formatQty(candle.buy.quantity)}  ${formatAmount(candle.buy.price * candle.buy.quantity)}`,
-      );
-    } else {
-      setText(buyRef.current, '');
-    }
-    if (candle.sell) {
-      setText(
-        sellRef.current,
-        `卖 ${formatPrice(candle.sell.price)} × ${formatQty(candle.sell.quantity)}  ${formatAmount(candle.sell.price * candle.sell.quantity)}`,
-      );
-    } else {
-      setText(sellRef.current, '');
-    }
+    paintFill(buyRef.current, 'buy', candle.buy);
+    paintFill(sellRef.current, 'sell', candle.sell);
   };
 
   useEffect(() => {
@@ -299,6 +337,7 @@ export default function KLineChart({
     host.addEventListener('wheel', onWheel, { passive: true });
     host.addEventListener('pointerdown', markUserZoom);
     const onRange = (range: LogicalRange | null) => {
+      placeFocusLine(chart, focusLineRef.current, focusBarRef.current);
       if (!range || applyingRef.current || !rangeSyncRef.current || !fittedRef.current) return;
       if (performance.now() < suppressUntilRef.current) return;
       if (!userZoomedRef.current) return;
@@ -317,8 +356,9 @@ export default function KLineChart({
       if (widthChanged) lastWidth = nextWidth;
       if (heightChanged) lastHeight = nextHeight;
       chart.applyOptions({ width: lastWidth, height: lastHeight });
+      placeFocusLine(chart, focusLineRef.current, focusBarRef.current);
       if (userZoomedRef.current) return;
-      const full = fullLogicalRange(barCountRef.current);
+      const full = fullLogicalRange(barCountRef.current, chart.timeScale().width());
       if (!full) return;
       applyingRef.current = true;
       suppressUntilRef.current = performance.now() + 200;
@@ -390,7 +430,8 @@ export default function KLineChart({
           position: 'belowBar',
           color: UP,
           shape: 'arrowUp',
-          text: 'B',
+          text: markerText(point.buy, 'B'),
+          size: 0.7,
         });
       }
       if (point.sell) {
@@ -399,7 +440,8 @@ export default function KLineChart({
           position: 'aboveBar',
           color: DOWN,
           shape: 'arrowDown',
-          text: 'S',
+          text: markerText(point.sell, 'S'),
+          size: 0.7,
         });
       }
     }
@@ -429,34 +471,49 @@ export default function KLineChart({
     });
     barCountRef.current = candles.length;
     if (candles.length > 0) {
+      const days = candles.map((row) => String(row.time));
+      const focusIndex = focusDate ? indexForDay(days, focusDate) : -1;
+      const plotWidth = chart.timeScale().width();
+      const focused = focusIndex >= 0 ? focusedLogicalRange(candles.length, focusIndex, 45, plotWidth) : null;
+      const focusCandle = focusIndex >= 0 ? index.get(days[focusIndex]) : undefined;
+      focusBarRef.current = focusIndex >= 0 ? days[focusIndex] : '';
       const apply = () => {
         const live = chartRef.current;
+        const liveSeries = seriesRef.current;
         if (!live) return;
         const synced = rangeSyncRef.current?.last;
-        const full = fullLogicalRange(candles.length);
+        const full = fullLogicalRange(candles.length, plotWidth);
+        const initial = focused ?? full;
         applyingRef.current = true;
         suppressUntilRef.current = performance.now() + 200;
-        if (!userZoomedRef.current && full) {
-          live.timeScale().setVisibleLogicalRange(full);
+        if (!userZoomedRef.current && initial) {
+          live.timeScale().setVisibleLogicalRange(initial);
           fittedRef.current = true;
-          rangeSyncRef.current?.publish(full, sourceRef.current);
+          rangeSyncRef.current?.publish(initial, sourceRef.current);
+          if (focused) userZoomedRef.current = true;
         } else if (synced) {
           live.timeScale().setVisibleLogicalRange(synced);
           fittedRef.current = true;
-        } else if (full) {
-          live.timeScale().setVisibleLogicalRange(full);
+        } else if (initial) {
+          live.timeScale().setVisibleLogicalRange(initial);
           fittedRef.current = true;
-          rangeSyncRef.current?.publish(full, sourceRef.current);
+          rangeSyncRef.current?.publish(initial, sourceRef.current);
         }
+        if (focusCandle && liveSeries) {
+          live.setCrosshairPosition(focusCandle.close, days[focusIndex] as Time, liveSeries);
+        }
+        placeFocusLine(live, focusLineRef.current, focusBarRef.current);
         requestAnimationFrame(() => {
           applyingRef.current = false;
+          placeFocusLine(chartRef.current, focusLineRef.current, focusBarRef.current);
         });
       };
       apply();
       requestAnimationFrame(apply);
-      paintHud(previous);
+      paintHud(focusCandle ?? previous);
+      if (focusCandle) lastKeyRef.current = focusCandle.time;
     }
-  }, [data]);
+  }, [data, focusDate]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -471,6 +528,7 @@ export default function KLineChart({
       applyingRef.current = true;
       chart.timeScale().setVisibleLogicalRange(range);
       applyingRef.current = false;
+      placeFocusLine(chart, focusLineRef.current, focusBarRef.current);
     });
   }, [rangeSync]);
 
@@ -511,7 +569,10 @@ export default function KLineChart({
           <span className="kline-hud-fill sell" ref={sellRef} />
         </div>
       </div>
-      <div className="kline" ref={hostRef} style={height ? { height } : undefined} />
+      <div className="kline-pane" style={height ? { height } : undefined}>
+        <div className="kline" ref={hostRef} style={height ? { height } : undefined} />
+        <div className="chart-focus-line" ref={focusLineRef} hidden />
+      </div>
     </div>
   );
 }

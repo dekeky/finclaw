@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { IconFileDescription, IconLoader2, IconRefresh } from '@tabler/icons-react';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { listAgentDocs, type DocFileEntry } from '@/api/agentDocs';
+import { listAccountDocs, type DocFileEntry } from '@/api/agentDocs';
 import { loadExpandedDirs, saveExpandedDirs } from '@/lib/assetTreeStorage';
 import { rowPaddingLeft, TreeChevronSlot } from '@/components/asset-tree-layout';
 import {
@@ -12,11 +12,12 @@ import {
 } from '@/components/asset-tree-rows';
 
 interface DocFileTreeProps {
-  agentName: string;
+  /** 本地展开态/缓存归属键。账户共享文档用固定值 "account"，跨 agent 保持一致。 */
+  scopeKey: string;
   refreshRev: number;
   onFileSelect: (fullPath: string) => void;
   selectedDocPath: string | null;
-  /** 隐藏内部标题（在共享「Agent 资产」标题下使用时）。 */
+  /** 隐藏内部标题（在共享「文档」标题下使用时）。 */
   hideHeader?: boolean;
   /** 提供则在每行显示删除按钮；返回 false 表示取消/失败，树内不刷新。 */
   onDelete?: (fullPath: string, isDir: boolean) => boolean | void | Promise<boolean | void>;
@@ -33,9 +34,9 @@ function sortFiles(files: DocFileEntry[]): DocFileEntry[] {
   });
 }
 
-export function DocFileTree({ agentName, refreshRev, onFileSelect, selectedDocPath, hideHeader, onDelete, onDownload, onShare }: DocFileTreeProps) {
+export function DocFileTree({ scopeKey, refreshRev, onFileSelect, selectedDocPath, hideHeader, onDelete, onDownload, onShare }: DocFileTreeProps) {
   const [treeCache, setTreeCache] = useState<Map<string, DocFileEntry[]>>(new Map());
-  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => loadExpandedDirs(agentName));
+  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => loadExpandedDirs(scopeKey));
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
   const [rootError, setRootError] = useState<string | null>(null);
   const loadGenByDir = useRef<Map<string, number>>(new Map());
@@ -45,7 +46,7 @@ export function DocFileTree({ agentName, refreshRev, onFileSelect, selectedDocPa
   expandedDirsRef.current = expandedDirs;
 
   useEffect(() => {
-    const nextExpanded = loadExpandedDirs(agentName);
+    const nextExpanded = loadExpandedDirs(scopeKey);
     loadGenByDir.current = new Map();
     expandedDirsRef.current = nextExpanded;
     setTreeCache(new Map());
@@ -54,25 +55,25 @@ export function DocFileTree({ agentName, refreshRev, onFileSelect, selectedDocPa
     setRootError(null);
     skipRefreshOnMount.current = true;
     skipExpandedSave.current = true;
-  }, [agentName]);
+  }, [scopeKey]);
 
   useEffect(() => {
-    if (!agentName) return;
+    if (!scopeKey) return;
     if (skipExpandedSave.current) {
       skipExpandedSave.current = false;
       return;
     }
-    saveExpandedDirs(agentName, expandedDirs);
-  }, [agentName, expandedDirs]);
+    saveExpandedDirs(scopeKey, expandedDirs);
+  }, [scopeKey, expandedDirs]);
 
   const fetchDir = useCallback(
     async (subpath: string) => {
-      if (!agentName) return;
+      if (!scopeKey) return;
       const nextGen = (loadGenByDir.current.get(subpath) ?? 0) + 1;
       loadGenByDir.current.set(subpath, nextGen);
       setLoadingDirs((prev) => new Set(prev).add(subpath));
       try {
-        const body = await listAgentDocs(agentName, subpath || undefined);
+        const body = await listAccountDocs(subpath || undefined);
         if (loadGenByDir.current.get(subpath) !== nextGen) return;
         setTreeCache((prev) => new Map(prev).set(subpath, body.files ?? []));
         if (subpath === '') setRootError(null);
@@ -89,7 +90,7 @@ export function DocFileTree({ agentName, refreshRev, onFileSelect, selectedDocPa
         }
       }
     },
-    [agentName],
+    [scopeKey],
   );
 
   const refetchVisibleDirs = useCallback(async () => {
@@ -98,22 +99,22 @@ export function DocFileTree({ agentName, refreshRev, onFileSelect, selectedDocPa
   }, [fetchDir]);
 
   useEffect(() => {
-    if (!agentName) return;
+    if (!scopeKey) return;
     void fetchDir('');
     const expanded = Array.from(expandedDirsRef.current);
     if (expanded.length > 0) {
       void Promise.all(expanded.map((subpath) => fetchDir(subpath)));
     }
-  }, [agentName, fetchDir]);
+  }, [scopeKey, fetchDir]);
 
   useEffect(() => {
-    if (!agentName) return;
+    if (!scopeKey) return;
     if (skipRefreshOnMount.current) {
       skipRefreshOnMount.current = false;
       return;
     }
     void refetchVisibleDirs();
-  }, [agentName, refreshRev, refetchVisibleDirs]);
+  }, [scopeKey, refreshRev, refetchVisibleDirs]);
 
   const setDirExpanded = useCallback(
     (dirPath: string, open: boolean) => {
@@ -167,7 +168,7 @@ export function DocFileTree({ agentName, refreshRev, onFileSelect, selectedDocPa
       {!hideHeader && (
         <div className="flex shrink-0 items-center gap-1.5 border-b border-border/40 px-3 py-2.5">
           <IconFileDescription className="size-3.5 text-muted-foreground/70" />
-          <span className="text-xs font-medium text-muted-foreground/80">Agent 资产</span>
+          <span className="text-xs font-medium text-muted-foreground/80">文档</span>
         </div>
       )}
 

@@ -123,17 +123,21 @@ func (fr *FinClawRouter) modelRouter() {
 	modelRouter.ConfigRouter()
 }
 
-func (fr *FinClawRouter) strategyRouter() {
-	strategyRouter := agentruntime.NewStrategyRouter(fr.r, auth.AuthMiddleware(fr.authStore))
-	strategyRouter.ConfigRouter()
-}
-
-func (fr *FinClawRouter) backtestRouter() {
+func (fr *FinClawRouter) fquantAddr() string {
 	addr := ""
 	if fr.finclawConf != nil && fr.finclawConf.FinclawConfigServer != nil {
 		addr = fr.finclawConf.FquantAddr
 	}
-	backtestRouter := agentruntime.NewBacktestRouter(fr.r, auth.AuthMiddleware(fr.authStore), addr)
+	return addr
+}
+
+func (fr *FinClawRouter) strategyRouter() {
+	strategyRouter := agentruntime.NewStrategyRouter(fr.r, auth.AuthMiddleware(fr.authStore), fr.fquantAddr())
+	strategyRouter.ConfigRouter()
+}
+
+func (fr *FinClawRouter) backtestRouter() {
+	backtestRouter := agentruntime.NewBacktestRouter(fr.r, auth.AuthMiddleware(fr.authStore), fr.fquantAddr())
 	backtestRouter.ConfigRouter()
 }
 

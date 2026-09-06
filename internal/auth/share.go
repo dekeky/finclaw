@@ -19,16 +19,18 @@ func (s *Store) CreateAssetShare(share *AssetShare) (*AssetShare, error) {
 	share.Path = strings.TrimSpace(share.Path)
 	share.Source = strings.TrimSpace(share.Source)
 	share.SkillDir = strings.TrimSpace(share.SkillDir)
-	if share.UserID == "" || share.AgentName == "" || share.Kind == "" {
-		return nil, fmt.Errorf("user_id, agent_name and kind are required")
+	if share.UserID == "" || share.Kind == "" {
+		return nil, fmt.Errorf("user_id and kind are required")
 	}
 	switch share.Kind {
 	case "doc", "skill":
 	default:
 		return nil, fmt.Errorf("invalid share kind %q", share.Kind)
 	}
-	if share.Kind == "skill" && share.SkillDir == "" {
-		return nil, fmt.Errorf("skill_dir is required for skill shares")
+	// doc shares are account-level assets and need no agent; skill shares are
+	// always scoped to the agent that owns the skill package.
+	if share.Kind == "skill" && (share.AgentName == "" || share.SkillDir == "") {
+		return nil, fmt.Errorf("agent_name and skill_dir are required for skill shares")
 	}
 	token, err := newShareToken()
 	if err != nil {

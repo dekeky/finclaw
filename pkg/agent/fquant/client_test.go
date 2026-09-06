@@ -287,6 +287,28 @@ func TestClientUniverseAndFina(t *testing.T) {
 	}
 }
 
+func TestClientGetStrategyTemplate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/strategy-template" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"name":   "dual_ma",
+			"source": "from akquant import Strategy\nclass S(Strategy):\n    pass\n",
+		})
+	}))
+	defer srv.Close()
+
+	tpl, err := New(srv.URL).GetStrategyTemplate(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tpl.Name != "dual_ma" || !strings.Contains(tpl.Source, "class S(Strategy)") {
+		t.Fatalf("template = %+v", tpl)
+	}
+}
+
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

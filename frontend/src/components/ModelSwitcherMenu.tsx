@@ -37,8 +37,8 @@ const SWITCHED_HIGHLIGHT_CLASS =
 
 export interface ModelSwitcherMenuProps {
   agentName: string;
-  /** toolbar：对话顶栏图标；panel：Agent 配置页全宽按钮。 */
-  variant?: 'toolbar' | 'panel';
+  /** toolbar：顶栏图标；panel：Agent 配置页全宽按钮；composer：输入框底部文字按钮。 */
+  variant?: 'toolbar' | 'panel' | 'composer';
   /** panel 模式下是否激活（用于懒加载模型列表）。 */
   active?: boolean;
   /** 模型切换成功后回调。 */
@@ -62,6 +62,7 @@ export function ModelSwitcherMenu({
   const [open, setOpen] = useState(false);
 
   const isToolbar = variant === 'toolbar';
+  const isComposer = variant === 'composer';
 
   const loadCurrentModel = useCallback(async () => {
     setModelLoading(true);
@@ -173,7 +174,30 @@ export function ModelSwitcherMenu({
     </>
   );
 
-  const triggerButton = isToolbar ? (
+  const triggerButton = isComposer ? (
+    <Button
+      type="button"
+      variant="ghost"
+      size="xs"
+      disabled={switching}
+      aria-label={currentModel ? `切换模型（${currentModel}）` : '切换模型'}
+      className={cn(
+        'h-7 max-w-[11rem] shrink-0 gap-1 px-1.5 text-xs font-medium text-foreground/85 hover:bg-muted hover:text-foreground',
+        (justSwitched || open) && 'bg-muted text-foreground',
+      )}
+    >
+      {switching ? (
+        <IconLoader2 className="size-3.5 animate-spin" stroke={1.75} />
+      ) : null}
+      <span className="truncate">
+        {modelLoading ? '模型' : currentModel ?? '选择模型'}
+      </span>
+      <IconChevronDown
+        className={cn('size-3 shrink-0 opacity-50 transition-transform', open && 'rotate-180')}
+        stroke={1.75}
+      />
+    </Button>
+  ) : isToolbar ? (
     <Button
       type="button"
       variant="ghost"
@@ -224,9 +248,9 @@ export function ModelSwitcherMenu({
       <DropdownMenuTrigger asChild>{triggerButton}</DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
-        side="bottom"
+        side={isComposer ? 'top' : 'bottom'}
         sideOffset={6}
-        avoidCollisions={false}
+        avoidCollisions={isComposer}
         className={MENU_CONTENT_CLASS}
       >
         {menuBody}

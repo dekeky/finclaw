@@ -159,6 +159,9 @@ func (s *StrategyStore) migrateLegacyLayout() error {
 			continue
 		}
 		name := ent.Name()
+		if name == AccountBacktestsDirName {
+			continue
+		}
 		legacyMetaPath := filepath.Join(s.root, name, "meta.json")
 		legacyScriptPath := filepath.Join(s.root, name, "strategy.py")
 		metaData, err := os.ReadFile(legacyMetaPath)
@@ -166,10 +169,10 @@ func (s *StrategyStore) migrateLegacyLayout() error {
 			continue
 		}
 		var legacy struct {
-			Name        string    `json:"name"`
-			Platform    string    `json:"platform"`
-			CreatedAt   time.Time `json:"created_at"`
-			UpdatedAt   time.Time `json:"updated_at"`
+			Name      string    `json:"name"`
+			Platform  string    `json:"platform"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
 		}
 		if err := json.Unmarshal(metaData, &legacy); err != nil {
 			continue

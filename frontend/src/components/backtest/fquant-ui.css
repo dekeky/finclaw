@@ -363,29 +363,33 @@
 }
 
 .fquant-ui .report-split {
-  display: grid;
-  grid-template-columns: 1fr 52px;
-  grid-template-rows: auto 1fr;
-  align-items: stretch;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
 }
 
-.fquant-ui .report-split.open {
-  grid-template-columns: 1fr 320px;
+.fquant-ui .report-head {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
 }
 
-.fquant-ui .report-split .kpi-grid {
-  grid-column: 1;
-  grid-row: 1;
+.fquant-ui .report-head .kpi-grid {
+  flex: 1 1 auto;
+  min-width: 0;
   margin-right: 0;
   border-right: 0;
 }
 
-.fquant-ui .report-split .report-side-btns {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: stretch;
+.fquant-ui .report-head.open .kpi-grid {
+  margin-right: 320px;
+}
+
+.fquant-ui .report-side-btns {
+  flex: 0 0 52px;
+  width: 52px;
   margin-top: 12px;
   display: flex;
   flex-direction: column;
@@ -393,7 +397,7 @@
   border-right: 1px solid var(--line);
 }
 
-.fquant-ui .report-split .report-side-btns .kpi-detail-btn {
+.fquant-ui .report-side-btns .kpi-detail-btn {
   flex: 1;
   align-self: stretch;
   margin-top: 0;
@@ -402,20 +406,18 @@
 }
 
 .fquant-ui .report-rest {
-  grid-column: 1;
-  grid-row: 2;
   min-width: 0;
   min-height: 0;
 }
 
-.fquant-ui .report-split.open .stats-pane {
-  grid-column: 2;
-  grid-row: 1 / -1;
-  margin-top: 12px;
-  width: auto;
-  flex: none;
+.fquant-ui .report-head .stats-pane {
+  position: absolute;
+  top: 12px;
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  margin-top: 0;
   border: 1px solid var(--line);
-  position: relative;
 }
 
 .fquant-ui .kpi-detail-btn {
@@ -722,7 +724,12 @@
   font: inherit;
 }
 
-.fquant-ui .holdings-modal { width: min(760px, calc(100vw - 32px)); }
+.fquant-ui .holdings-modal {
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(86vh, 920px);
+  display: flex;
+  flex-direction: column;
+}
 .fquant-ui .run-config-modal { width: min(560px, calc(100vw - 32px)); }
 
 .fquant-ui .run-config-body {
@@ -778,8 +785,11 @@
 }
 
 .fquant-ui .holdings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
   overflow: auto;
-  max-height: min(520px, calc(100vh - 100px));
 }
 
 .fquant-ui .pnl-table { margin-top: 12px; }
@@ -1179,6 +1189,485 @@
 }
 
 .fquant-ui .muted { color: var(--muted); }
+
+.fquant-ui .btn {
+  height: 26px;
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+  padding: 0 12px;
+  font-weight: 500;
+}
+
+.fquant-ui .btn.ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+}
+
+.fquant-ui .btn.ghost:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: #555;
+}
+
+.fquant-ui .holdings-modal { width: min(960px, calc(100vw - 32px)); }
+
+.fquant-ui .holdings-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg);
+  min-height: 0;
+  overflow: auto;
+}
+
+.fquant-ui .holdings-section {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.fquant-ui .holdings-section .table-wrap {
+  flex: 0 1 auto;
+  max-height: min(36vh, 320px);
+  overflow: auto;
+}
+
+.fquant-ui .holdings-section .blotter-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-elev);
+}
+
+.fquant-ui .holdings-pager {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--line);
+  padding: 6px 10px;
+}
+
+.fquant-ui .holdings-section-book {
+  background: var(--bg-elev);
+  border-color: var(--line-strong);
+}
+
+.fquant-ui .holdings-section-actions {
+  background: #151515;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.fquant-ui .holdings-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.fquant-ui .holdings-section-book .holdings-section-title { background: #222; }
+
+.fquant-ui .holdings-section-actions .holdings-section-title {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.fquant-ui .holdings-section-count {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.fquant-ui .holdings-section .empty { padding: 10px 12px 12px; }
+
+.fquant-ui .return-chart-action:empty { display: none; }
+
+.fquant-ui .return-chart-action {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.fquant-ui .analysis-tabs {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  background: var(--bg-elev);
+}
+
+.fquant-ui .analysis-tabs button {
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fquant-ui .analysis-tabs button:hover,
+.fquant-ui .analysis-tabs button.active {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.fquant-ui .analysis-tabs button.active { color: var(--accent); }
+
+.fquant-ui .tab-count {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.fquant-ui .analysis-table {
+  max-height: min(420px, 50vh);
+  overflow: auto;
+}
+
+.fquant-ui .reason-cell {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fquant-ui .analysis-detail td {
+  background: var(--bg-panel);
+  white-space: normal !important;
+}
+
+.fquant-ui .analysis-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
+  color: var(--muted);
+}
+
+.fquant-ui .analysis-detail-body strong {
+  color: var(--text);
+  margin-right: 8px;
+  font-weight: 600;
+}
+
+.fquant-ui .pnl-table .analysis-tabs + .table-wrap,
+.fquant-ui .pnl-table .analysis-tabs + .empty,
+.fquant-ui .pnl-table .analysis-tabs + .rebalance-pane > .blotter-filter,
+.fquant-ui .pnl-table .analysis-tabs + .rebalance-pane > .empty {
+  border-top: 0;
+}
+
+.fquant-ui .blotter-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-elev);
+}
+
+.fquant-ui .blotter-filter label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.fquant-ui .blotter-filter input,
+.fquant-ui .blotter-filter select {
+  height: 26px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 0 8px;
+}
+
+.fquant-ui .blotter-filter .date-range-trigger { min-width: 196px; }
+
+.fquant-ui .blotter-filter-symbol {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.fquant-ui .blotter-filter-symbol input { width: 110px; }
+
+.fquant-ui .blotter-filter-symbol select {
+  min-width: 140px;
+  max-width: 240px;
+  flex: 1 1 auto;
+}
+
+.fquant-ui .blotter-filter-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.fquant-ui .blotter-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-top: 0;
+  background: var(--bg-elev);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.fquant-ui .blotter-pager button {
+  height: 26px;
+  padding: 0 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.fquant-ui .blotter-pager label {
+  display: inline-flex;
+  align-items: center;
+}
+
+.fquant-ui .blotter-pager input[type="number"] {
+  width: 64px;
+  height: 26px;
+  margin: 0 6px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 0 6px;
+  font-family: var(--mono);
+  text-align: center;
+}
+
+.fquant-ui .rebalance-pane > .empty {
+  border: 1px solid var(--line);
+  background: var(--bg-elev);
+}
+
+.fquant-ui .rebalance-pane > .blotter-filter + .table-wrap,
+.fquant-ui .rebalance-pane > .blotter-filter + .empty {
+  border-top: 0;
+}
+
+.fquant-ui .rebalance-pane .analysis-table { max-height: none; }
+
+.fquant-ui .kline-pane {
+  position: relative;
+  height: 100%;
+}
+
+.fquant-ui .kline {
+  height: 100%;
+}
+
+.fquant-ui .chart-focus-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  border-left: 1px dashed var(--accent);
+  pointer-events: none;
+  z-index: 4;
+  opacity: 0.9;
+}
+
+.fquant-ui .kline-hud-fill {
+  max-width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+.fquant-ui .kline-hud-fill[hidden] { display: none; }
+
+.fquant-ui .kline-hud-fill b {
+  font-family: var(--mono);
+  font-weight: 400;
+  margin: 0 2px;
+}
+
+.fquant-ui .kline-hud-fill.buy,
+.fquant-ui .kline-hud-fill.buy b { color: #ff3232; }
+
+.fquant-ui .kline-hud-fill.sell,
+.fquant-ui .kline-hud-fill.sell b { color: #00d26a; }
+
+.strategy-return-chart {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #000;
+}
+
+.strategy-return-chart-host {
+  width: 100%;
+  height: 100%;
+}
+
+.fquant-ui .date-range-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  min-width: 196px;
+}
+
+.fquant-ui .date-range-trigger svg {
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.fquant-ui .date-range-trigger.empty { color: var(--muted); }
+
+.fquant-ui .date-range-trigger.open,
+.fquant-ui .date-range-trigger:hover:not(:disabled) {
+  border-color: var(--line-strong);
+}
+
+.fquant-ui .date-range-trigger.open { border-color: var(--accent); }
+
+.fquant-ui .date-range-trigger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.fquant-ui.date-range-pop {
+  position: fixed;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  height: auto;
+  min-height: 0;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  overflow: visible;
+}
+
+.fquant-ui .date-range-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.fquant-ui .date-range-presets button {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.fquant-ui .date-range-presets button:hover,
+.fquant-ui .date-range-presets button.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.fquant-ui .date-range-months {
+  display: flex;
+  gap: 12px;
+}
+
+.fquant-ui .date-range-month { width: 224px; }
+
+.fquant-ui .date-range-month-head {
+  display: grid;
+  grid-template-columns: 24px 1fr 24px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.fquant-ui .date-range-month-head strong {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.fquant-ui .date-range-nav {
+  height: 24px;
+  width: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.fquant-ui .date-range-nav:hover { color: var(--accent); }
+
+.fquant-ui .date-range-week,
+.fquant-ui .date-range-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 32px);
+}
+
+.fquant-ui .date-range-week span {
+  height: 22px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+  line-height: 22px;
+}
+
+.fquant-ui .date-range-grid button,
+.fquant-ui .date-range-grid span {
+  height: 28px;
+  width: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.fquant-ui .date-range-grid button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.fquant-ui .date-range-grid button.in-range { background: var(--accent-dim); }
+
+.fquant-ui .date-range-grid button.is-start,
+.fquant-ui .date-range-grid button.is-end {
+  background: var(--accent);
+  color: #fff;
+}
+
+.fquant-ui .date-range-grid button.is-today:not(.is-start):not(.is-end) {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.fquant-ui .date-range-grid button:disabled {
+  color: #4a4a4a;
+  cursor: default;
+}
+
+.fquant-ui .date-range-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  padding-top: 2px;
+}
 
 @media (max-width: 1200px) {
   .fquant-ui .kpi-grid,

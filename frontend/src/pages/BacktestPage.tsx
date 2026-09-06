@@ -9,8 +9,8 @@ import {
   IconPencil,
   IconPlayerPlay,
   IconPlus,
-  IconMessageChatbot,
   IconShare2,
+  IconSparkles,
 } from '@tabler/icons-react';
 import { BacktestRunsPanel } from '@/components/backtest/BacktestRunsPanel';
 import '@/components/backtest/fquant-ui.css';
@@ -25,6 +25,7 @@ import { StrategyGalleryTile } from '@/components/strategy/StrategyGalleryTile';
 import { galleryShellClassName } from '@/components/strategy/strategyGallery';
 import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import { useHorizontalResize } from '@/hooks/useHorizontalResize';
 import {
@@ -60,6 +61,7 @@ import { cn } from '@/lib/cn';
 import { copyToClipboard } from '@/lib/clipboard';
 import {
   PRIMARY_BUTTON_CLASS,
+  PRIMARY_ICON_GRADIENT_CLASS,
   SAVE_BUTTON_IDLE_CLASS,
 } from '@/lib/primaryButton';
 import { toast } from 'sonner';
@@ -130,6 +132,7 @@ export default function BacktestPage() {
   const [shareError, setShareError] = useState<string | null>(null);
   const [shareSuccess, setShareSuccess] = useState(false);
   const [strategyPane, setStrategyPane] = useState<'code' | 'runs'>('code');
+  const [runsReady, setRunsReady] = useState(false);
   const [runBusy, setRunBusy] = useState(false);
   const [universeOpen, setUniverseOpen] = useState(false);
   const [runsRefreshKey, setRunsRefreshKey] = useState(0);
@@ -139,6 +142,10 @@ export default function BacktestPage() {
   const { confirm, dialog: confirmDialog } = useConfirm();
 
   const existingStrategyNames = useMemo(() => strategies.map((s) => s.name), [strategies]);
+
+  useEffect(() => {
+    if (strategyPane === 'runs') setRunsReady(true);
+  }, [strategyPane]);
 
   const chatResize = useHorizontalResize({
     storageKey: PANEL_WIDTH_KEYS.backtestChat,
@@ -568,6 +575,8 @@ export default function BacktestPage() {
 
   const browseMode = showLibrary ? 'library' : 'mine';
   const browsing = !selectedName && !libraryEntry;
+  // 仅「我的策略」详情展示右侧 AI；列表页与策略市场全程不展示。
+  const showChatColumn = Boolean(selectedName);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
@@ -764,8 +773,8 @@ export default function BacktestPage() {
                 {form.platform !== 'finclaw' ? <StrategyPlatformBadge platform={form.platform} /> : null}
                 <nav className="flex h-full items-stretch gap-0 self-stretch">
                   {([
-                    ['code', '代码'],
-                    ['runs', '回测'],
+                    ['code', '策略代码'],
+                    ['runs', '回测记录'],
                   ] as const).map(([id, label]) => (
                     <button
                       key={id}
@@ -782,70 +791,72 @@ export default function BacktestPage() {
                     </button>
                   ))}
                 </nav>
-                <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                  {dirty && (
-                    <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">
-                      未保存
-                    </Badge>
-                  )}
-                  <Button
-                    type="button"
-                    size="xs"
-                    className={cn('gap-1', PRIMARY_BUTTON_CLASS)}
-                    disabled={detailLoading || !form.script.trim()}
-                    title="复制策略代码到剪贴板"
-                    onClick={() => void handleCopyScript()}
-                  >
-                    <IconCopy className="size-3.5" stroke={1.75} />
-                    复制
-                  </Button>
-                  <Button
-                    type="button"
-                    size="xs"
-                    className={cn('gap-1', PRIMARY_BUTTON_CLASS)}
-                    disabled={dirty || detailLoading}
-                    title={dirty ? '请先保存后再分享' : '分享到策略市场'}
-                    onClick={openShare}
-                  >
-                    <IconShare2 className="size-3.5" stroke={1.75} />
-                    分享
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="xs"
-                    disabled={!dirty || submitting || detailLoading}
-                    onClick={handleRevert}
-                  >
-                    撤销
-                  </Button>
-                  <Button
-                    type="button"
-                    size="xs"
-                    className={cn(dirty ? PRIMARY_BUTTON_CLASS : SAVE_BUTTON_IDLE_CLASS)}
-                    disabled={submitting || detailLoading || !dirty}
-                    onClick={() => void handleSave()}
-                  >
-                    {submitting ? '保存中…' : '保存'}
-                  </Button>
-                  {platformConfig.nativeBacktest ? (
+                {strategyPane === 'code' ? (
+                  <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                    {dirty && (
+                      <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">
+                        未保存
+                      </Badge>
+                    )}
                     <Button
                       type="button"
                       size="xs"
                       className={cn('gap-1', PRIMARY_BUTTON_CLASS)}
-                      disabled={runBusy || submitting || detailLoading || !form.script.trim()}
-                      title={runBusy ? '提交中…' : '运行回测'}
-                      onClick={handleRun}
+                      disabled={detailLoading || !form.script.trim()}
+                      title="复制策略代码到剪贴板"
+                      onClick={() => void handleCopyScript()}
                     >
-                      {runBusy ? (
-                        <IconLoader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <IconPlayerPlay className="size-3.5" stroke={1.75} />
-                      )}
-                      {runBusy ? '提交中…' : '回测'}
+                      <IconCopy className="size-3.5" stroke={1.75} />
+                      复制
                     </Button>
-                  ) : null}
-                </div>
+                    <Button
+                      type="button"
+                      size="xs"
+                      className={cn('gap-1', PRIMARY_BUTTON_CLASS)}
+                      disabled={dirty || detailLoading}
+                      title={dirty ? '请先保存后再分享' : '分享到策略市场'}
+                      onClick={openShare}
+                    >
+                      <IconShare2 className="size-3.5" stroke={1.75} />
+                      分享
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      disabled={!dirty || submitting || detailLoading}
+                      onClick={handleRevert}
+                    >
+                      撤销
+                    </Button>
+                    <Button
+                      type="button"
+                      size="xs"
+                      className={cn(dirty ? PRIMARY_BUTTON_CLASS : SAVE_BUTTON_IDLE_CLASS)}
+                      disabled={submitting || detailLoading || !dirty}
+                      onClick={() => void handleSave()}
+                    >
+                      {submitting ? '保存中…' : '保存'}
+                    </Button>
+                    {platformConfig.nativeBacktest ? (
+                      <Button
+                        type="button"
+                        size="xs"
+                        className={cn('gap-1', PRIMARY_BUTTON_CLASS)}
+                        disabled={runBusy || submitting || detailLoading || !form.script.trim()}
+                        title={runBusy ? '提交中…' : '运行回测'}
+                        onClick={handleRun}
+                      >
+                        {runBusy ? (
+                          <IconLoader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <IconPlayerPlay className="size-3.5" stroke={1.75} />
+                        )}
+                        {runBusy ? '提交中…' : '回测'}
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
 
               {submitError && (
@@ -854,14 +865,12 @@ export default function BacktestPage() {
                 </div>
               )}
 
-              {strategyPane === 'runs' && selectedName ? (
-                <BacktestRunsPanel
-                  strategyName={selectedName}
-                  refreshKey={runsRefreshKey}
-                  focusRunId={focusRunId}
-                />
-              ) : (
-                <div className="relative flex min-h-0 flex-1 flex-col">
+              <div className="relative flex min-h-0 flex-1 flex-col">
+                <div
+                  className={
+                    strategyPane === 'code' ? 'relative flex min-h-0 flex-1 flex-col' : 'hidden'
+                  }
+                >
                   {detailLoading ? (
                     <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                       加载策略…
@@ -873,36 +882,58 @@ export default function BacktestPage() {
                     />
                   )}
                 </div>
-              )}
+                {selectedName && runsReady ? (
+                  <div className={strategyPane === 'runs' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+                    <BacktestRunsPanel
+                      strategyName={selectedName}
+                      refreshKey={runsRefreshKey}
+                      focusRunId={focusRunId}
+                    />
+                  </div>
+                ) : null}
+              </div>
             </>
           )}
         </div>
 
-        {chatOpen ? (
-          <div className="relative shrink-0" style={{ width: chatResize.width }}>
-            <PanelResizeHandle {...chatResize.handleProps} side="left" />
-            <StrategyChatPanel
-              className="h-full"
-              platform={form.platform}
-              strategyPath={form.path}
-              strategyReady={strategyReady}
-              onStrategyFileChanged={handleAgentFileChanged}
-              onCollapse={() => persistChatOpen(false)}
-            />
-          </div>
-        ) : (
-          <div className="flex h-full w-9 shrink-0 flex-col items-center border-l border-border/50 bg-muted/20 pt-1.5">
-            <button
-              type="button"
-              className="flex size-7 items-center justify-center rounded-md text-violet-600/80 transition-colors hover:bg-violet-500/10 hover:text-violet-600 dark:text-violet-300/80 dark:hover:text-violet-300"
-              onClick={() => persistChatOpen(true)}
-              title="展开 AI"
-              aria-label="展开 AI"
-            >
-              <IconMessageChatbot className="size-[18px]" stroke={1.75} aria-hidden />
-            </button>
-          </div>
-        )}
+        {showChatColumn ? (
+          chatOpen ? (
+            <div className="relative shrink-0" style={{ width: chatResize.width }}>
+              <PanelResizeHandle {...chatResize.handleProps} side="left" />
+              <StrategyChatPanel
+                className="h-full"
+                platform={form.platform}
+                strategyPath={form.path}
+                strategyReady={strategyReady}
+                onStrategyFileChanged={handleAgentFileChanged}
+                onCollapse={() => persistChatOpen(false)}
+              />
+            </div>
+          ) : (
+            <div className="flex h-full w-14 shrink-0 flex-col items-center border-l border-border/50 pt-3">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex shrink-0 items-center rounded-md border-none bg-transparent p-0 transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/35"
+                    onClick={() => persistChatOpen(true)}
+                    aria-label="展开 AI"
+                  >
+                    <span
+                      className={cn(
+                        'flex size-6 items-center justify-center rounded-md',
+                        PRIMARY_ICON_GRADIENT_CLASS,
+                      )}
+                    >
+                      <IconSparkles className="size-3.5" stroke={1.75} aria-hidden />
+                    </span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="left">展开 AI</TooltipContent>
+              </Tooltip>
+            </div>
+          )
+        ) : null}
       </div>
 
       <StrategyCreateDialog

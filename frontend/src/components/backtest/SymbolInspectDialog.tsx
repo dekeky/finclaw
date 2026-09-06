@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { IconLoader2 } from '@tabler/icons-react';
 import { api, type PricePoint } from '@/api/backtest';
 import KLineChart from './KLineChart';
 import StrategyReturnChart from './StrategyReturnChart';
 import { buildCandles } from './klineData';
+import type { RebalanceEvent } from './RebalanceTable';
 import { createRangeSync } from './rangeSync';
 import { symbolStrategyPnl } from './symbolStats';
 
@@ -13,7 +15,9 @@ export default function SymbolInspectDialog({
   startTime,
   endTime,
   orders,
+  rebalances = [],
   seedPrices,
+  focusDate,
   onClose,
 }: {
   code: string;
@@ -21,7 +25,9 @@ export default function SymbolInspectDialog({
   startTime: string;
   endTime: string;
   orders: Record<string, unknown>[];
+  rebalances?: RebalanceEvent[];
   seedPrices: PricePoint[];
+  focusDate?: string | null;
   onClose: () => void;
 }) {
   const [prices, setPrices] = useState<PricePoint[]>(seedPrices);
@@ -64,7 +70,7 @@ export default function SymbolInspectDialog({
     };
   }, [code, seedPrices, startTime, endTime]);
 
-  const candles = useMemo(() => buildCandles(code, prices, orders), [code, prices, orders]);
+  const candles = useMemo(() => buildCandles(code, prices, orders, rebalances), [code, prices, orders, rebalances]);
   const returns = useMemo(() => symbolStrategyPnl(code, orders, prices), [code, orders, prices]);
   const alignedReturns = useMemo(() => {
     const byDay = new Map(returns.map((row) => [row.time, row.value]));
@@ -98,10 +104,13 @@ export default function SymbolInspectDialog({
             </span>
           </div>
           {loading ? (
-            <div className="empty muted">加载行情中…</div>
+            <div className="empty muted flex flex-col items-center justify-center gap-2 py-10">
+              <IconLoader2 className="size-5 animate-spin text-violet-500/80" aria-hidden />
+              正在加载 K 线…
+            </div>
           ) : candles.length ? (
             <div className="kline-block inspect-kline">
-              <KLineChart key={code} data={candles} rangeSync={rangeSync} />
+              <KLineChart key={`${code}-${focusDate ?? ''}`} data={candles} rangeSync={rangeSync} focusDate={focusDate} />
             </div>
           ) : (
             <div className="empty muted">该标的没有价格序列。</div>
@@ -113,10 +122,18 @@ export default function SymbolInspectDialog({
             </span>
           </div>
           {loading ? (
-            <div className="empty muted">加载行情中…</div>
+            <div className="empty muted flex flex-col items-center justify-center gap-2 py-8">
+              <IconLoader2 className="size-5 animate-spin text-violet-500/80" aria-hidden />
+              正在加载收益曲线…
+            </div>
           ) : alignedReturns.some((row) => typeof row.value === 'number') ? (
             <div className="inspect-return">
-              <StrategyReturnChart key={code} data={alignedReturns} rangeSync={rangeSync} />
+              <StrategyReturnChart
+                key={`${code}-${focusDate ?? ''}`}
+                data={alignedReturns}
+                rangeSync={rangeSync}
+                focusDate={focusDate}
+              />
             </div>
           ) : (
             <div className="empty muted">没有个股收益额序列。</div>

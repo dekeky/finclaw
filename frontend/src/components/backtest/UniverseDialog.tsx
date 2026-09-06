@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { IconLoader2 } from '@tabler/icons-react';
 import { Dialog } from 'radix-ui';
 import {
   listUniverseIndexes,
@@ -52,6 +53,15 @@ function ParamLabel({
   );
 }
 
+function CatalogLoading({ label }: { label: string }) {
+  return (
+    <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 rounded-md border border-border text-xs text-muted-foreground">
+      <IconLoader2 className="size-5 animate-spin text-violet-500/80" aria-hidden />
+      {label}
+    </div>
+  );
+}
+
 function ratesOk(params: BacktestRunParams): boolean {
   const rates = [
     params.commission_pct,
@@ -82,6 +92,8 @@ export function UniverseDialog({
   const [query, setQuery] = useState('');
   const [stocks, setStocks] = useState<MarketSymbol[]>([]);
   const [indexes, setIndexes] = useState<UniverseIndex[]>([]);
+  const [loadingStocks, setLoadingStocks] = useState(false);
+  const [loadingIndexes, setLoadingIndexes] = useState(false);
   const [picked, setPicked] = useState<MarketSymbol[]>(seed.picked);
   const [indexCode, setIndexCode] = useState(seed.indexCode);
   const [params, setParams] = useState<BacktestRunParams>(seed.params);
@@ -91,12 +103,17 @@ export function UniverseDialog({
     if (!open) return;
     let cancelled = false;
     setError(null);
+    if (stocks.length === 0) setLoadingStocks(true);
+    if (indexes.length === 0) setLoadingIndexes(true);
     listUniverseStocks()
       .then((stockItems) => {
         if (!cancelled) setStocks(stockItems);
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(err instanceof Error ? err.message : '股票列表加载失败');
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingStocks(false);
       });
     listUniverseIndexes()
       .then((indexItems) => {
@@ -110,6 +127,9 @@ export function UniverseDialog({
       })
       .catch((err: unknown) => {
         if (!cancelled) setError((prev) => prev ?? (err instanceof Error ? err.message : '指数列表加载失败'));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingIndexes(false);
       });
     return () => {
       cancelled = true;
@@ -174,15 +194,21 @@ export function UniverseDialog({
     onConfirm(selection, params);
   }
 
-  const footerHint = !cashOk
-    ? '请填写初始资金'
-    : !rangeOk
-      ? '请选择有效回测区间'
-      : !feesOk
-        ? '费率必须为不小于 0 的数字'
-        : canConfirm
-          ? `将回测 ${confirmCount} 只标的`
-          : '请选择标的';
+  const stocksPending = loadingStocks && stocks.length === 0;
+  const indexesPending = loadingIndexes && indexes.length === 0;
+  const catalogPending = tab === 'index' ? indexesPending : stocksPending;
+
+  const footerHint = catalogPending
+    ? '正在加载标的…'
+    : !cashOk
+      ? '请填写初始资金'
+      : !rangeOk
+        ? '请选择有效回测区间'
+        : !feesOk
+          ? '费率必须为不小于 0 的数字'
+          : canConfirm
+            ? `将回测 ${confirmCount} 只标的`
+            : '请选择标的';
 
   return (
     <Dialog.Root
@@ -342,7 +368,7 @@ export function UniverseDialog({
                   autoFocus
                   value={query}
                   placeholder="搜索名称或代码"
-                  disabled={busy}
+                  disabled={busy || stocksPending}
                   onChange={(event) => setQuery(event.target.value)}
                   className={cn(PARAM_INPUT, 'w-full')}
                 />
@@ -361,7 +387,9 @@ export function UniverseDialog({
                     ))}
                   </div>
                 ) : null}
-                {filtered.length ? (
+                {stocksPending ? (
+                  <CatalogLoading label="正在加载股票…" />
+                ) : filtered.length ? (
                   <VirtualList
                     className="min-h-[220px] max-h-[320px] overflow-auto rounded-md border border-border bg-background"
                     count={filtered.length}
@@ -393,33 +421,41 @@ export function UniverseDialog({
               </>
             ) : null}
             {tab === 'index' ? (
-              <div className="min-h-[220px] max-h-[320px] overflow-auto rounded-md border border-border">
-                {indexes.map((item) => (
-                  <button
-                    key={item.code}
-                    type="button"
-                    className={cn(
-                      'flex min-h-8 w-full items-center justify-between border-b border-border px-2.5 text-left last:border-b-0',
-                      item.code === indexCode ? 'bg-primary/10' : 'hover:bg-muted',
-                    )}
-                    onClick={() => setIndexCode(item.code)}
-                  >
-                    <strong className="text-sm font-medium">{item.name}</strong>
-                    <span className="font-mono text-[11px] text-muted-foreground">
-                      {item.size == null ? item.code : `${item.size} 只成分股`}
-                    </span>
-                  </button>
-                ))}
-                {!error && indexes.length === 0 ? (
-                  <div className="px-2 py-8 text-center text-xs text-muted-foreground">暂无指数</div>
-                ) : null}
-              </div>
+              indexesPending ? (
+                <CatalogLoading label="正在加载指数…" />
+              ) : (
+                <div className="min-h-[220px] max-h-[320px] overflow-auto rounded-md border border-border">
+                  {indexes.map((item) => (
+                    <button
+                      key={item.code}
+                      type="button"
+                      className={cn(
+                        'flex min-h-8 w-full items-center justify-between border-b border-border px-2.5 text-left last:border-b-0',
+                        item.code === indexCode ? 'bg-primary/10' : 'hover:bg-muted',
+                      )}
+                      onClick={() => setIndexCode(item.code)}
+                    >
+                      <strong className="text-sm font-medium">{item.name}</strong>
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {item.size == null ? item.code : `${item.size} 只成分股`}
+                      </span>
+                    </button>
+                  ))}
+                  {!error && indexes.length === 0 ? (
+                    <div className="px-2 py-8 text-center text-xs text-muted-foreground">暂无指数</div>
+                  ) : null}
+                </div>
+              )
             ) : null}
             {tab === 'all' ? (
-              <div className="space-y-2 py-3 text-sm leading-relaxed">
-                <p>回测全部在市 A 股，共 {stocks.length} 只。</p>
-                <p className="text-xs text-muted-foreground">标的数量大时耗时会明显增加，也可能触发任务超时。</p>
-              </div>
+              stocksPending ? (
+                <CatalogLoading label="正在加载股票…" />
+              ) : (
+                <div className="space-y-2 py-3 text-sm leading-relaxed">
+                  <p>回测全部在市 A 股，共 {stocks.length} 只。</p>
+                  <p className="text-xs text-muted-foreground">标的数量大时耗时会明显增加，也可能触发任务超时。</p>
+                </div>
+              )
             ) : null}
           </div>
 
@@ -433,7 +469,7 @@ export function UniverseDialog({
                 type="button"
                 size="sm"
                 className={PRIMARY_BUTTON_CLASS}
-                disabled={busy || !canConfirm}
+                disabled={busy || catalogPending || !canConfirm}
                 onClick={confirm}
               >
                 {busy ? '提交中…' : '开始回测'}

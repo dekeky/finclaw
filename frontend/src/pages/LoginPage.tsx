@@ -7,6 +7,11 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import * as authApi from '../api/auth';
+import {
+  clearRememberedLogin,
+  readRememberedLogin,
+  writeRememberedLogin,
+} from '@/lib/loginRemember';
 
 type AuthMode = 'login' | 'register' | 'reset';
 
@@ -59,11 +64,12 @@ export default function LoginPage() {
   const location = useLocation();
   const [mode, setMode] = useState<AuthMode>('login');
   const [verificationEnabled, setVerificationEnabled] = useState(false);
-  const [loginId, setLoginId] = useState('');
+  const [loginId, setLoginId] = useState(() => readRememberedLogin()?.loginId ?? '');
   const [registerAccount, setRegisterAccount] = useState('');
   const [registerEmail, setRegisterEmail] = useState('');
   const [resetEmail, setResetEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState(() => readRememberedLogin()?.password ?? '');
+  const [rememberLogin, setRememberLogin] = useState(true);
   const [confirmPassword, setConfirmPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [code, setCode] = useState('');
@@ -108,10 +114,24 @@ export default function LoginPage() {
     setConfirmPassword('');
   };
 
+  const persistLogin = (account: string, nextPassword: string) => {
+    if (rememberLogin) writeRememberedLogin(account, nextPassword);
+    else clearRememberedLogin();
+  };
+
+  const restoreRememberedLogin = () => {
+    const remembered = readRememberedLogin();
+    if (!remembered) return;
+    setLoginId(remembered.loginId);
+    setPassword(remembered.password);
+    setRememberLogin(true);
+  };
+
   const switchMode = (next: AuthMode) => {
     if (next === 'reset' && !verificationEnabled) return;
     setMode(next);
     clearForm();
+    if (next === 'login') restoreRememberedLogin();
   };
 
   const handleSendCode = async () => {
@@ -159,6 +179,7 @@ export default function LoginPage() {
           params.code = code.trim();
         }
         await register(params);
+        persistLogin(registerAccount.trim(), password);
         navigate(from, { replace: true });
         return;
       }
@@ -168,12 +189,18 @@ export default function LoginPage() {
         if (!code.trim()) throw new Error('请输入验证码');
         if (password !== confirmPassword) throw new Error('两次输入的密码不一致');
         await resetPassword(resetEmail.trim(), password, code.trim());
+        persistLogin(resetEmail.trim(), password);
         setInfo('密码已重置，请登录');
-        switchMode('login');
+        setLoginId(resetEmail.trim());
+        setMode('login');
+        setError('');
+        setCode('');
+        setConfirmPassword('');
         return;
       }
 
       await login(loginId.trim(), password);
+      persistLogin(loginId.trim(), password);
       navigate(from, { replace: true });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : '认证失败');
@@ -229,6 +256,19 @@ export default function LoginPage() {
                     placeholder="请输入密码"
                     autoComplete="current-password"
                   />
+                  <label className="flex items-center gap-2 pt-0.5 text-xs text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={rememberLogin}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setRememberLogin(checked);
+                        if (!checked) clearRememberedLogin();
+                      }}
+                      className="size-3.5 rounded border-input accent-violet-600"
+                    />
+                    记住密码，下次直接登录
+                  </label>
                   {verificationEnabled && (
                     <div className="flex justify-end">
                       <button

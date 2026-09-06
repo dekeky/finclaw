@@ -33,8 +33,8 @@ type AgentManager struct {
 	// Per-agent delivery queues fed by a single OutboundChan dispatcher per agent.
 	// Go channels allow only one reader on OutboundChan; the dispatcher routes by
 	// outbound channel name so web (fin) and weixin can run in parallel.
-	finclawOutboundChs map[string]chan bus.OutboundMessage
-	weixinOutboundChs  map[string]chan bus.OutboundMessage
+	finclawOutboundChs        map[string]chan bus.OutboundMessage
+	weixinOutboundChs         map[string]chan bus.OutboundMessage
 	outboundDispatcherCancels map[string]context.CancelFunc
 	weixinChannels            map[string]*weixin.WeixinChannel
 	weixinMu                  sync.Mutex
@@ -50,15 +50,15 @@ type AgentManager struct {
 
 func NewAgentManager(ctx context.Context, finclawConf *config.FinclawConfig) *AgentManager {
 	return &AgentManager{
-		ctx:                ctx,
-		agents:             make(map[string]*agentEntry),
-		msgBusses:          make(map[string]*bus.MessageBus),
-		finclawChannel:     make(map[string]*finclaw.FinClawChannel),
+		ctx:                       ctx,
+		agents:                    make(map[string]*agentEntry),
+		msgBusses:                 make(map[string]*bus.MessageBus),
+		finclawChannel:            make(map[string]*finclaw.FinClawChannel),
 		finclawOutboundChs:        make(map[string]chan bus.OutboundMessage),
 		weixinOutboundChs:         make(map[string]chan bus.OutboundMessage),
 		outboundDispatcherCancels: make(map[string]context.CancelFunc),
-		finclawConf:        finclawConf,
-		mediaStore:         media.NewFileMediaStore(),
+		finclawConf:               finclawConf,
+		mediaStore:                media.NewFileMediaStore(),
 	}
 }
 
@@ -83,6 +83,7 @@ func (m *AgentManager) AddAgent(name string, agent Agent, msgBus *bus.MessageBus
 
 	finclawChannel := finclaw.NewFinChannel(m.ctx, msgBus, m.finclawConf.FinClawChannelConf)
 	finclawChannel.SetMediaStore(m.mediaStore)
+	finclawChannel.SetSharedDocsContext(sharedDocsBrief(name))
 	go finclawChannel.ProcessAgentMessage(finclawOutCh)
 	m.finclawChannel[name] = finclawChannel
 	m.startOutboundDispatcher(name, msgBus, finclawChannel, finclawOutCh, weixinOutCh)
@@ -264,6 +265,24 @@ func (m *AgentManager) NamesByUser(userID string) []string {
 // AgentKey returns the internal key for a user's agent.
 func AgentKey(userID, agentName string) string {
 	return userID + ":" + agentName
+}
+
+// sharedDocsBrief builds the per-session environment briefing that tells an
+// agent where the account-level shared docs directory lives.
+func sharedDocsBrief(internalKey string) string {
+	userID, agentName := ParseAgentKey(internalKey)
+	if userID == "" || agentName == "" {
+		return ""
+	}
+	home := UserAgentHome(userID)
+	docsRoot := AccountDocsDir(home)
+	workspace := picoclaw.AgentWorkspacePath(home, agentName)
+	return fmt.Sprintf(
+		"当前账户下所有 Agent 共享的文档目录：%s。你的个人工作区：%s。\n"+
+			"当你产出研究报告、分析、备忘等长文档并想保存为文件时，请把文件写到上面的共享文档目录（绝对路径，可自建子目录，如 %s），"+
+			"而不要写进你自己的个人工作区；当用户要求参考、更新过往文档时，也请优先从共享文档目录读取。",
+		docsRoot, workspace, filepath.Join(docsRoot, "reports"),
+	)
 }
 
 // ParseAgentKey splits an internal key into userID and agentName.

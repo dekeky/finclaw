@@ -1,6 +1,7 @@
 import type { PricePoint } from '@/api/backtest';
 import { dayKey } from './format';
 import type { CandlePoint } from './KLineChart';
+import { fillReasonForOrder, type RebalanceEvent } from './RebalanceTable';
 import { cumulativePct } from './series';
 
 function asPrice(value: number | null | undefined, fallback: number): number {
@@ -8,36 +9,46 @@ function asPrice(value: number | null | undefined, fallback: number): number {
 }
 
 function addFill(
-  bucket: Map<string, { price: number; quantity: number }>,
+  bucket: Map<string, { price: number; quantity: number; reason?: string }>,
   key: string,
   price: number,
   quantity: number,
+  reason: string,
 ) {
   const prev = bucket.get(key);
   if (!prev) {
-    bucket.set(key, { price, quantity });
+    bucket.set(key, { price, quantity, reason: reason || undefined });
     return;
   }
   const total = prev.quantity + quantity;
+  const nextReason =
+    prev.reason && reason && prev.reason !== reason ? `${prev.reason}；${reason}` : prev.reason || reason || undefined;
   bucket.set(key, {
     price: total === 0 ? price : (prev.price * prev.quantity + price * quantity) / total,
     quantity: total,
+    reason: nextReason,
   });
 }
 
-export function buildCandles(code: string, prices: PricePoint[], orders: Record<string, unknown>[]): CandlePoint[] {
-  const buys = new Map<string, { price: number; quantity: number }>();
-  const sells = new Map<string, { price: number; quantity: number }>();
+export function buildCandles(
+  code: string,
+  prices: PricePoint[],
+  orders: Record<string, unknown>[],
+  rebalances: RebalanceEvent[] = [],
+): CandlePoint[] {
+  const buys = new Map<string, { price: number; quantity: number; reason?: string }>();
+  const sells = new Map<string, { price: number; quantity: number; reason?: string }>();
   for (const order of orders) {
     if (String(order.symbol ?? '') !== code) continue;
     if (String(order.status ?? '').toLowerCase() !== 'filled') continue;
-    const key = dayKey(String(order.created_at ?? ''));
+    const key = dayKey(String(order.updated_at ?? order.created_at ?? ''));
     const price = Number(order.avg_price);
     const quantity = Number(order.filled_quantity ?? order.quantity);
     if (!key || !Number.isFinite(price) || !Number.isFinite(quantity)) continue;
     const side = String(order.side).toLowerCase();
-    if (side === 'buy') addFill(buys, key, price, quantity);
-    if (side === 'sell') addFill(sells, key, price, quantity);
+    const reason = fillReasonForOrder(order, rebalances);
+    if (side === 'buy') addFill(buys, key, price, quantity, reason);
+    if (side === 'sell') addFill(sells, key, price, quantity, reason);
   }
   return prices.flatMap((point) => {
     const candle = toCandle(point, buys, sells);
@@ -47,8 +58,8 @@ export function buildCandles(code: string, prices: PricePoint[], orders: Record<
 
 function toCandle(
   point: PricePoint,
-  buys: Map<string, { price: number; quantity: number }>,
-  sells: Map<string, { price: number; quantity: number }>,
+  buys: Map<string, { price: number; quantity: number; reason?: string }>,
+  sells: Map<string, { price: number; quantity: number; reason?: string }>,
 ): CandlePoint | null {
   const close = point.close;
   if (typeof close !== 'number' || !Number.isFinite(close)) return null;

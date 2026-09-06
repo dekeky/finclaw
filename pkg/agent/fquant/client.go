@@ -110,6 +110,7 @@ type SubmitRunRequest struct {
 type SubmitRunResponse struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
+	Name   string `json:"name,omitempty"`
 }
 
 type ListEnvelope[T any] struct {
@@ -137,6 +138,22 @@ type BarSeries struct {
 // BarsResponse is GET /api/market/bars from fquant, and the FinClaw proxy body.
 type BarsResponse struct {
 	Items []BarSeries `json:"items"`
+}
+
+// StrategyTemplate is the canonical default source fquant serves for new strategies.
+type StrategyTemplate struct {
+	Name   string `json:"name"`
+	Source string `json:"source"`
+}
+
+// GetStrategyTemplate fetches the default strategy template from fquant
+// (GET /api/strategy-template).
+func (c *Client) GetStrategyTemplate(ctx context.Context) (*StrategyTemplate, error) {
+	var out StrategyTemplate
+	if err := c.doJSON(ctx, http.MethodGet, "/api/strategy-template", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // UpsertStrategy creates or updates a strategy source file in fquant.

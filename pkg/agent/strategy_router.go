@@ -1,10 +1,14 @@
 package agentruntime
 
 import (
+	"context"
+	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/dekeky/rssmanager/pkg/ginx"
+	"github.com/finclaw/pkg/agent/fquant"
 	"github.com/gin-gonic/gin"
 )
 
@@ -12,10 +16,15 @@ import (
 type StrategyRouter struct {
 	r              *gin.Engine
 	authMiddleware gin.HandlerFunc
+	fquantClient   *fquant.Client
 }
 
-func NewStrategyRouter(r *gin.Engine, authMiddleware gin.HandlerFunc) *StrategyRouter {
-	return &StrategyRouter{r: r, authMiddleware: authMiddleware}
+func NewStrategyRouter(r *gin.Engine, authMiddleware gin.HandlerFunc, fquantAddr string) *StrategyRouter {
+	return &StrategyRouter{
+		r:              r,
+		authMiddleware: authMiddleware,
+		fquantClient:   fquant.New(fquantAddr),
+	}
 }
 
 func (sr *StrategyRouter) ConfigRouter() {
@@ -71,7 +80,11 @@ func (sr *StrategyRouter) createStrategy(c *gin.Context) {
 	userID := getUserID(c)
 	var req createStrategyRequest
 	ginx.PanicIfNotNil(c.ShouldBindJSON(&req))
-	detail, err := NewStrategyStore(userID).Create(req.Name, req.Platform, req.Script, req.Agent)
+	script := req.Script
+	if strings.TrimSpace(script) == "" {
+		script = sr.defaultScriptForCreate(c, req.Platform)
+	}
+	detail, err := NewStrategyStore(userID).Create(req.Name, req.Platform, script, req.Agent)
 	if err != nil {
 		status := http.StatusBadRequest
 		if strings.Contains(err.Error(), "already exists") {
@@ -81,6 +94,27 @@ func (sr *StrategyRouter) createStrategy(c *gin.Context) {
 		return
 	}
 	ginx.NewRender(c, http.StatusCreated).Data(detail)
+}
+
+// defaultScriptForCreate returns the starter code for a brand-new strategy.
+// FinClaw strategies pull the canonical template from the fquant service
+// (GET /api/strategy-template); when fquant is unreachable we fall back to the
+// embedded copy so strategy creation still works offline.
+func (sr *StrategyRouter) defaultScriptForCreate(c *gin.Context, platform string) string {
+	norm, _ := normalizeStrategyPlatform(platform)
+	if norm != StrategyPlatformFinClaw {
+		return defaultStrategyScript(norm)
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+	defer cancel()
+	tpl, err := sr.fquantClient.GetStrategyTemplate(ctx)
+	if err == nil && strings.TrimSpace(tpl.Source) != "" {
+		return tpl.Source
+	}
+	if err != nil {
+		log.Printf("fetch fquant strategy template: %v; fall back to built-in default", err)
+	}
+	return defaultStrategyScript(norm)
 }
 
 type updateStrategyRequest struct {

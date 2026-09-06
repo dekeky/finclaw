@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from
 import {
   deleteBacktestRun,
   getBacktestRun,
+  getFquantBacktestRun,
   listBacktestRuns,
   renameBacktestRun,
   runDisplayName,
@@ -14,6 +15,7 @@ import { RunReport } from '@/components/backtest/RunReport';
 import RunConfigDialog from '@/components/backtest/RunConfigDialog';
 import SourceDialog from '@/components/backtest/SourceDialog';
 import {
+  elapsedBetween,
   elapsedSince,
   formatDateMinute,
   formatDuration,
@@ -28,10 +30,26 @@ import {
 } from '@/lib/panelWidths';
 import { useAuth } from '@/state/auth';
 import { toast } from 'sonner';
+import { isLiveStatus, mergeLiveDetail, sameLiveSnapshot, shouldFetchLiveRun } from './liveRun';
 import './fquant-ui.css';
 
-function isLiveStatus(status?: string | null): boolean {
-  return status === 'queued' || status === 'running';
+function patchListItemFromDetail(row: RunListItem, detail: RunDetail): RunListItem {
+  return {
+    ...row,
+    status: detail.status,
+    updated_at: detail.updated_at,
+    name: detail.name ?? row.name,
+    started_at: detail.started_at ?? row.started_at,
+    finished_at: detail.finished_at ?? row.finished_at,
+    duration_seconds: detail.duration_seconds ?? row.duration_seconds,
+  };
+}
+
+function finishedDurationSeconds(item: RunListItem): number | null {
+  if (item.duration_seconds != null && Number.isFinite(item.duration_seconds)) {
+    return item.duration_seconds;
+  }
+  return elapsedBetween(item.started_at || item.created_at, item.finished_at || item.updated_at);
 }
 
 function runListDuration(item: RunListItem, now: number): string | null {
@@ -40,10 +58,9 @@ function runListDuration(item: RunListItem, now: number): string | null {
     if (elapsed == null) return null;
     return item.status === 'queued' ? `已等待 ${formatDuration(elapsed)}` : formatDuration(elapsed);
   }
-  if (item.duration_seconds != null) {
-    return `耗时 ${formatDuration(item.duration_seconds)}`;
-  }
-  return null;
+  const seconds = finishedDurationSeconds(item);
+  if (seconds == null) return null;
+  return `耗时 ${formatDuration(seconds)}`;
 }
 
 function placeholderRun(item: RunListItem): RunDetail {
@@ -212,13 +229,23 @@ export function BacktestRunsPanel({
   useEffect(() => {
     if (!selectedId || !user) return;
     let cancelled = false;
-    getBacktestRun(selectedId)
+    const fetchRun = shouldFetchLiveRun(currentRef.current, selectedId)
+      ? getFquantBacktestRun
+      : getBacktestRun;
+    fetchRun(selectedId)
       .then((detail) => {
         if (cancelled || selectedIdRef.current !== selectedId) return;
         if (detail.request?.strategy_name && detail.request.strategy_name !== strategyNameRef.current) {
           return;
         }
-        setCurrent(detail);
+        setCurrent((prev) => mergeLiveDetail(prev, detail));
+        setItems((list) => {
+          const index = list.findIndex((row) => row.id === detail.id);
+          if (index < 0) return list;
+          const next = list.slice();
+          next[index] = patchListItemFromDetail(list[index], detail);
+          return next;
+        });
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -231,27 +258,68 @@ export function BacktestRunsPanel({
   useEffect(() => {
     if (!live || !user) return;
     let cancelled = false;
-    const timer = window.setInterval(() => {
-      void (async () => {
-        try {
+    let timer = 0;
+    const tick = async () => {
+      const started = Date.now();
+      try {
+        const targetId = selectedIdRef.current;
+        if (targetId && isLiveStatus(currentRef.current?.status)) {
+          const detail = await getFquantBacktestRun(targetId);
+          if (cancelled) return;
+          if (!sameLiveSnapshot(currentRef.current, detail)) {
+            setCurrent(mergeLiveDetail(currentRef.current, detail));
+          }
+          setItems((list) => {
+            const index = list.findIndex((row) => row.id === detail.id);
+            if (index < 0) return list;
+            const patched = patchListItemFromDetail(list[index], detail);
+            const row = list[index];
+            if (
+              row.status === patched.status &&
+              row.updated_at === patched.updated_at &&
+              row.started_at === patched.started_at &&
+              row.finished_at === patched.finished_at &&
+              row.duration_seconds === patched.duration_seconds &&
+              row.name === patched.name
+            ) {
+              return list;
+            }
+            const next = list.slice();
+            next[index] = patched;
+            return next;
+          });
+          if (!isLiveStatus(detail.status)) {
+            void getBacktestRun(targetId)
+              .then((stored) => {
+                if (cancelled || selectedIdRef.current !== targetId) return;
+                setCurrent(stored);
+                setItems((list) => {
+                  const index = list.findIndex((row) => row.id === stored.id);
+                  if (index < 0) return list;
+                  const next = list.slice();
+                  next[index] = patchListItemFromDetail(list[index], stored);
+                  return next;
+                });
+              })
+              .catch(() => undefined);
+          }
+        } else {
           const list = await listBacktestRuns();
           if (cancelled) return;
-          const scoped = list.filter((item) => belongsToStrategy(item, strategyNameRef.current));
-          setItems(scoped);
-          const targetId = selectedIdRef.current;
-          const row = scoped.find((item) => item.id === targetId);
-          if (targetId && (Boolean(row && isLiveStatus(row.status)) || isLiveStatus(currentRef.current?.status))) {
-            const detail = await getBacktestRun(targetId);
-            if (!cancelled) setCurrent(detail);
-          }
-        } catch (err) {
-          if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+          setItems(list.filter((item) => belongsToStrategy(item, strategyNameRef.current)));
         }
-      })();
-    }, 1000);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!cancelled && isLiveStatus(currentRef.current?.status)) {
+          timer = window.setTimeout(tick, Math.max(0, 1000 - (Date.now() - started)));
+        }
+      }
+    };
+    void tick();
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
     };
   }, [live, user, strategyName]);
 
@@ -364,16 +432,12 @@ export function BacktestRunsPanel({
         className="rail run-rail relative shrink-0"
         style={{ width: runResize.width }}
       >
-        <div className="rail-head">
-          <span>本策略回测</span>
-        </div>
         <div className="rail-list">
+          {user && error && items.length > 0 ? <p className="error">{error}</p> : null}
           {!user ? (
             <p className="empty muted">登录后查看回测记录。</p>
-          ) : error ? (
-            <p className="error">{error}</p>
           ) : items.length === 0 ? (
-            <p className="empty">本策略还没有回测。保存后点击运行即可开始。</p>
+            <p className="empty">{error || '还没有回测记录。'}</p>
           ) : (
             items.map((item) => {
               const duration = runListDuration(item, now);

@@ -24,7 +24,15 @@ func (fr *FinClawRouter) handlePublicShare(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "share not found"})
 		return
 	}
-	workspace, err := agentruntime.ResolveAgentWorkspace(fr.agentManager, share.UserID, share.AgentName)
+	// Doc shares now resolve against the account-level shared docs; skill
+	// shares stay scoped to the agent workspace that owns the skill.
+	var workspace string
+	if share.Kind == "skill" {
+		workspace, err = agentruntime.ResolveAgentWorkspace(fr.agentManager, share.UserID, share.AgentName)
+	} else {
+		workspace = agentruntime.AccountDocsRootForUser(share.UserID)
+		agentruntime.EnsureAccountDocsSwept(share.UserID)
+	}
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "shared asset not found"})
 		return

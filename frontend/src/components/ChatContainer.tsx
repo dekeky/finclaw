@@ -144,7 +144,7 @@ export function ChatContainer({
           <ChatMascot
             size={72}
             decorative
-            className="mb-3 rounded-2xl shadow-md ring-2 ring-violet-500/15"
+            className="mx-auto mb-3 rounded-2xl shadow-md ring-2 ring-violet-500/15"
           />
           <h3 className="mb-2 text-base font-medium text-foreground">{dockTitle ?? '想问点什么？'}</h3>
           <p className="mb-4 max-w-xs text-xs text-muted-foreground leading-relaxed">

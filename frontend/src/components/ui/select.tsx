@@ -36,6 +36,7 @@ function SelectTrigger({
     <SelectPrimitive.Trigger
       data-slot="select-trigger"
       data-size={size}
+      type="button"
       className={cn(
         "flex w-fit items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none select-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 data-[placeholder]:text-muted-foreground data-[size=default]:h-9 data-[size=sm]:h-8 data-[size=sm]:text-xs dark:bg-input/30 dark:hover:bg-input/50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
@@ -76,7 +77,7 @@ function SelectContent({
           className={cn(
             "p-1",
             position === "popper" &&
-              "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)] scroll-my-1",
+              "w-full min-w-[var(--radix-select-trigger-width)] scroll-my-1",
           )}
         >
           {children}
@@ -104,10 +105,13 @@ function SelectItem({
   className,
   children,
   trailing,
+  valueLabel,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Item> & {
   /** 行尾附加内容（如操作图标），渲染在选中勾选标记左侧。 */
   trailing?: React.ReactNode
+  /** 仅此项会镜像到 Trigger 的 SelectValue；children 只出现在下拉列表。 */
+  valueLabel?: React.ReactNode
 }) {
   return (
     <SelectPrimitive.Item
@@ -123,7 +127,14 @@ function SelectItem({
           <IconCheck className="size-4" />
         </SelectPrimitive.ItemIndicator>
       </span>
-      <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      {valueLabel != null ? (
+        <>
+          {children}
+          <SelectPrimitive.ItemText>{valueLabel}</SelectPrimitive.ItemText>
+        </>
+      ) : (
+        <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      )}
       {trailing}
     </SelectPrimitive.Item>
   )

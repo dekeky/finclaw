@@ -6,10 +6,17 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
+
+var defaultBacktestNamePattern = regexp.MustCompile(`dual_ma_\d{8}_\d{4}`)
 
 func TestSubmitRunRejectsJoinQuant(t *testing.T) {
 	t.Setenv("FINCLAW_HOME", t.TempDir())
@@ -39,6 +46,14 @@ func TestSubmitRunRejectsJoinQuant(t *testing.T) {
 
 func TestSubmitRunProxiesToFquant(t *testing.T) {
 	t.Setenv("FINCLAW_HOME", t.TempDir())
+	origInterval := backtestPersistPollInterval
+	origTimeout := backtestPersistTimeout
+	backtestPersistPollInterval = time.Millisecond
+	backtestPersistTimeout = 50 * time.Millisecond
+	t.Cleanup(func() {
+		backtestPersistPollInterval = origInterval
+		backtestPersistTimeout = origTimeout
+	})
 	userID := "u_test"
 	store := NewStrategyStore(userID)
 	if _, err := store.Create("dual_ma", StrategyPlatformFinClaw, "from akquant import Strategy\nclass S(Strategy):\n    pass\n", ""); err != nil {
@@ -100,12 +115,21 @@ func TestSubmitRunProxiesToFquant(t *testing.T) {
 	if !bytes.Contains(rec.Body.Bytes(), []byte("abc123")) {
 		t.Fatalf("response missing run id: %s", rec.Body.String())
 	}
+	if !defaultBacktestNamePattern.Match(rec.Body.Bytes()) {
+		t.Fatalf("response missing default run name: %s", rec.Body.String())
+	}
 	if gotRun.Universe != "picks" || len(gotRun.Symbols) != 2 || gotRun.Symbols[0] != "600000" || gotRun.Symbols[1] != "000001" {
 		t.Fatalf("proxied run = %+v", gotRun)
+	}
+
+	stub := filepath.Join(localRunDir(t, userID, "abc123"), "summary.md")
+	if data, err := os.ReadFile(stub); err != nil || !bytes.Contains(data, []byte("queued")) {
+		t.Fatalf("local stub = %s err=%v", data, err)
 	}
 }
 
 func TestRunBlotterAndPositionsProxy(t *testing.T) {
+	t.Setenv("FINCLAW_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/users/u_test/runs/abc123":
@@ -113,14 +137,10 @@ func TestRunBlotterAndPositionsProxy(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"abc123","status":"succeeded","source":"class S(Strategy):\n    pass\n","request":{"strategy_name":"dual_ma"}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/users/u_test/runs/abc123/blotter":
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"orders":[{"symbol":"600000"}],"trades":[]}`))
+			_, _ = w.Write([]byte(`{"orders":[{"symbol":"600000","created_at":"2020-01-02","status":"filled"}],"rebalances":[{"time":"2020-01-02","method":"rebalance_weights","selected":["600000"],"status":"submitted"}],"trades":[]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/users/u_test/runs/abc123/positions":
-			if r.URL.Query().Get("date") != "2020-01-02" {
-				http.Error(w, `{"detail":"missing date"}`, http.StatusBadRequest)
-				return
-			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"items":[{"symbol":"600000","quantity":100}]}`))
+			_, _ = w.Write([]byte(`{"items":[{"symbol":"600000","quantity":100,"time":"2020-01-02T00:00:00"}]}`))
 		case r.Method == http.MethodPatch && r.URL.Path == "/api/users/u_test/runs/abc123":
 			raw, _ := io.ReadAll(r.Body)
 			var payload struct {
@@ -152,12 +172,29 @@ func TestRunBlotterAndPositionsProxy(t *testing.T) {
 	if detailRec.Code != http.StatusOK || !bytes.Contains(detailRec.Body.Bytes(), []byte("class S(Strategy)")) {
 		t.Fatalf("detail status=%d body=%s", detailRec.Code, detailRec.Body.String())
 	}
+	waitForLocalRun(t, "u_test", "abc123")
+	runDir := filepath.Join(AccountBacktestsRootForUser("u_test"), "dual_ma", "dual_ma")
+	if data, err := os.ReadFile(filepath.Join(runDir, "summary.md")); err != nil || !bytes.Contains(data, []byte("dual_ma")) {
+		t.Fatalf("persisted summary = %s err=%v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(runDir, "blotter.json")); !os.IsNotExist(err) {
+		t.Fatal("detail get should not persist blotter")
+	}
 
 	blotterReq := httptest.NewRequest(http.MethodGet, "/api/v1/backtest/runs/abc123/blotter", nil)
 	blotterRec := httptest.NewRecorder()
 	engine.ServeHTTP(blotterRec, blotterReq)
-	if blotterRec.Code != http.StatusOK || !bytes.Contains(blotterRec.Body.Bytes(), []byte("600000")) {
+	if blotterRec.Code != http.StatusOK || !bytes.Contains(blotterRec.Body.Bytes(), []byte("600000")) || !bytes.Contains(blotterRec.Body.Bytes(), []byte(`"page":1`)) {
 		t.Fatalf("blotter status=%d body=%s", blotterRec.Code, blotterRec.Body.String())
+	}
+	waitForLocalFile(t, filepath.Join(runDir, "blotter.json"), []byte("600000"))
+	waitForLocalFile(t, filepath.Join(runDir, "blotter-fills.json"), []byte("600000"))
+
+	fillsReq := httptest.NewRequest(http.MethodGet, "/api/v1/backtest/runs/abc123/blotter?fills=1", nil)
+	fillsRec := httptest.NewRecorder()
+	engine.ServeHTTP(fillsRec, fillsReq)
+	if fillsRec.Code != http.StatusOK || !bytes.Contains(fillsRec.Body.Bytes(), []byte("action_days")) {
+		t.Fatalf("fills status=%d body=%s", fillsRec.Code, fillsRec.Body.String())
 	}
 
 	posReq := httptest.NewRequest(http.MethodGet, "/api/v1/backtest/runs/abc123/positions?date=2020-01-02", nil)
@@ -175,6 +212,14 @@ func TestRunBlotterAndPositionsProxy(t *testing.T) {
 	if renameRec.Code != http.StatusOK || !bytes.Contains(renameRec.Body.Bytes(), []byte("我的回测")) {
 		t.Fatalf("rename status=%d body=%s", renameRec.Code, renameRec.Body.String())
 	}
+	renamedDir := filepath.Join(AccountBacktestsRootForUser("u_test"), "dual_ma", "我的回测")
+	if _, err := os.Stat(filepath.Join(renamedDir, "summary.md")); err != nil {
+		t.Fatalf("renamed dir missing: %v", err)
+	}
+	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
+		t.Fatalf("old named dir still exists")
+	}
+	runDir = renamedDir
 
 	blankReq := httptest.NewRequest(http.MethodPatch, "/api/v1/backtest/runs/abc123", bytes.NewReader([]byte(`{"name":"  "}`)))
 	blankReq.Header.Set("Content-Type", "application/json")
@@ -189,6 +234,9 @@ func TestRunBlotterAndPositionsProxy(t *testing.T) {
 	engine.ServeHTTP(delRec, delReq)
 	if delRec.Code != http.StatusOK || !bytes.Contains(delRec.Body.Bytes(), []byte("abc123")) {
 		t.Fatalf("delete status=%d body=%s", delRec.Code, delRec.Body.String())
+	}
+	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
+		t.Fatalf("local run dir still exists: %v", err)
 	}
 }
 
@@ -385,5 +433,208 @@ func TestUniverseAndFinaProxy(t *testing.T) {
 			!bytes.Contains(rec.Body.Bytes(), []byte("pe_ttm")) {
 			t.Fatalf("%s unexpected body = %s", path, rec.Body.String())
 		}
+	}
+}
+
+func TestCompletedBacktestReadsFromLocal(t *testing.T) {
+	t.Setenv("FINCLAW_HOME", t.TempDir())
+	var getRunHits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/users/u_test/runs/abc123":
+			getRunHits++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"abc123","name":"早盘回测","status":"succeeded","strategy_name":"dual_ma","live_equity":[{"time":"2020-01-02","equity":100100}],"result":{"metrics":{"trade_count":1},"equity_curve":[{"time":"2020-01-02","equity":100100}]},"request":{"strategy_name":"dual_ma"}}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/blotter"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"orders":[{"symbol":"600000","created_at":"2020-01-02"}],"rebalances":[{"time":"2020-01-02","method":"rebalance_weights","selected":["600000"]}],"trades":[]}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/positions"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"items":[{"symbol":"600000","quantity":100}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Set("userId", "u_test")
+		c.Next()
+	})
+	NewBacktestRouter(engine, func(c *gin.Context) { c.Next() }, srv.URL).ConfigRouter()
+
+	first := httptest.NewRecorder()
+	engine.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/api/v1/backtest/runs/abc123", nil))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first get status=%d body=%s", first.Code, first.Body.String())
+	}
+	if getRunHits != 1 {
+		t.Fatalf("first getRun hits = %d", getRunHits)
+	}
+	if !bytes.Contains(first.Body.Bytes(), []byte("equity_curve")) {
+		t.Fatalf("first get should return fquant result immediately: %s", first.Body.String())
+	}
+
+	waitForLocalRun(t, "u_test", "abc123")
+	if _, ok := loadLocalBlotter("u_test", "abc123"); ok {
+		t.Fatal("completed getRun should not prefetch blotter")
+	}
+	if _, ok := loadLocalPositions("u_test", "abc123"); ok {
+		t.Fatal("completed getRun should not prefetch positions")
+	}
+
+	listRec := httptest.NewRecorder()
+	engine.ServeHTTP(listRec, httptest.NewRequest(http.MethodGet, "/api/v1/backtest/runs", nil))
+	if listRec.Code != http.StatusOK || !bytes.Contains(listRec.Body.Bytes(), []byte("早盘回测")) {
+		t.Fatalf("local list status=%d body=%s", listRec.Code, listRec.Body.String())
+	}
+
+	second := httptest.NewRecorder()
+	engine.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/api/v1/backtest/runs/abc123", nil))
+	if second.Code != http.StatusOK || !bytes.Contains(second.Body.Bytes(), []byte("equity_curve")) {
+		t.Fatalf("second get status=%d body=%s", second.Code, second.Body.String())
+	}
+	if getRunHits != 1 {
+		t.Fatalf("completed getRun still hit fquant: hits=%d", getRunHits)
+	}
+
+	blotterRec := httptest.NewRecorder()
+	engine.ServeHTTP(blotterRec, httptest.NewRequest(http.MethodGet, "/api/v1/backtest/runs/abc123/blotter", nil))
+	if blotterRec.Code != http.StatusOK || !bytes.Contains(blotterRec.Body.Bytes(), []byte("600000")) {
+		t.Fatalf("on-demand blotter status=%d body=%s", blotterRec.Code, blotterRec.Body.String())
+	}
+
+	posRec := httptest.NewRecorder()
+	engine.ServeHTTP(posRec, httptest.NewRequest(http.MethodGet, "/api/v1/backtest/runs/abc123/positions?date=2020-01-02", nil))
+	if posRec.Code != http.StatusOK || !bytes.Contains(posRec.Body.Bytes(), []byte("600000")) {
+		t.Fatalf("on-demand positions status=%d body=%s", posRec.Code, posRec.Body.String())
+	}
+}
+
+func localRunDir(t *testing.T, userID, runID string) string {
+	t.Helper()
+	entry, ok := lookupBacktestIndex(userID, runID)
+	if !ok {
+		t.Fatalf("run %s not indexed", runID)
+	}
+	return filepath.Join(AccountBacktestsRootForUser(userID), filepath.FromSlash(entry.Dir))
+}
+
+func waitForLocalRun(t *testing.T, userID, runID string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if raw, ok := loadLocalRunRaw(userID, runID); ok && isTerminalBacktestStatus(statusFromBacktestRaw(raw)) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("local result persist did not finish")
+}
+
+func waitForLocalFile(t *testing.T, path string, contains []byte) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var last []byte
+	var lastErr error
+	for time.Now().Before(deadline) {
+		last, lastErr = os.ReadFile(path)
+		if lastErr == nil && (contains == nil || bytes.Contains(last, contains)) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("local file %s did not appear: data=%s err=%v", path, last, lastErr)
+}
+
+func TestLiveRunReadsEquityFromFquant(t *testing.T) {
+	t.Setenv("FINCLAW_HOME", t.TempDir())
+	userID := "u_live"
+	if err := persistSubmittedBacktest(userID, "run-live", "running", "dual_ma", "class S(Strategy): pass\n", submitBacktestRequest{
+		StrategyName: "dual_ma",
+		InitialCash:  100000,
+		StartTime:    "2020-01-01",
+		EndTime:      "2020-12-31",
+		Universe:     "picks",
+		Symbols:      []string{"600000"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistBacktestRun(userID, json.RawMessage(`{
+		"id":"run-live","status":"running","strategy_name":"dual_ma",
+		"live_equity":[{"time":"2020-01-02","equity":100000}]
+	}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	var getRunHits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/users/u_live/runs/run-live" {
+			http.NotFound(w, r)
+			return
+		}
+		getRunHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"run-live","status":"running","strategy_name":"dual_ma","source":"LIVE_SOURCE_SHOULD_DROP","live_equity":[{"time":"2020-01-02","equity":100000},{"time":"2020-01-03","equity":101000}]}`))
+	}))
+	defer srv.Close()
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Set("userId", userID)
+		c.Next()
+	})
+	NewBacktestRouter(engine, func(c *gin.Context) { c.Next() }, srv.URL).ConfigRouter()
+
+	first := httptest.NewRecorder()
+	engine.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/api/v1/backtest/runs/run-live", nil))
+	if first.Code != http.StatusOK || !bytes.Contains(first.Body.Bytes(), []byte("100000")) {
+		t.Fatalf("live FinClaw get should return local stub status=%d body=%s", first.Code, first.Body.String())
+	}
+	if bytes.Contains(first.Body.Bytes(), []byte("101000")) {
+		t.Fatal("live FinClaw get should not proxy fquant equity")
+	}
+	if getRunHits != 0 {
+		t.Fatalf("live FinClaw get should not hit fquant, hits=%d", getRunHits)
+	}
+
+	second := httptest.NewRecorder()
+	engine.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/api/v1/backtest/runs/run-live", nil))
+	if second.Code != http.StatusOK || bytes.Contains(second.Body.Bytes(), []byte("101000")) {
+		t.Fatalf("second live get status=%d body=%s", second.Code, second.Body.String())
+	}
+	if getRunHits != 0 {
+		t.Fatalf("live FinClaw get still hit fquant: hits=%d", getRunHits)
+	}
+
+	fresh := httptest.NewRecorder()
+	engine.ServeHTTP(fresh, httptest.NewRequest(http.MethodGet, "/api/v1/backtest/runs/run-live?live=1", nil))
+	if fresh.Code != http.StatusOK || !bytes.Contains(fresh.Body.Bytes(), []byte("101000")) {
+		t.Fatalf("live=1 should proxy fquant equity status=%d body=%s", fresh.Code, fresh.Body.String())
+	}
+	if getRunHits != 1 {
+		t.Fatalf("live=1 hits = %d", getRunHits)
+	}
+}
+
+func TestBacktestRuntimeExposesFquant(t *testing.T) {
+	t.Setenv("FINCLAW_HOME", t.TempDir())
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Set("userId", "u_live")
+		c.Next()
+	})
+	NewBacktestRouter(engine, func(c *gin.Context) { c.Next() }, "http://127.0.0.1:8001").ConfigRouter()
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/backtest/runtime", nil))
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("http://127.0.0.1:8001")) {
+		t.Fatalf("runtime status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("u_live")) {
+		t.Fatalf("runtime missing username: %s", rec.Body.String())
 	}
 }

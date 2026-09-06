@@ -127,6 +127,79 @@ export function peakCapitalFromFills(orders: Record<string, unknown>[]): Map<str
   return peaks;
 }
 
+function fillFee(order: Record<string, unknown>): number {
+  const total = num(order.commission);
+  if (total) return total;
+  return num(order.commission_fee) + num(order.stamp_tax) + num(order.transfer_fee);
+}
+
+function realizedFromFills(
+  orders: Record<string, unknown>[],
+): Map<string, { realized: number; wins: number; losses: number; trades: number }> {
+  const books = new Map<string, { qty: number; cost: number }>();
+  const out = new Map<string, { realized: number; wins: number; losses: number; trades: number }>();
+  const filled = orders
+    .filter((order) => String(order.status ?? '').toLowerCase() === 'filled')
+    .sort((a, b) =>
+      String(a.created_at ?? a.updated_at ?? '').localeCompare(String(b.created_at ?? b.updated_at ?? '')),
+    );
+  for (const order of filled) {
+    const symbol = String(order.symbol ?? '').trim();
+    if (!symbol) continue;
+    const qty = num(order.filled_quantity ?? order.quantity);
+    const price = num(order.avg_price) || (qty ? num(order.filled_value) / qty : 0);
+    if (qty <= 0 || !(price > 0)) continue;
+    const fee = fillFee(order);
+    const book = books.get(symbol) ?? { qty: 0, cost: 0 };
+    const row = out.get(symbol) ?? { realized: 0, wins: 0, losses: 0, trades: 0 };
+    const side = String(order.side ?? '').toLowerCase();
+    if (side === 'buy') {
+      if (book.qty < -1e-8) {
+        const avg = book.cost / book.qty;
+        const closed = Math.min(Math.abs(book.qty), qty);
+        const pnl = (avg - price) * closed - fee * (closed / qty);
+        row.realized += pnl;
+        row.trades += 1;
+        if (pnl > 0) row.wins += 1;
+        else if (pnl < 0) row.losses += 1;
+        book.cost -= avg * closed;
+        book.qty += closed;
+        const extra = qty - closed;
+        if (extra > 1e-8) {
+          book.cost += price * extra + fee * (extra / qty);
+          book.qty += extra;
+        }
+      } else {
+        book.cost += price * qty + fee;
+        book.qty += qty;
+      }
+    } else if (side === 'sell') {
+      if (book.qty > 1e-8) {
+        const avg = book.cost / book.qty;
+        const closed = Math.min(book.qty, qty);
+        const pnl = price * closed - fee * (closed / qty) - avg * closed;
+        row.realized += pnl;
+        row.trades += 1;
+        if (pnl > 0) row.wins += 1;
+        else if (pnl < 0) row.losses += 1;
+        book.cost -= avg * closed;
+        book.qty -= closed;
+        const extra = qty - closed;
+        if (extra > 1e-8) {
+          book.qty -= extra;
+          book.cost -= price * extra - fee * (extra / qty);
+        }
+      } else {
+        book.qty -= qty;
+        book.cost -= price * qty - fee;
+      }
+    }
+    books.set(symbol, book);
+    out.set(symbol, row);
+  }
+  return out;
+}
+
 function applyFill(book: { qty: number; cost: number; cash: number }, side: string, qty: number, price: number, commission: number) {
   if (side === 'buy') {
     book.cash -= price * qty + commission;
@@ -231,14 +304,25 @@ export function collectSymbolStats(
     return row;
   };
   for (const code of symbols) ensure(code);
-  for (const trade of trades) {
-    const row = ensure(String(trade.symbol ?? ''));
-    if (!row) continue;
-    const pnl = num(trade.net_pnl ?? trade.pnl);
-    row.realized += pnl;
-    row.trades += 1;
-    if (pnl > 0) row.wins += 1;
-    else if (pnl < 0) row.losses += 1;
+  if (trades.length) {
+    for (const trade of trades) {
+      const row = ensure(String(trade.symbol ?? ''));
+      if (!row) continue;
+      const pnl = num(trade.net_pnl ?? trade.pnl);
+      row.realized += pnl;
+      row.trades += 1;
+      if (pnl > 0) row.wins += 1;
+      else if (pnl < 0) row.losses += 1;
+    }
+  } else {
+    for (const [symbol, replay] of realizedFromFills(orders)) {
+      const row = ensure(symbol);
+      if (!row) continue;
+      row.realized += replay.realized;
+      row.trades += replay.trades;
+      row.wins += replay.wins;
+      row.losses += replay.losses;
+    }
   }
   for (const order of orders) {
     const row = ensure(String(order.symbol ?? ''));

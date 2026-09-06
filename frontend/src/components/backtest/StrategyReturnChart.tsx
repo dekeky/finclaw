@@ -10,7 +10,15 @@ import {
   type WhitespaceData,
   createChart,
 } from 'lightweight-charts';
-import { type RangeSync, fullLogicalRange, isFullLogicalRange, sameLogicalRange } from './rangeSync';
+import { placeFocusLine } from './chartFocusLine';
+import {
+  type RangeSync,
+  focusedLogicalRange,
+  fullLogicalRange,
+  indexForDay,
+  isFullLogicalRange,
+  sameLogicalRange,
+} from './rangeSync';
 
 const CHART_BG = '#000000';
 
@@ -31,12 +39,16 @@ export default function StrategyReturnChart({
   data,
   height,
   rangeSync,
+  focusDate,
 }: {
   data: ReturnPoint[];
   height?: number;
   rangeSync?: RangeSync;
+  focusDate?: string | null;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const focusLineRef = useRef<HTMLDivElement>(null);
+  const focusBarRef = useRef('');
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Area'> | null>(null);
   const rangeSyncRef = useRef(rangeSync);
@@ -106,6 +118,7 @@ export default function StrategyReturnChart({
     host.addEventListener('wheel', onWheel, { passive: true });
     host.addEventListener('pointerdown', markUserZoom);
     const onRange = (range: LogicalRange | null) => {
+      placeFocusLine(chart, focusLineRef.current, focusBarRef.current);
       if (!range || applyingRef.current || !rangeSyncRef.current || !fittedRef.current) return;
       if (performance.now() < suppressUntilRef.current) return;
       if (!userZoomedRef.current) return;
@@ -124,8 +137,9 @@ export default function StrategyReturnChart({
       if (widthChanged) lastWidth = nextWidth;
       if (heightChanged) lastHeight = nextHeight;
       chart.applyOptions({ width: lastWidth, height: lastHeight });
+      placeFocusLine(chart, focusLineRef.current, focusBarRef.current);
       if (userZoomedRef.current) return;
-      const full = fullLogicalRange(barCountRef.current);
+      const full = fullLogicalRange(barCountRef.current, chart.timeScale().width());
       if (!full) return;
       applyingRef.current = true;
       suppressUntilRef.current = performance.now() + 200;
@@ -169,32 +183,41 @@ export default function StrategyReturnChart({
     series.setData(points);
     barCountRef.current = points.length;
     if (!points.length) return;
+    const days = points.map((row) => String(row.time));
+    const focusIndex = focusDate ? indexForDay(days, focusDate) : -1;
+    const plotWidth = chart.timeScale().width();
+    const focused = focusIndex >= 0 ? focusedLogicalRange(points.length, focusIndex, 45, plotWidth) : null;
+    focusBarRef.current = focusIndex >= 0 ? days[focusIndex] : '';
     const apply = () => {
       const live = chartRef.current;
       if (!live) return;
       const synced = rangeSyncRef.current?.last;
-      const full = fullLogicalRange(points.length);
+      const full = fullLogicalRange(points.length, plotWidth);
+      const initial = focused ?? full;
       applyingRef.current = true;
       suppressUntilRef.current = performance.now() + 200;
-      if (!userZoomedRef.current && full) {
-        live.timeScale().setVisibleLogicalRange(full);
+      if (!userZoomedRef.current && initial) {
+        live.timeScale().setVisibleLogicalRange(initial);
         fittedRef.current = true;
-        rangeSyncRef.current?.publish(full, sourceRef.current);
+        rangeSyncRef.current?.publish(initial, sourceRef.current);
+        if (focused) userZoomedRef.current = true;
       } else if (synced) {
         live.timeScale().setVisibleLogicalRange(synced);
         fittedRef.current = true;
-      } else if (full) {
-        live.timeScale().setVisibleLogicalRange(full);
+      } else if (initial) {
+        live.timeScale().setVisibleLogicalRange(initial);
         fittedRef.current = true;
-        rangeSyncRef.current?.publish(full, sourceRef.current);
+        rangeSyncRef.current?.publish(initial, sourceRef.current);
       }
+      placeFocusLine(live, focusLineRef.current, focusBarRef.current);
       requestAnimationFrame(() => {
         applyingRef.current = false;
+        placeFocusLine(chartRef.current, focusLineRef.current, focusBarRef.current);
       });
     };
     apply();
     requestAnimationFrame(apply);
-  }, [data]);
+  }, [data, focusDate]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -209,8 +232,14 @@ export default function StrategyReturnChart({
       applyingRef.current = true;
       chart.timeScale().setVisibleLogicalRange(range);
       applyingRef.current = false;
+      placeFocusLine(chart, focusLineRef.current, focusBarRef.current);
     });
   }, [rangeSync]);
 
-  return <div className="strategy-return-chart" ref={hostRef} style={height ? { height } : undefined} />;
+  return (
+    <div className="strategy-return-chart" style={height ? { height } : undefined}>
+      <div className="strategy-return-chart-host" ref={hostRef} />
+      <div className="chart-focus-line" ref={focusLineRef} hidden />
+    </div>
+  );
 }

@@ -477,8 +477,8 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               <MessageAttachments attachments={message.attachments} />
             )}
             {userVisibleContent && (
-              <div className="rounded-2xl rounded-tr-sm bg-violet-500 px-4 py-3 text-[15px] leading-relaxed text-white">
-                <span>{userVisibleContent}</span>
+              <div className="whitespace-pre-wrap break-words rounded-2xl rounded-tr-sm bg-violet-500 px-4 py-3 text-[15px] leading-relaxed text-white">
+                {userVisibleContent}
               </div>
             )}
           </div>
@@ -492,7 +492,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               />
             )}
             {body && (
-              <div className="min-w-0 max-w-full overflow-hidden rounded-2xl rounded-tl-sm border border-border/60 bg-card px-4 py-3 text-[15px] leading-relaxed text-foreground">
+              <div className="min-w-0 max-w-full overflow-hidden px-1 text-[15px] leading-relaxed text-foreground">
                 {renderMarkdown(body, '-body')}
               </div>
             )}

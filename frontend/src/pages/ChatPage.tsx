@@ -1,6 +1,5 @@
 import { IconAlertTriangle, IconBuildingStore, IconFolder, IconHistory, IconMessagePlus, IconPhoto, IconTrash, IconX } from '@tabler/icons-react';
-import { Link } from 'react-router-dom';
-import { ChatMainToolbar } from '@/components/chrome/ChatMainToolbar';
+import { ChatComposerToolbar } from '@/components/chrome/ChatComposerToolbar';
 import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
 import { ChatContainer } from '../components/ChatContainer';
@@ -8,20 +7,16 @@ import {
   ChatSlashHints,
   handleSlashInputKeyDown,
 } from '@/components/ChatSlashHints';
-import { AgentAssetsSidebar } from '../components/AgentAssetsSidebar';
+import { AccountDocsSidebar } from '../components/AccountDocsSidebar';
 import { CHAT_INPUT_GUTTER, CHAT_MAIN_COLUMN, CHAT_SCROLL_GUTTER } from '@/lib/chatLayout';
 import { DocFileTree } from '../components/DocFileTree';
 import { DocReadingPanel } from '../components/DocReadingPanel';
-import { AgentSkillsPanel, skillFileKey, type SkillFileTarget } from '../components/AgentSkillsPanel';
 import {
-  getAgentSkillFile,
-  writeAgentSkillFile,
-  deleteAgentSkill,
-  deleteAgentSkillPath,
-  downloadAgentSkillPath,
-} from '../api/agents';
-import { writeAgentDocFile, deleteAgentDocPath, downloadAgentDocFile } from '../api/agentDocs';
-import { createAgentAssetShare } from '../api/agentAssets';
+  writeAccountDocFile,
+  deleteAccountDocPath,
+  downloadAccountDocFile,
+} from '../api/agentDocs';
+import { createAccountDocShare } from '../api/agentAssets';
 import { messageTouchesDocScanRoot } from '../lib/agentDocRoots';
 import { copyToClipboard } from '../lib/clipboard';
 import { useConfirm } from '@/components/ui/confirm-dialog';
@@ -52,7 +47,6 @@ import { useState, useRef, useMemo, useEffect, useCallback, type ChangeEvent, ty
 import TextareaAutosize from 'react-textarea-autosize';
 import { filesToPendingImages, type PendingImage } from '@/lib/imageAttach';
 import { cn } from '@/lib/cn';
-import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 import { TOOLBAR_ICON_BUTTON_CLASS } from '@/lib/toolbarButton';
 
 export default function ChatPage() {
@@ -93,61 +87,32 @@ export default function ChatPage() {
     setSelectedDocPath,
   } = useDocViewer();
 
-  // Agent 资产侧栏：文档 / Skills
-  const [assetTab, setAssetTab] = useState<'docs' | 'skills'>('docs');
-  const [assetsOpen, setAssetsOpen] = useState(false);
-  const [skillFile, setSkillFile] = useState<SkillFileTarget | null>(null);
-  const [skillsRefreshRev, setSkillsRefreshRev] = useState(0);
+  // 文档侧栏开合
+  const [docsOpen, setDocsOpen] = useState(false);
   const { confirm, dialog: confirmDialog } = useConfirm();
 
-  // 打开文档时关闭 skill 阅读，反之亦然（同一时间只展示一个阅读面板）
   const openDoc = useCallback((fullPath: string) => {
-    setSkillFile(null);
     setSelectedDocPath(fullPath);
   }, [setSelectedDocPath]);
 
-  const openSkill = useCallback((target: SkillFileTarget) => {
-    setSelectedDocPath(null);
-    setSkillFile(target);
-  }, [setSelectedDocPath]);
-
-  const loadSkillContent = useCallback((): Promise<string> => {
-    if (!currentAgent || !skillFile) return Promise.reject(new Error('未选择 skill 文件'));
-    return getAgentSkillFile(currentAgent, skillFile.source, skillFile.skill, skillFile.file).then(
-      (b) => b.content,
-    );
-  }, [currentAgent, skillFile]);
-
-  // 切换 Agent 时关闭 skill 文件与资产面板
-  useEffect(() => {
-    setSkillFile(null);
-    setAssetsOpen(false);
-  }, [currentAgent]);
-
   // ── 编辑保存 ──
   const saveDocContent = useCallback(async (content: string) => {
-    if (!currentAgent || !selectedDocPath) return;
-    await writeAgentDocFile(currentAgent, selectedDocPath, content);
+    if (!selectedDocPath) return;
+    await writeAccountDocFile(selectedDocPath, content);
     bumpDocsRefresh();
-  }, [currentAgent, selectedDocPath, bumpDocsRefresh]);
-
-  const saveSkillContent = useCallback(async (content: string) => {
-    if (!requireAuth() || !currentAgent || !skillFile) return;
-    await writeAgentSkillFile(currentAgent, skillFile.source, skillFile.skill, skillFile.file, content);
-  }, [requireAuth, currentAgent, skillFile]);
+  }, [selectedDocPath, bumpDocsRefresh]);
 
   // ── 删除 ──
   const handleDownloadDoc = useCallback(async (fullPath: string, isDir: boolean) => {
-    if (!currentAgent) return;
     try {
-      await downloadAgentDocFile(currentAgent, fullPath, isDir);
+      await downloadAccountDocFile(fullPath, isDir);
     } catch (err) {
       window.alert(err instanceof Error ? err.message : '下载失败');
     }
-  }, [currentAgent]);
+  }, []);
 
   const handleDeleteDoc = useCallback(async (fullPath: string, isDir: boolean) => {
-    if (!requireAuth() || !currentAgent) return false;
+    if (!requireAuth()) return false;
     const name = fullPath.split('/').pop() ?? fullPath;
     const ok = await confirm({
       title: isDir ? `删除文件夹「${name}」` : `删除文件「${name}」`,
@@ -159,7 +124,7 @@ export default function ChatPage() {
     });
     if (!ok) return false;
     try {
-      await deleteAgentDocPath(currentAgent, fullPath);
+      await deleteAccountDocPath(fullPath);
       if (selectedDocPath && (selectedDocPath === fullPath || selectedDocPath.startsWith(`${fullPath}/`))) {
         setSelectedDocPath(null);
       }
@@ -168,107 +133,22 @@ export default function ChatPage() {
       window.alert(err instanceof Error ? err.message : '删除失败');
       return false;
     }
-  }, [requireAuth, currentAgent, selectedDocPath, setSelectedDocPath, confirm]);
-
-  const handleDownloadSkillPath = useCallback(
-    async (source: string, skill: string, relPath: string) => {
-      if (!currentAgent) return;
-      try {
-        await downloadAgentSkillPath(currentAgent, source, skill, relPath);
-      } catch (err) {
-        window.alert(err instanceof Error ? err.message : '下载失败');
-      }
-    },
-    [currentAgent],
-  );
-
-  const handleDeleteSkill = useCallback(async (source: string, skill: string, name: string) => {
-    if (!requireAuth() || !currentAgent) return;
-    const ok = await confirm({
-      title: `删除 Skill 包「${name}」`,
-      description: '将永久删除该 Skill 包及其全部文件，操作不可恢复。',
-      confirmText: '删除',
-      danger: true,
-    });
-    if (!ok) return;
-    try {
-      await deleteAgentSkill(currentAgent, source, skill);
-      if (skillFile && skillFile.source === source && skillFile.skill === skill) {
-        setSkillFile(null);
-      }
-      setSkillsRefreshRev((n) => n + 1);
-    } catch (err) {
-      window.alert(err instanceof Error ? err.message : '删除失败');
-    }
-  }, [requireAuth, currentAgent, skillFile, confirm]);
-
-  const handleDeleteSkillPath = useCallback(
-    async (source: string, skill: string, relPath: string, isDir: boolean, skillName: string) => {
-      if (!requireAuth() || !currentAgent) return;
-      const label = relPath.split('/').pop() ?? relPath;
-      const ok = await confirm({
-        title: isDir ? `删除文件夹「${label}」` : `删除文件「${label}」`,
-        description: isDir
-          ? `将永久删除 Skill「${skillName}」下的该文件夹及其全部内容，操作不可恢复。`
-          : `将永久删除 Skill「${skillName}」下的该文件，操作不可恢复。`,
-        confirmText: '删除',
-        danger: true,
-      });
-      if (!ok) return;
-      try {
-        await deleteAgentSkillPath(currentAgent, source, skill, relPath);
-        if (
-          skillFile &&
-          skillFile.source === source &&
-          skillFile.skill === skill &&
-          (skillFile.file === relPath || skillFile.file.startsWith(`${relPath}/`))
-        ) {
-          setSkillFile(null);
-        }
-      } catch (err) {
-        window.alert(err instanceof Error ? err.message : '删除失败');
-      }
-    },
-    [requireAuth, currentAgent, skillFile, confirm],
-  );
+  }, [requireAuth, selectedDocPath, setSelectedDocPath, confirm]);
 
   const handleShareDoc = useCallback(async (fullPath: string, isDir?: boolean) => {
-    if (!requireAuth() || !currentAgent) return;
+    if (!requireAuth()) return;
     if (isDir) {
       toast.error('暂不支持分享文件夹');
       return;
     }
     try {
-      const { url } = await createAgentAssetShare(currentAgent, { kind: 'doc', path: fullPath });
+      const { url } = await createAccountDocShare(fullPath);
       await copyToClipboard(url);
       toast.success('分享链接已复制到剪贴板');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '创建分享失败');
     }
-  }, [requireAuth, currentAgent]);
-
-  const handleShareSkillPath = useCallback(
-    async (source: string, skill: string, relPath: string, isDir?: boolean) => {
-      if (!requireAuth() || !currentAgent) return;
-      if (isDir || !relPath.trim()) {
-        toast.error('暂不支持分享文件夹');
-        return;
-      }
-      try {
-        const { url } = await createAgentAssetShare(currentAgent, {
-          kind: 'skill',
-          source,
-          skill_dir: skill,
-          path: relPath,
-        });
-        await copyToClipboard(url);
-        toast.success('分享链接已复制到剪贴板');
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : '创建分享失败');
-      }
-    },
-    [requireAuth, currentAgent],
-  );
+  }, [requireAuth]);
 
   // 历史对话列表（含当前对话）：打开面板或数据变更时刷新
   const conversationList = useMemo(() => {
@@ -348,11 +228,10 @@ export default function ChatPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#f7f7f8] dark:bg-background">
-      {/* 元宝式：主区顶栏单行 — Agent 下拉 · 新对话 · 资产 · 历史 · 主题 */}
+      {/* 主区顶栏单行 — 新对话 · 文档 · 历史 · 主题 */}
       <div className="flex shrink-0 items-center gap-2 px-5 py-2">
         <SidebarExpandTrigger />
         <div className="flex min-w-0 flex-1 items-center gap-0.5">
-          <ChatMainToolbar />
           {agentsLoadStatus === 'ready' && agents.length > 0 && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -379,16 +258,16 @@ export default function ChatPage() {
                   size="icon-sm"
                   className={cn(
                     TOOLBAR_ICON_BUTTON_CLASS,
-                    assetsOpen && 'bg-violet-500/12 text-violet-600 shadow-[0_0_0_1px_rgba(139,92,246,0.22)] dark:text-violet-300 dark:shadow-[0_0_0_1px_rgba(167,139,250,0.32)]',
+                    docsOpen && 'bg-violet-500/12 text-violet-600 shadow-[0_0_0_1px_rgba(139,92,246,0.22)] dark:text-violet-300 dark:shadow-[0_0_0_1px_rgba(167,139,250,0.32)]',
                   )}
-                  aria-label={assetsOpen ? '收起 Agent 资产' : '打开 Agent 资产'}
-                  aria-pressed={assetsOpen}
-                  onClick={() => setAssetsOpen((open) => !open)}
+                  aria-label={docsOpen ? '收起文档' : '打开文档'}
+                  aria-pressed={docsOpen}
+                  onClick={() => setDocsOpen((open) => !open)}
                 >
                   <IconFolder className="size-[18px]" stroke={1.75} />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent side="bottom">Agent 资产</TooltipContent>
+              <TooltipContent side="bottom">文档</TooltipContent>
             </Tooltip>
           )}
         </div>
@@ -451,56 +330,34 @@ export default function ChatPage() {
               <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
                 请前往 Agent 市场，从模板快速创建一位 Agent 后即可开始对话。
               </p>
-              <Button asChild className={PRIMARY_BUTTON_CLASS}>
-                <Link to="/agents" state={{ showMarket: true }}>前往 Agent 市场</Link>
-              </Button>
             </>
           ) : (
             <>
               <div className="text-sm font-medium text-muted-foreground">请先选择 Agent</div>
-              <p className="max-w-xs text-xs text-muted-foreground">点击左上角 Agent 名称，从下拉列表中选择一位开始对话</p>
+              <p className="max-w-xs text-xs text-muted-foreground">
+                从下方输入框选择一位 Agent，即可开始对话。
+              </p>
             </>
           )}
         </div>
       )}
 
-      {/* Main body: 左侧资产 + 聊天 */}
+      {/* Main body: 左侧文档 + 聊天 */}
       {currentAgent && (
         <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-          {assetsOpen && (
-            <AgentAssetsSidebar
-              assetTab={assetTab}
-              onAssetTabChange={setAssetTab}
-              onClose={() => setAssetsOpen(false)}
-            >
-              {assetTab === 'docs' ? (
-                <DocFileTree
-                  agentName={currentAgent}
-                  refreshRev={docsRefreshRev}
-                  onFileSelect={openDoc}
-                  selectedDocPath={selectedDocPath}
-                  hideHeader
-                  onDelete={handleDeleteDoc}
-                  onDownload={handleDownloadDoc}
-                  onShare={handleShareDoc}
-                />
-              ) : (
-                <AgentSkillsPanel
-                  key={currentAgent}
-                  agentName={currentAgent}
-                  className="min-h-0 flex-1"
-                  onOpenFile={openSkill}
-                  activeFileKey={
-                    skillFile ? skillFileKey(skillFile.source, skillFile.skill, skillFile.file) : null
-                  }
-                  onDeleteSkill={handleDeleteSkill}
-                  onDeleteSkillPath={handleDeleteSkillPath}
-                  onDownloadSkillPath={handleDownloadSkillPath}
-                  onShareSkillPath={handleShareSkillPath}
-                  refreshRev={skillsRefreshRev}
-                />
-              )}
-            </AgentAssetsSidebar>
+          {docsOpen && (
+            <AccountDocsSidebar onClose={() => setDocsOpen(false)}>
+              <DocFileTree
+                scopeKey="account"
+                refreshRev={docsRefreshRev}
+                onFileSelect={openDoc}
+                selectedDocPath={selectedDocPath}
+                hideHeader
+                onDelete={handleDeleteDoc}
+                onDownload={handleDownloadDoc}
+                onShare={handleShareDoc}
+              />
+            </AccountDocsSidebar>
           )}
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -527,13 +384,13 @@ export default function ChatPage() {
                   </p>
                 )}
                 <form ref={formRef} onSubmit={(e) => { e.preventDefault(); handleSend(value); }}>
-                  <div className="relative overflow-visible rounded-2xl border border-border/60 bg-card p-1.5 pr-1 shadow-sm">
+                  <div className="relative overflow-visible rounded-2xl border border-border/60 bg-card px-2 pt-2 pb-1.5 shadow-sm">
                     <ChatSlashHints
                       value={value}
                       onPick={(command) => setValue(command)}
                     />
                     {pendingImages.length > 0 && (
-                      <div className="flex flex-wrap gap-2 px-2 pb-1.5 pt-1">
+                      <div className="flex flex-wrap gap-2 px-1 pb-1.5 pt-0.5">
                         {pendingImages.map((img, i) => (
                           <div key={`${img.name}-${i}`} className="relative">
                             <img
@@ -553,55 +410,58 @@ export default function ChatPage() {
                         ))}
                       </div>
                     )}
-                    <div className="flex items-end gap-2">
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/jpeg,image/png,image/gif,image/webp,image/bmp"
-                        multiple
-                        className="hidden"
-                        onChange={handlePickImages}
-                      />
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            className="flex size-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-                            disabled={status !== 'connected'}
-                            onClick={() => fileInputRef.current?.click()}
-                            aria-label="添加图片"
-                          >
-                            <IconPhoto className="size-[18px]" stroke={1.75} />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent side="top">添加图片</TooltipContent>
-                      </Tooltip>
-                      <TextareaAutosize
-                        className="w-full resize-none bg-transparent px-3 py-1.5 text-[15px] leading-normal text-foreground outline-none break-words whitespace-pre-wrap placeholder:text-muted-foreground"
-                        placeholder={dock.selectedKeys.size > 0 ? '已选文章将自动附带到对话中...' : "输入您的问题...。输入'/'可使用系统命令，如'/stop'可中止当前回复"}
-                        minRows={1}
-                        maxRows={10}
-                        value={value}
-                        onChange={(e) => setValue(e.target.value)}
-                        disabled={status !== 'connected'}
-                        onKeyDown={(e) => {
-                          handleSlashInputKeyDown(e, value, {
-                            onAutocomplete: (command) => setValue(command),
-                            onSend: () => handleSend(value),
-                          });
-                        }}
-                      />
-                      <button
-                        type="submit"
-                        className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-violet-500 text-white transition-all hover:bg-violet-600 active:scale-95 disabled:opacity-50"
-                        disabled={status !== 'connected' || (!value.trim() && pendingImages.length === 0)}
-                        aria-label="发送"
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                          <line x1="22" y1="2" x2="11" y2="13" />
-                          <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                        </svg>
-                      </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/gif,image/webp,image/bmp"
+                      multiple
+                      className="hidden"
+                      onChange={handlePickImages}
+                    />
+                    <TextareaAutosize
+                      className="w-full resize-none bg-transparent px-2 py-1.5 text-[15px] leading-normal text-foreground outline-none break-words whitespace-pre-wrap placeholder:text-muted-foreground"
+                      placeholder={dock.selectedKeys.size > 0 ? '已选文章将自动附带到对话中...' : "输入您的问题...。输入'/'可使用系统命令，如'/stop'可中止当前回复"}
+                      minRows={1}
+                      maxRows={10}
+                      value={value}
+                      onChange={(e) => setValue(e.target.value)}
+                      disabled={status !== 'connected'}
+                      onKeyDown={(e) => {
+                        handleSlashInputKeyDown(e, value, {
+                          onAutocomplete: (command) => setValue(command),
+                          onSend: () => handleSend(value),
+                        });
+                      }}
+                    />
+                    <div className="flex items-center gap-1 pt-0.5">
+                      <ChatComposerToolbar />
+                      <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                              disabled={status !== 'connected'}
+                              onClick={() => fileInputRef.current?.click()}
+                              aria-label="添加图片"
+                            >
+                              <IconPhoto className="size-[18px]" stroke={1.75} />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top">添加图片</TooltipContent>
+                        </Tooltip>
+                        <button
+                          type="submit"
+                          className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-violet-500 text-white transition-all hover:bg-violet-600 active:scale-95 disabled:opacity-50"
+                          disabled={status !== 'connected' || (!value.trim() && pendingImages.length === 0)}
+                          aria-label="发送"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="22" y1="2" x2="11" y2="13" />
+                            <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </form>
@@ -613,19 +473,20 @@ export default function ChatPage() {
 
       {/* Input (no agent selected) */}
       {!currentAgent && (
-        <div className={cn('shrink-0', CHAT_INPUT_GUTTER)}>
+        <div className={cn('shrink-0 border-t border-border/40', CHAT_INPUT_GUTTER)}>
           <div className={CHAT_MAIN_COLUMN}>
             <form ref={formRef} onSubmit={(e) => { e.preventDefault(); handleSend(value); }}>
-              <div className="relative rounded-2xl border border-border/60 bg-card p-1.5 pr-1 shadow-sm opacity-60">
-                <div className="relative flex items-end gap-2">
-                  <textarea
-                    className="min-h-[44px] w-full resize-none bg-transparent px-3 py-2.5 text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
-                    placeholder={noAgents ? '请前往 Agent 市场创建 Agent…' : '请先选择 Agent…'}
-                    rows={1}
-                    value={value}
-                    onChange={(e) => setValue(e.target.value)}
-                    disabled
-                  />
+              <div className="relative rounded-2xl border border-border/60 bg-card px-2 pt-2 pb-1.5 shadow-sm">
+                <textarea
+                  className="min-h-[44px] w-full resize-none bg-transparent px-2 py-1.5 text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
+                  placeholder={noAgents ? '请前往 Agent 市场创建 Agent…' : '请先选择 Agent…'}
+                  rows={1}
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  disabled
+                />
+                <div className="flex items-center gap-1 pt-0.5">
+                  <ChatComposerToolbar />
                 </div>
               </div>
             </form>
@@ -641,21 +502,6 @@ export default function ChatPage() {
           onClose={() => setSelectedDocPath(null)}
           onSave={saveDocContent}
           onShare={() => void handleShareDoc(selectedDocPath)}
-        />
-      )}
-
-      {/* Skill reading floating panel */}
-      {currentAgent && skillFile && (
-        <DocReadingPanel
-          key={skillFileKey(skillFile.source, skillFile.skill, skillFile.file)}
-          agentName={currentAgent}
-          filePath={`${skillFile.skill}/${skillFile.file}`}
-          loadContent={loadSkillContent}
-          onClose={() => setSkillFile(null)}
-          onSave={saveSkillContent}
-          onShare={() =>
-            void handleShareSkillPath(skillFile.source, skillFile.skill, skillFile.file)
-          }
         />
       )}
 

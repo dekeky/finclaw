@@ -6,7 +6,7 @@ import { DocTocSidebar, DocTocOverlay } from '@/components/DocTocSidebar';
 import { useTocHeadings } from '@/hooks/useTocHeadings';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useRequireAuth } from '@/hooks/useRequireAuth';
-import { getAgentDocFile, polishAgentDoc } from '@/api/agentDocs';
+import { getAccountDocFile, polishAccountDoc } from '@/api/agentDocs';
 import { Button } from '@/components/ui/button';
 import { AiPolishPromptPopover } from '@/components/AiPolishPromptPopover';
 import {
@@ -496,21 +496,20 @@ const DOC_DOCK_CSS = `
     padding-block: 28px;
   }
 }
-@media (min-width: 1280px) {
-  .doc-dock-article {
-    max-width: 56rem;
-  }
-}
 `;
 
 /* ─── 主组件 ─── */
 
 interface DocReadingPanelProps {
+  /**
+   * 默认读取账户共享文档；当用作文档阅读器时，该值仅作为「AI 润色」使用的
+   * agent 名称（决定走哪个 LLM 配置）。skills 等 per-agent 阅读器应传 loadContent。
+   */
   agentName: string;
   filePath: string;
   onClose: () => void;
   /**
-   * 自定义内容加载器，返回文件文本。默认读取 agent 的 docs/ 文件。
+   * 自定义内容加载器，返回文件文本。默认读取账户共享文档。
    * 用于复用本面板渲染其它来源的 Markdown（如 skills）。
    */
   loadContent?: (agentName: string, filePath: string) => Promise<string>;
@@ -560,9 +559,11 @@ export function DocReadingPanel({
   // 用 ref 保存加载器，避免内联函数导致的重复加载
   const loadRef = useRef(loadContent);
   loadRef.current = loadContent;
-  const runLoad = useCallback((a: string, f: string): Promise<string> => {
-    const fn = loadRef.current ?? ((an: string, fp: string) => getAgentDocFile(an, fp).then((b) => b.content));
-    return fn(a, f);
+  // 默认加载器读取「账户共享文档」（不依赖某个 agent）。skills 等 per-agent
+  // 内容由上层传 loadContent 覆盖。
+  const runLoad = useCallback((_agent: string, f: string): Promise<string> => {
+    const fn = loadRef.current ?? ((_a: string, fp: string) => getAccountDocFile(fp).then((b) => b.content));
+    return fn(_agent, f);
   }, []);
 
   // 浮窗位置（手机端全屏，桌面端记忆上次位置）
@@ -721,7 +722,7 @@ export function DocReadingPanel({
       await sleep(200);
       setGenerateSteps(setGenerateStepStatus(initialGenerateSteps(), 'call', ['validate']));
 
-      const { content: polished } = await polishAgentDoc(agentName, {
+      const { content: polished } = await polishAccountDoc(agentName, {
         prompt,
         current_content: draft,
       });

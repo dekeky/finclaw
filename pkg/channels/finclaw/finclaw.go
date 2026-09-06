@@ -70,6 +70,14 @@ type FinClawChannel struct {
 	recentUserBySession map[string]string
 	config              *FinChannelConfig
 	closed              atomic.Bool
+
+	// docsBrief holds a short per-account environment note telling the agent
+	// where the shared docs directory lives. It is injected once per session as
+	// the first inbound message so agents write documents into the account-level
+	// shared docs instead of their own workspace.
+	docsBrief string
+	briefMu   sync.Mutex
+	briefed   map[string]struct{}
 }
 
 func NewFinChannel(ctx context.Context, messageBus *bus.MessageBus, config *FinChannelConfig) *FinClawChannel {
@@ -79,6 +87,7 @@ func NewFinChannel(ctx context.Context, messageBus *bus.MessageBus, config *FinC
 		msgBus:              messageBus,
 		BaseChannel:         base,
 		recentUserBySession: make(map[string]string),
+		briefed:             make(map[string]struct{}),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -91,6 +100,12 @@ func NewFinChannel(ctx context.Context, messageBus *bus.MessageBus, config *FinC
 		sessionBufs:  make(map[string]*SessionBuffer),
 		config:       config,
 	}
+}
+
+// SetSharedDocsContext configures the account-level shared docs briefing that
+// is injected once per chat session.
+func (fchannel *FinClawChannel) SetSharedDocsContext(brief string) {
+	fchannel.docsBrief = strings.TrimSpace(brief)
 }
 
 // close marks the channel as closed.
@@ -440,6 +455,14 @@ func (fchannel *FinClawChannel) handleMessageSend(fconn *finConn, msg FinMessage
 		"metadata":   metadata,
 	})
 
+	// First real message of a session: prepend the account shared-docs briefing
+	// so the agent learns where documents live before it acts.
+	if fchannel.maybeInjectDocsBrief(sessionID) {
+		briefCtx := inboundCtx
+		briefCtx.MessageID = "docs-brief-" + msg.ID
+		fchannel.HandleInboundContext(fchannel.Ctx, chatID, fchannel.docsBrief, nil, briefCtx, sender)
+	}
+
 	fchannel.recordRecentUserMessage(sessionID, content)
 	fchannel.HandleInboundContext(fchannel.Ctx, chatID, content, media, inboundCtx, sender)
 
@@ -456,6 +479,22 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return string(runes[:maxLen]) + "..."
+}
+
+// maybeInjectDocsBrief reports whether the session has not yet received the
+// shared-docs briefing, marking it as injected. Returns false when no briefing
+// is configured or the session was already briefed.
+func (fchannel *FinClawChannel) maybeInjectDocsBrief(sessionID string) bool {
+	if strings.TrimSpace(fchannel.docsBrief) == "" || sessionID == "" {
+		return false
+	}
+	fchannel.briefMu.Lock()
+	defer fchannel.briefMu.Unlock()
+	if _, ok := fchannel.briefed[sessionID]; ok {
+		return false
+	}
+	fchannel.briefed[sessionID] = struct{}{}
+	return true
 }
 
 func (fchannel *FinClawChannel) recordRecentUserMessage(sessionID, content string) {

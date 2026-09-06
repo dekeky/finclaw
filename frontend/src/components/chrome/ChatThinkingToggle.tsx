@@ -17,10 +17,12 @@ const ACTIVE_CLASS =
 
 interface ChatThinkingToggleProps {
   agentName: string;
+  variant?: 'toolbar' | 'composer';
 }
 
-/** 对话页顶栏：切换当前 Agent 的深度思考开关。 */
-export function ChatThinkingToggle({ agentName }: ChatThinkingToggleProps) {
+/** 切换当前 Agent 的深度思考开关。 */
+export function ChatThinkingToggle({ agentName, variant = 'toolbar' }: ChatThinkingToggleProps) {
+  const isComposer = variant === 'composer';
   const [enabled, setEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -68,21 +70,26 @@ export function ChatThinkingToggle({ agentName }: ChatThinkingToggleProps) {
         <Button
           type="button"
           variant="ghost"
-          size="icon-sm"
+          size={isComposer ? 'icon-xs' : 'icon-sm'}
           disabled={loading || busy}
           aria-label={enabled ? '关闭深度思考' : '开启深度思考'}
           aria-pressed={enabled}
-          className={cn(TOOLBAR_ICON_BUTTON_CLASS, enabled && ACTIVE_CLASS)}
+          className={cn(
+            isComposer
+              ? 'size-7 text-muted-foreground hover:bg-muted hover:text-foreground'
+              : TOOLBAR_ICON_BUTTON_CLASS,
+            enabled && ACTIVE_CLASS,
+          )}
           onClick={() => void onToggle()}
         >
           {busy || loading ? (
-            <IconLoader2 className="size-[18px] animate-spin" stroke={1.75} />
+            <IconLoader2 className={cn(isComposer ? 'size-3.5' : 'size-[18px]', 'animate-spin')} stroke={1.75} />
           ) : (
-            <IconBrain className="size-[18px]" stroke={enabled ? 2 : 1.75} />
+            <IconBrain className={isComposer ? 'size-3.5' : 'size-[18px]'} stroke={enabled ? 2 : 1.75} />
           )}
         </Button>
       </TooltipTrigger>
-      <TooltipContent side="bottom">
+      <TooltipContent side={isComposer ? 'top' : 'bottom'}>
         {enabled ? '深度思考已开启（点击关闭）' : '深度思考已关闭（点击开启）'}
       </TooltipContent>
     </Tooltip>

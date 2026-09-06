@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { IconAlertTriangle, IconBuildingStore, IconChevronsRight, IconMessagePlus } from '@tabler/icons-react';
-import { ChatMainToolbar } from '@/components/chrome/ChatMainToolbar';
+import { ChatComposerToolbar } from '@/components/chrome/ChatComposerToolbar';
 import { ChatContainer } from '@/components/ChatContainer';
 import { ChatSlashHints, handleSlashInputKeyDown } from '@/components/ChatSlashHints';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -127,10 +127,7 @@ export function StrategyChatPanel({
 
   return (
     <div className={cn('flex min-h-0 flex-col border-l border-border/50 bg-[#f7f7f8] dark:bg-background', className)}>
-      <div className="flex shrink-0 items-center gap-1 border-b border-border/50 px-3 py-2">
-        <div className="min-w-0 flex-1">
-          <ChatMainToolbar />
-        </div>
+      <div className="flex shrink-0 items-center justify-end gap-1 border-b border-border/50 px-3 py-2">
         {currentAgent && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -180,26 +177,41 @@ export function StrategyChatPanel({
       )}
 
       {!currentAgent ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-          {agentsLoadStatus === 'loading' ? (
-            <p className="text-sm text-muted-foreground">正在加载 Agent…</p>
-          ) : noAgents ? (
-            <>
-              <div className="flex size-12 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-600 dark:text-violet-300">
-                <IconBuildingStore size={24} stroke={1.5} />
+        <>
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+            {agentsLoadStatus === 'loading' ? (
+              <p className="text-sm text-muted-foreground">正在加载 Agent…</p>
+            ) : noAgents ? (
+              <>
+                <div className="flex size-12 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-600 dark:text-violet-300">
+                  <IconBuildingStore size={24} stroke={1.5} />
+                </div>
+                <p className="text-sm text-foreground/90">还没有 Agent</p>
+                <p className="max-w-xs text-xs text-muted-foreground">
+                  创建 Agent 后即可通过对话智能生成量化策略脚本。
+                </p>
+                <Button asChild size="sm">
+                  <Link to="/agents" state={{ showMarket: true }}>前往 Agent 市场</Link>
+                </Button>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">请从下方输入框选择 Agent</p>
+            )}
+          </div>
+          <div className="shrink-0 border-t border-border/40 p-3">
+            <div className="rounded-xl border border-border/60 bg-card px-2 pt-2 pb-1.5 shadow-sm">
+              <textarea
+                className="min-h-9 w-full resize-none bg-transparent px-1.5 py-1.5 text-sm leading-normal text-foreground outline-none placeholder:text-muted-foreground"
+                placeholder={noAgents ? '请前往 Agent 市场创建 Agent…' : '请先选择 Agent…'}
+                rows={2}
+                disabled
+              />
+              <div className="flex items-center gap-1 pt-0.5">
+                <ChatComposerToolbar />
               </div>
-              <p className="text-sm text-foreground/90">还没有 Agent</p>
-              <p className="max-w-xs text-xs text-muted-foreground">
-                创建 Agent 后即可通过对话智能生成量化策略脚本。
-              </p>
-              <Button asChild size="sm">
-                <Link to="/agents" state={{ showMarket: true }}>前往 Agent 市场</Link>
-              </Button>
-            </>
-          ) : (
-            <p className="text-sm text-muted-foreground">请先选择 Agent</p>
-          )}
-        </div>
+            </div>
+          </div>
+        </>
       ) : (
         <>
           <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
@@ -237,26 +249,27 @@ export function StrategyChatPanel({
                 handleSend(value);
               }}
             >
-              <div className="relative rounded-xl border border-border/60 bg-card p-1.5 shadow-sm">
+              <div className="relative rounded-xl border border-border/60 bg-card px-2 pt-2 pb-1.5 shadow-sm">
                 <ChatSlashHints value={value} onPick={(command) => setValue(command)} />
-                <div className="flex items-end gap-2">
-                  <textarea
-                    className="min-h-9 w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-normal text-foreground outline-none placeholder:text-muted-foreground"
-                    placeholder={strategyReady ? '描述你想要的量化策略…' : '请先保存策略…'}
-                    rows={2}
-                    value={value}
-                    onChange={(e) => setValue(e.target.value)}
-                    disabled={status !== 'connected' || !strategyReady}
-                    onKeyDown={(e) => {
-                      handleSlashInputKeyDown(e, value, {
-                        onAutocomplete: (command) => setValue(command),
-                        onSend: () => handleSend(value),
-                      });
-                    }}
-                  />
+                <textarea
+                  className="min-h-9 w-full resize-none bg-transparent px-1.5 py-1.5 text-sm leading-normal text-foreground outline-none placeholder:text-muted-foreground"
+                  placeholder={strategyReady ? '描述你想要的量化策略…' : '请先保存策略…'}
+                  rows={2}
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  disabled={status !== 'connected' || !strategyReady}
+                  onKeyDown={(e) => {
+                    handleSlashInputKeyDown(e, value, {
+                      onAutocomplete: (command) => setValue(command),
+                      onSend: () => handleSend(value),
+                    });
+                  }}
+                />
+                <div className="flex items-center gap-1 pt-0.5">
+                  <ChatComposerToolbar />
                   <button
                     type="submit"
-                    className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-violet-500 text-white transition-all hover:bg-violet-600 active:scale-95 disabled:opacity-50"
+                    className="ml-auto flex size-8 shrink-0 items-center justify-center rounded-lg bg-violet-500 text-white transition-all hover:bg-violet-600 active:scale-95 disabled:opacity-50"
                     disabled={status !== 'connected' || !strategyReady || !value.trim()}
                     aria-label="发送"
                   >

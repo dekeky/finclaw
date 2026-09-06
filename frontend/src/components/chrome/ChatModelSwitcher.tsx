@@ -4,7 +4,7 @@ interface ChatModelSwitcherProps {
   agentName: string;
 }
 
-/** 对话页顶栏：当前 Agent 的模型切换。 */
+/** 对话输入框底部：当前 Agent 的模型切换。 */
 export function ChatModelSwitcher({ agentName }: ChatModelSwitcherProps) {
-  return <ModelSwitcherMenu agentName={agentName} variant="toolbar" />;
+  return <ModelSwitcherMenu agentName={agentName} variant="composer" />;
 }

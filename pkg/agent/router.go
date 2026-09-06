@@ -63,6 +63,15 @@ func (ar *AgentManagerRouter) ConfigRouter() {
 	group.POST("", ar.createAgent)
 	group.PUT("/:name", ar.updateAgent)
 	group.DELETE("/:name", ar.deleteAgent)
+
+	// 账户级共享文档：当前账户下所有 agent 可看可改。
+	acct := ar.r.Group("/api/v1/account", ar.authMiddleware)
+	acct.GET("/docs", ar.listAccountDocFiles)
+	acct.POST("/docs/polish", ar.polishAccountDocFile)
+	acct.POST("/docs/share", ar.createAccountDocShare)
+	acct.GET("/docs/*filepath", ar.getAccountDocFile)
+	acct.PUT("/docs/*filepath", ar.putAccountDocFile)
+	acct.DELETE("/docs/*filepath", ar.deleteAccountDocFile)
 }
 
 // getUserID extracts userId from gin context (set by AuthMiddleware).
@@ -1414,6 +1423,162 @@ func renderDocErr(c *gin.Context, err error) {
 	}
 }
 
+// accountDocsRoot resolves the account-level shared docs directory for the
+// authenticated user and sweeps legacy agent-local docs into it beforehand.
+func (ar *AgentManagerRouter) accountDocsRoot(userID string) (string, error) {
+	home := agentHomeDir(userID)
+	ensureAccountDocsSwept(home)
+	return AccountDocsDir(home), nil
+}
+
+// GET /api/v1/account/docs — list files in the account-level shared docs.
+func (ar *AgentManagerRouter) listAccountDocFiles(c *gin.Context) {
+	userID := getUserID(c)
+	docsRoot, err := ar.accountDocsRoot(userID)
+	if err != nil {
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	subpath := c.Query("subpath")
+	files, err := ListDocFiles(docsRoot, subpath)
+	if err != nil {
+		if strings.Contains(err.Error(), "invalid") {
+			ginx.NewRender(c, http.StatusBadRequest).Err(err)
+			return
+		}
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	ginx.NewRender(c).Data(docListResp{Files: files})
+}
+
+// GET /api/v1/account/docs/*filepath — read a shared account doc (or download).
+func (ar *AgentManagerRouter) getAccountDocFile(c *gin.Context) {
+	userID := getUserID(c)
+	filename := strings.TrimPrefix(c.Param("filepath"), "/")
+	docsRoot, err := ar.accountDocsRoot(userID)
+	if err != nil {
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	if c.Query("download") != "" {
+		ar.serveDocFileDownload(c, docsRoot, filename)
+		return
+	}
+	content, err := ReadDocFile(docsRoot, filename)
+	if err != nil {
+		renderDocErr(c, err)
+		return
+	}
+	ginx.NewRender(c).Data(content)
+}
+
+// PUT /api/v1/account/docs/*filepath — create or overwrite a shared account doc.
+func (ar *AgentManagerRouter) putAccountDocFile(c *gin.Context) {
+	userID := getUserID(c)
+	filename := strings.TrimPrefix(c.Param("filepath"), "/")
+	docsRoot, err := ar.accountDocsRoot(userID)
+	if err != nil {
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	var req putDocFileReq
+	ginx.PanicIfNotNil(c.ShouldBindJSON(&req))
+	content, err := WriteDocFile(docsRoot, filename, req.Content)
+	if err != nil {
+		renderDocErr(c, err)
+		return
+	}
+	ginx.NewRender(c).Data(content)
+}
+
+// DELETE /api/v1/account/docs/*filepath — remove a shared account doc (or dir).
+func (ar *AgentManagerRouter) deleteAccountDocFile(c *gin.Context) {
+	userID := getUserID(c)
+	filename := strings.TrimPrefix(c.Param("filepath"), "/")
+	docsRoot, err := ar.accountDocsRoot(userID)
+	if err != nil {
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	if err := DeleteDocPath(docsRoot, filename); err != nil {
+		renderDocErr(c, err)
+		return
+	}
+	ginx.NewRender(c).Data(gin.H{"deleted": filename})
+}
+
+// polishAccountDocReq lets the frontend choose which agent's LLM config is used
+// for polishing an account-level document.
+type polishAccountDocReq struct {
+	Prompt         string `json:"prompt"`
+	CurrentContent string `json:"current_content"`
+	Agent          string `json:"agent,omitempty"`
+}
+
+// POST /api/v1/account/docs/polish — AI polish an account-level document using
+// the configured agent's model.
+func (ar *AgentManagerRouter) polishAccountDocFile(c *gin.Context) {
+	userID := getUserID(c)
+	var req polishAccountDocReq
+	ginx.PanicIfNotNil(c.ShouldBindJSON(&req))
+	name := strings.TrimSpace(req.Agent)
+	if name == "" {
+		ginx.NewRender(c, http.StatusBadRequest).Err(fmt.Errorf("agent is required for AI polish"))
+		return
+	}
+	cfg, err := ar.resolveAgentConfig(userID, name)
+	if err != nil {
+		ginx.NewRender(c, http.StatusNotFound).Err(err)
+		return
+	}
+	content, err := picoclaw.PolishDocMarkdown(c.Request.Context(), cfg, picoclaw.PolishDocRequest{
+		Prompt:         req.Prompt,
+		CurrentContent: req.CurrentContent,
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "is required") {
+			ginx.NewRender(c, http.StatusBadRequest).Err(err)
+			return
+		}
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	ginx.NewRender(c).Data(polishDocFileResp{Content: content})
+}
+
+// createAccountDocShareReq creates a public share link for an account-level doc.
+type createAccountDocShareReq struct {
+	Path string `json:"path" binding:"required"`
+}
+
+// POST /api/v1/account/docs/share — create a public share link for a shared doc.
+func (ar *AgentManagerRouter) createAccountDocShare(c *gin.Context) {
+	userID := getUserID(c)
+	var req createAccountDocShareReq
+	ginx.PanicIfNotNil(c.ShouldBindJSON(&req))
+	docsRoot, err := ar.accountDocsRoot(userID)
+	if err != nil {
+		ginx.NewRender(c, http.StatusInternalServerError).Err(err)
+		return
+	}
+	if err := ValidateShareAsset(docsRoot, "doc", req.Path, "", ""); err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+		return
+	}
+	share, err := ar.authStore.CreateAssetShare(&auth.AssetShare{
+		UserID: userID,
+		Kind:   "doc",
+		Path:   req.Path,
+	})
+	if err != nil {
+		ginx.NewRender(c, http.StatusBadRequest).Err(err)
+		return
+	}
+	url := ar.shareURL(c, share.Token)
+	ginx.NewRender(c, http.StatusCreated).Data(createAssetShareResp{Token: share.Token, URL: url})
+}
+
 type createAssetShareReq struct {
 	Kind     string `json:"kind" binding:"required"`
 	Path     string `json:"path"`
@@ -1453,6 +1618,12 @@ func (ar *AgentManagerRouter) createAssetShare(c *gin.Context) {
 		ginx.NewRender(c, http.StatusBadRequest).Err(err)
 		return
 	}
+	url := ar.shareURL(c, share.Token)
+	ginx.NewRender(c, http.StatusCreated).Data(createAssetShareResp{Token: share.Token, URL: url})
+}
+
+// shareURL builds the absolute public share URL from the request host.
+func (ar *AgentManagerRouter) shareURL(c *gin.Context, token string) string {
 	scheme := "http"
 	if c.Request.TLS != nil {
 		scheme = "https"
@@ -1460,8 +1631,7 @@ func (ar *AgentManagerRouter) createAssetShare(c *gin.Context) {
 	if forwarded := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")); forwarded != "" {
 		scheme = strings.Split(forwarded, ",")[0]
 	}
-	url := fmt.Sprintf("%s://%s/share/%s", scheme, c.Request.Host, share.Token)
-	ginx.NewRender(c, http.StatusCreated).Data(createAssetShareResp{Token: share.Token, URL: url})
+	return fmt.Sprintf("%s://%s/share/%s", scheme, c.Request.Host, token)
 }
 
 // Ensure config import is used (for FinclawHomePath in non-user contexts).
