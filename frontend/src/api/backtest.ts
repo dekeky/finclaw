@@ -1,4 +1,4 @@
-import type { GinxResponse } from '../types/rss';
+import type { GinxResponse } from '../types/api';
 import { getToken } from './auth';
 
 const BACKTEST_API = '/api/v1/backtest';

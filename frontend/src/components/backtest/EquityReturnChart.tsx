@@ -14,6 +14,7 @@ import {
   createChart,
 } from 'lightweight-charts';
 import { OVERLAY_COLORS, type OverlayItem } from './BenchmarkPicker';
+import { chartRestoreAction, isChartHostReady } from './chartHost';
 import { fullLogicalRange } from './rangeSync';
 
 export type ReturnChartRow = Record<string, string | number | undefined>;
@@ -75,7 +76,6 @@ export default function EquityReturnChart({
   const dataRef = useRef(data);
   const overlaysRef = useRef(overlays);
   const activeRef = useRef(active);
-  const layoutRef = useRef<(width: number, height: number) => void>(() => {});
   dataRef.current = data;
   overlaysRef.current = overlays;
   activeRef.current = active;
@@ -119,7 +119,7 @@ export default function EquityReturnChart({
     const strategySeries = strategySeriesRef.current;
     if (!chart || !strategySeries) return;
     const host = hostRef.current;
-    if (!activeRef.current || !host || host.clientWidth < 160 || host.clientHeight < 80) return;
+    if (!activeRef.current || !host || !isChartHostReady(host.clientWidth, host.clientHeight)) return;
     const nextData = dataRef.current;
     const nextOverlays = overlaysRef.current;
 
@@ -203,13 +203,15 @@ export default function EquityReturnChart({
   applySeriesRef.current = applySeries;
 
   useEffect(() => {
+    if (!active) return undefined;
     const host = hostRef.current;
-    if (!host) return;
+    if (!host) return undefined;
     let lastWidth = 0;
     let lastHeight = 0;
-    let collapsed = false;
     let onMove: ((param: MouseEventParams) => void) | null = null;
     let onClick: ((param: MouseEventParams) => void) | null = null;
+    let rafOuter = 0;
+    let rafInner = 0;
 
     const fitRange = () => {
       const chart = chartRef.current;
@@ -217,6 +219,20 @@ export default function EquityReturnChart({
       const full = fullLogicalRange(lastBarCountRef.current, chart.timeScale().width());
       if (!full) return;
       chart.timeScale().setVisibleLogicalRange(full);
+    };
+
+    const destroy = () => {
+      const chart = chartRef.current;
+      if (chart) {
+        if (onMove) chart.unsubscribeCrosshairMove(onMove);
+        if (onClick) chart.unsubscribeClick(onClick);
+        chart.remove();
+      }
+      chartRef.current = null;
+      strategySeriesRef.current = null;
+      overlaySeriesRef.current.clear();
+      hadStrategyRef.current = false;
+      lastBarCountRef.current = 0;
     };
 
     const create = (width: number, height: number) => {
@@ -302,71 +318,57 @@ export default function EquityReturnChart({
       applySeriesRef.current();
     };
 
-    const layout = (width: number, height: number) => {
-      if (width < 160 || height < 80) {
-        collapsed = true;
-        return;
-      }
+    const layout = (width: number, height: number, force = false) => {
+      const action = chartRestoreAction({
+        active: activeRef.current,
+        width,
+        height,
+        hasChart: Boolean(chartRef.current),
+      });
+      if (action === 'skip') return;
       const sizeChanged = Math.abs(width - lastWidth) >= 2 || Math.abs(height - lastHeight) >= 2;
-      if (!chartRef.current) {
-        lastWidth = width;
-        lastHeight = height;
-        collapsed = false;
+      lastWidth = width;
+      lastHeight = height;
+      if (action === 'create') {
+        if (chartRef.current) destroy();
         create(width, height);
         return;
       }
-      if (!collapsed && !sizeChanged) return;
-      lastWidth = width;
-      lastHeight = height;
-      collapsed = false;
-      chartRef.current.applyOptions({ width, height });
+      if (!force && !sizeChanged) return;
+      chartRef.current?.applyOptions({ width, height });
       applySeriesRef.current();
       fitRange();
     };
 
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect;
-      layout(Math.floor(rect?.width ?? 0), Math.floor(rect?.height ?? 0));
+      layout(Math.floor(rect?.width ?? host.clientWidth), Math.floor(rect?.height ?? host.clientHeight), true);
     });
     observer.observe(host);
-    const visible = new IntersectionObserver((entries) => {
-      const entry = entries[0];
-      if (!entry?.isIntersecting) {
-        collapsed = true;
-        return;
-      }
-      layout(host.clientWidth, host.clientHeight);
-    }, { threshold: 0.01 });
-    visible.observe(host);
-    layoutRef.current = layout;
-    layout(host.clientWidth, host.clientHeight);
-    return () => {
-      observer.disconnect();
-      visible.disconnect();
-      const chart = chartRef.current;
-      if (chart) {
-        if (onMove) chart.unsubscribeCrosshairMove(onMove);
-        if (onClick) chart.unsubscribeClick(onClick);
-        chart.remove();
-      }
-      chartRef.current = null;
-      strategySeriesRef.current = null;
-      overlaySeriesRef.current.clear();
-      hadStrategyRef.current = false;
+    const kick = (force = false) => layout(host.clientWidth, host.clientHeight, force);
+    kick();
+    rafOuter = window.requestAnimationFrame(() => {
+      rafInner = window.requestAnimationFrame(() => kick(true));
+    });
+    const onVis = () => {
+      if (document.visibilityState !== 'visible' || !activeRef.current) return;
       lastBarCountRef.current = 0;
+      kick(true);
+      window.requestAnimationFrame(() => kick(true));
     };
-  }, []);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.cancelAnimationFrame(rafOuter);
+      window.cancelAnimationFrame(rafInner);
+      document.removeEventListener('visibilitychange', onVis);
+      observer.disconnect();
+      destroy();
+    };
+  }, [active]);
 
   useEffect(() => {
     applySeries();
   }, [data, overlays]);
-
-  useEffect(() => {
-    activeRef.current = active;
-    const host = hostRef.current;
-    if (!active || !host) return;
-    layoutRef.current(host.clientWidth, host.clientHeight);
-  }, [active]);
 
   useEffect(() => {
     const series = strategySeriesRef.current;

@@ -1,4 +1,4 @@
-import type { GinxResponse } from '../types/rss';
+import type { GinxResponse } from '../types/api';
 import type { StrategyPlatform } from '@/lib/strategyPlatforms';
 import type { StrategyDetail } from './strategies';
 import { getToken } from './auth';

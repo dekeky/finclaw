@@ -12,7 +12,7 @@ func TestAppendSMTPSectionIfMissing(t *testing.T) {
 	t.Setenv(FinclawHomeEnv, home)
 
 	configPath := filepath.Join(home, FinclawConfigFile)
-	initial := "serverAddr = \":8082\"\nrssServerAddr = \"http://example.com\"\n"
+	initial := "serverAddr = \":8082\"\nagentHubAddr = \"http://example.com\"\n"
 	if err := os.WriteFile(configPath, []byte(initial), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}

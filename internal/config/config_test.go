@@ -8,7 +8,7 @@ func TestConfLoad(t *testing.T) {
 		t.Fatalf("FinConfigGet() = nil")
 	}
 	t.Logf("conf = %+v", conf)
-	t.Logf("serverAddr=%s rssServerAddr=%s agentHubAddr=%s", conf.ServerAddr, conf.RSSServerAddr, conf.AgentHubAddr)
+	t.Logf("serverAddr=%s agentHubAddr=%s", conf.ServerAddr, conf.AgentHubAddr)
 }
 
 func TestEnsureDefaultFquant(t *testing.T) {

@@ -51,7 +51,7 @@ func main() {
 	if agentHubAddr == "" {
 		agentHubAddr = finclawconfig.DefaultAgentHubAddr
 	}
-	frouter := router.NewFinClawRouter(finclawConf.RSSServerAddr, agentHubAddr, agentManager, authStore, finclawConf)
+	frouter := router.NewFinClawRouter(agentHubAddr, agentManager, authStore, finclawConf)
 
 	// 3. Init weixin channels for enabled configs (router needs to register them for rebind)
 	initWeixinChannels(ctx, agentManager, finclawConf, frouter)

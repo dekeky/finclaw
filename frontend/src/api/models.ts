@@ -1,4 +1,4 @@
-import type { GinxResponse } from '../types/rss';
+import type { GinxResponse } from '../types/api';
 import type { AgentModelProvider, ModelProbeBody } from './agents';
 import { getToken } from './auth';
 

@@ -4,7 +4,6 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App.tsx';
 import { ThemeProvider } from './context/ThemeContext';
 import './index.css';
-import { AiDockProvider } from './state/aiDock';
 import { AgentsProvider } from './state/agents';
 import { AuthProvider } from './state/auth';
 import { ChatSessionProvider } from './state/chatSession';
@@ -20,9 +19,7 @@ createRoot(document.getElementById('root')!).render(
             <AgentsProvider>
               <DocViewerProvider>
                 <ChatSessionProvider>
-                  <AiDockProvider>
-                    <App />
-                  </AiDockProvider>
+                  <App />
                 </ChatSessionProvider>
               </DocViewerProvider>
             </AgentsProvider>

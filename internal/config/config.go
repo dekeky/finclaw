@@ -95,7 +95,6 @@ func (s *SMTPSettings) Enabled() bool {
 
 type FinclawConfigServer struct {
 	ServerAddr         string                    `toml:"serverAddr"`
-	RSSServerAddr      string                    `toml:"rssServerAddr"`
 	AgentHubAddr       string                    `toml:"agentHubAddr"`
 	FquantAddr         string                    `toml:"fquantAddr"`
 	SMTP               *SMTPSettings             `toml:"smtp"`

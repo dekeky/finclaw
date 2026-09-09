@@ -28,14 +28,19 @@ import {
   PANEL_WIDTH_KEYS,
   PANEL_WIDTH_LIMITS,
 } from '@/lib/panelWidths';
+import { saveBacktestViewState } from '@/lib/backtestViewState';
 import { useAuth } from '@/state/auth';
 import { toast } from 'sonner';
 import {
   isLiveStatus,
   mergeLiveDetail,
+  recalledRunDetail,
+  rememberRunDetail,
   sameLiveSnapshot,
+  seedCurrentRun,
   shouldContinueLivePoll,
   shouldFetchLiveRun,
+  shouldSkipStoredRefetch,
 } from './liveRun';
 import './fquant-ui.css';
 
@@ -67,36 +72,6 @@ function runListDuration(item: RunListItem, now: number): string | null {
   const seconds = finishedDurationSeconds(item);
   if (seconds == null) return null;
   return `耗时 ${formatDuration(seconds)}`;
-}
-
-function placeholderRun(item: RunListItem): RunDetail {
-  const request = item.request;
-  return {
-    id: item.id,
-    name: runDisplayName(item),
-    status: item.status,
-    created_at: item.created_at,
-    updated_at: item.updated_at,
-    started_at: item.started_at ?? null,
-    finished_at: item.finished_at ?? null,
-    duration_seconds: item.duration_seconds,
-    request: {
-      strategy_name: item.strategy_name,
-      symbols: item.symbols ?? request?.symbols ?? [],
-      initial_cash: request?.initial_cash ?? 0,
-      start_time: request?.start_time ?? '',
-      end_time: request?.end_time ?? '',
-      universe: request?.universe,
-      index: request?.index,
-      commission_rate: request?.commission_rate,
-      min_commission: request?.min_commission,
-      stamp_tax_rate: request?.stamp_tax_rate,
-      transfer_fee_rate: request?.transfer_fee_rate,
-      slippage: request?.slippage,
-      lot_size: request?.lot_size,
-      extra: request?.extra,
-    },
-  };
 }
 
 function SettingsIcon() {
@@ -165,7 +140,7 @@ export function BacktestRunsPanel({
     ...PANEL_WIDTH_LIMITS.backtestRuns,
   });
   const [items, setItems] = useState<RunListItem[]>([]);
-  const [current, setCurrent] = useState<RunDetail | null>(null);
+  const [current, setCurrent] = useState<RunDetail | null>(() => recalledRunDetail(focusRunId));
   const [selectedId, setSelectedId] = useState<string | null>(focusRunId);
   const [error, setError] = useState<string | null>(null);
   const [configItem, setConfigItem] = useState<RunListItem | null>(null);
@@ -179,18 +154,30 @@ export function BacktestRunsPanel({
   currentRef.current = current;
   const strategyNameRef = useRef(strategyName);
   strategyNameRef.current = strategyName;
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
   const live = isLiveStatus(current?.status) || items.some((item) => isLiveStatus(item.status));
   const liveRef = useRef(live);
   liveRef.current = live;
+
+  function commitCurrent(detail: RunDetail | null) {
+    const next = detail ? rememberRunDetail(detail) : null;
+    setCurrent(next);
+    return next;
+  }
 
   useEffect(() => {
     if (focusRunId) setSelectedId(focusRunId);
   }, [focusRunId]);
 
   useEffect(() => {
+    if (selectedId) saveBacktestViewState({ selectedRunId: selectedId });
+  }, [selectedId]);
+
+  useEffect(() => {
     // Re-seed from focusRunId when strategy changes (caller clears focus when switching strategies).
     setSelectedId(focusRunId);
-    setCurrent(null);
+    commitCurrent(focusRunId ? recalledRunDetail(focusRunId) : null);
     setEditingId(null);
     setConfigItem(null);
     setSourceView(null);
@@ -226,7 +213,12 @@ export function BacktestRunsPanel({
         }
         if (selectedIdRef.current !== targetId) setSelectedId(targetId);
         const item = scoped.find((row) => row.id === targetId);
-        if (item && currentRef.current?.id !== targetId) setCurrent(placeholderRun(item));
+        const seeded = seedCurrentRun({
+          selectedId: targetId,
+          current: currentRef.current,
+          item,
+        });
+        if (seeded && currentRef.current !== seeded) commitCurrent(seeded);
       })
       .catch((err: Error) => {
         if (!cancelled) setError(err.message);
@@ -238,8 +230,16 @@ export function BacktestRunsPanel({
 
   useEffect(() => {
     if (!selectedId || !user) return;
+    const listed = itemsRef.current.find((row) => row.id === selectedId);
+    const seeded = seedCurrentRun({
+      selectedId,
+      current: currentRef.current,
+      item: listed,
+    });
+    if (seeded && currentRef.current !== seeded) commitCurrent(seeded);
+    if (shouldSkipStoredRefetch(seeded, listed?.status)) return;
     let cancelled = false;
-    const fetchRun = shouldFetchLiveRun(currentRef.current, selectedId)
+    const fetchRun = shouldFetchLiveRun(seeded, selectedId, listed?.status)
       ? getFquantBacktestRun
       : getBacktestRun;
     fetchRun(selectedId)
@@ -248,7 +248,7 @@ export function BacktestRunsPanel({
         if (detail.request?.strategy_name && detail.request.strategy_name !== strategyNameRef.current) {
           return;
         }
-        setCurrent((prev) => mergeLiveDetail(prev, detail));
+        commitCurrent(mergeLiveDetail(currentRef.current, detail));
         setItems((list) => {
           const index = list.findIndex((row) => row.id === detail.id);
           if (index < 0) return list;
@@ -266,7 +266,7 @@ export function BacktestRunsPanel({
   }, [selectedId, user, strategyName]);
 
   useEffect(() => {
-    if (!live || !user) return;
+    if (!live || !user || !active) return;
     let cancelled = false;
     let timer = 0;
     const tick = async () => {
@@ -277,7 +277,7 @@ export function BacktestRunsPanel({
           const detail = await getFquantBacktestRun(targetId);
           if (cancelled) return;
           if (!sameLiveSnapshot(currentRef.current, detail)) {
-            setCurrent(mergeLiveDetail(currentRef.current, detail));
+            commitCurrent(mergeLiveDetail(currentRef.current, detail));
           }
           setItems((list) => {
             const index = list.findIndex((row) => row.id === detail.id);
@@ -302,7 +302,7 @@ export function BacktestRunsPanel({
             void getBacktestRun(targetId)
               .then((stored) => {
                 if (cancelled || selectedIdRef.current !== targetId) return;
-                setCurrent(stored);
+                commitCurrent(mergeLiveDetail(currentRef.current, stored));
                 setItems((list) => {
                   const index = list.findIndex((row) => row.id === stored.id);
                   if (index < 0) return list;
@@ -337,7 +337,7 @@ export function BacktestRunsPanel({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [live, user, strategyName]);
+  }, [live, user, strategyName, active]);
 
   function openRun(id: string) {
     if (id === selectedId) return;
@@ -345,7 +345,13 @@ export function BacktestRunsPanel({
     setEditingId(null);
     setSelectedId(id);
     const item = items.find((row) => row.id === id);
-    if (item) setCurrent(placeholderRun(item));
+    commitCurrent(
+      seedCurrentRun({
+        selectedId: id,
+        current: currentRef.current?.id === id ? currentRef.current : null,
+        item,
+      }),
+    );
   }
 
   function openSource(item: RunListItem, event: MouseEvent) {
@@ -362,7 +368,7 @@ export function BacktestRunsPanel({
           return;
         }
         setSourceView({ id: item.id, title: runDisplayName(detail) || title, source: detail.source });
-        if (selectedIdRef.current === item.id) setCurrent(detail);
+        if (selectedIdRef.current === item.id) commitCurrent(mergeLiveDetail(currentRef.current, detail));
       })
       .catch((err: unknown) => {
         toast.error(err instanceof Error ? err.message : '加载源码失败');
@@ -389,7 +395,10 @@ export function BacktestRunsPanel({
     try {
       const updated = await renameBacktestRun(item.id, next);
       setItems((list) => list.map((row) => (row.id === item.id ? { ...row, ...updated, name: next } : row)));
-      setCurrent((detail) => (detail?.id === item.id ? { ...detail, name: next } : detail));
+      setCurrent((detail) => {
+        if (detail?.id !== item.id) return detail;
+        return rememberRunDetail({ ...detail, name: next });
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '重命名失败');
     }
@@ -412,7 +421,15 @@ export function BacktestRunsPanel({
       if (selectedId === item.id) {
         const next = remaining.filter((row) => belongsToStrategy(row, strategyName))[0] ?? remaining[0] ?? null;
         setSelectedId(next?.id ?? null);
-        setCurrent(next ? placeholderRun(next) : null);
+        commitCurrent(
+          next
+            ? seedCurrentRun({
+                selectedId: next.id,
+                current: null,
+                item: next,
+              })
+            : null,
+        );
       }
       if (configItem?.id === item.id) setConfigItem(null);
       if (sourceView?.id === item.id) setSourceView(null);

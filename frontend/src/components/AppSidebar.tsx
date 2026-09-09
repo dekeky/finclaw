@@ -1,7 +1,6 @@
 import {
   IconChartAreaLine,
   IconCpu,
-  IconNews,
   IconRobot,
 } from '@tabler/icons-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -36,7 +35,6 @@ const COMM_NAV = [
 ] as const;
 
 const MORE_NAV = [
-  { title: '金融资讯', url: '/news', icon: IconNews },
   { title: '量化', url: '/backtest', icon: IconChartAreaLine },
 ] as const;
 

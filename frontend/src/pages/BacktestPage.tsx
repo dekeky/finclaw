@@ -72,6 +72,7 @@ import { useAuth } from '@/state/auth';
 import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { shareStrategyToLibrary, type StrategyLibrarySummary } from '@/api/strategyLibrary';
 import { StrategyLibraryDetailView, StrategyLibraryPanel } from '@/components/StrategyLibraryPanel';
+import { loadBacktestViewState, saveBacktestViewState } from '@/lib/backtestViewState';
 
 type EditorForm = {
   name: string;
@@ -108,10 +109,11 @@ export default function BacktestPage() {
   const { user } = useAuth();
   const { requireAuth } = useRequireAuth();
   const { refresh: refreshAgents, currentAgent } = useAgents();
+  const initialView = useMemo(() => loadBacktestViewState(), []);
   const [strategies, setStrategies] = useState<StrategySummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [selectedName, setSelectedName] = useState<string | null>(initialView.selectedName);
   const [form, setForm] = useState<EditorForm>(() => emptyForm());
   const [savedForm, setSavedForm] = useState<EditorForm>(() => emptyForm());
   const [dirty, setDirty] = useState(false);
@@ -134,12 +136,12 @@ export default function BacktestPage() {
   const [shareError, setShareError] = useState<string | null>(null);
   const [shareSuccess, setShareSuccess] = useState(false);
   const [linkShareOpen, setLinkShareOpen] = useState(false);
-  const [strategyPane, setStrategyPane] = useState<'code' | 'runs'>('code');
-  const [runsReady, setRunsReady] = useState(false);
+  const [strategyPane, setStrategyPane] = useState<'code' | 'runs'>(initialView.strategyPane);
+  const [runsReady, setRunsReady] = useState(initialView.runsReady || initialView.strategyPane === 'runs');
   const [runBusy, setRunBusy] = useState(false);
   const [universeOpen, setUniverseOpen] = useState(false);
   const [runsRefreshKey, setRunsRefreshKey] = useState(0);
-  const [focusRunId, setFocusRunId] = useState<string | null>(null);
+  const [focusRunId, setFocusRunId] = useState<string | null>(initialView.selectedRunId);
   const [showLibrary, setShowLibrary] = useState(false);
   const [libraryEntry, setLibraryEntry] = useState<StrategyLibrarySummary | null>(null);
   const { confirm, dialog: confirmDialog } = useConfirm();
@@ -149,6 +151,15 @@ export default function BacktestPage() {
   useEffect(() => {
     if (strategyPane === 'runs') setRunsReady(true);
   }, [strategyPane]);
+
+  useEffect(() => {
+    saveBacktestViewState({
+      selectedName,
+      strategyPane,
+      runsReady,
+      ...(selectedName ? {} : { selectedRunId: null }),
+    });
+  }, [selectedName, strategyPane, runsReady]);
 
   const chatResize = useHorizontalResize({
     storageKey: PANEL_WIDTH_KEYS.backtestChat,
@@ -188,6 +199,7 @@ export default function BacktestPage() {
       setStrategies(list);
       setSelectedName((prev) => {
         if (prev && list.some((s) => s.name === prev)) return prev;
+        if (prev) saveBacktestViewState({ selectedName: null, selectedRunId: null, strategyPane: 'code', runsReady: false });
         return null;
       });
     } catch (err) {

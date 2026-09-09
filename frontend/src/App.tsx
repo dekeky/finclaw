@@ -12,7 +12,6 @@ const AgentsPage = lazyWithRetry(() => import('./pages/AgentsPage'));
 const BacktestPage = lazyWithRetry(() => import('./pages/BacktestPage'));
 const ChatPage = lazyWithRetry(() => import('./pages/ChatPage'));
 const LoginPage = lazyWithRetry(() => import('./pages/LoginPage'));
-const NewsPage = lazyWithRetry(() => import('./pages/NewsPage'));
 const SharePage = lazyWithRetry(() => import('./pages/SharePage'));
 const WeixinPage = lazyWithRetry(() => import('./pages/WeixinPage'));
 
@@ -54,8 +53,6 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route path="/" element={<Navigate to="/chat" replace />} />
           <Route path="/chat" element={<ChatPage />} />
-          <Route path="/news" element={<NewsPage />} />
-          <Route path="/rss" element={<Navigate to="/news" replace />} />
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/models" element={<ModelsPage />} />
           <Route path="/agents/market" element={<AgentMarketPage />} />

@@ -22,11 +22,8 @@ import { copyToClipboard } from '../lib/clipboard';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { useChatSession } from '@/state/chatSession';
-import { useAiDock } from '@/state/aiDock';
 import { useAgents } from '@/state/agents';
 import { useDocViewer } from '@/state/docViewer';
-import { buildAnalysisUserMessage } from '@/utils/analysisPrompt';
-import { rssScopedItemKey } from '@/utils/rssScopedKey';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -57,7 +54,6 @@ export default function ChatPage() {
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
-  const dock = useAiDock();
 
   useEffect(() => {
     void refresh();
@@ -204,11 +200,8 @@ export default function ChatPage() {
     if (!requireAuth()) return;
     if (status !== 'connected') return;
     if (!text.trim() && pendingImages.length === 0) return;
-    const content = dock.selectedKeys.size > 0
-      ? buildAnalysisUserMessage(text, dock.listEntries.filter(e => dock.selectedKeys.has(rssScopedItemKey(e.sourceName, e.sector, e.item))))
-      : text;
     const media = pendingImages.map((img) => img.dataUrl);
-    send(content, media.length > 0 ? media : undefined);
+    send(text, media.length > 0 ? media : undefined);
     setValue('');
     setPendingImages([]);
   };
@@ -276,11 +269,6 @@ export default function ChatPage() {
             <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs text-destructive" onClick={() => void refresh()}>
               重试
             </Button>
-          )}
-          {dock.selectedKeys.size > 0 && (
-            <Badge variant="secondary" className="text-[10px]">
-              {dock.selectedKeys.size} 篇已选
-            </Badge>
           )}
           {currentAgent && (
             <Tooltip>
@@ -420,7 +408,7 @@ export default function ChatPage() {
                     />
                     <TextareaAutosize
                       className="w-full resize-none bg-transparent px-2 py-1.5 text-[15px] leading-normal text-foreground outline-none break-words whitespace-pre-wrap placeholder:text-muted-foreground"
-                      placeholder={dock.selectedKeys.size > 0 ? '已选文章将自动附带到对话中...' : "输入您的问题...。输入'/'可使用系统命令，如'/stop'可中止当前回复"}
+                      placeholder="输入您的问题...。输入'/'可使用系统命令，如'/stop'可中止当前回复"
                       minRows={1}
                       maxRows={10}
                       value={value}

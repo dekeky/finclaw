@@ -10,7 +10,6 @@ import (
 	"github.com/finclaw/internal/auth"
 	"github.com/finclaw/internal/browser"
 	finclawconfig "github.com/finclaw/internal/config"
-	"github.com/finclaw/internal/rss"
 	"github.com/finclaw/internal/webui"
 	agentruntime "github.com/finclaw/pkg/agent"
 	"github.com/finclaw/pkg/channels/weixin"
@@ -19,21 +18,19 @@ import (
 
 // FinClawRouter handles HTTP and WebSocket routes
 type FinClawRouter struct {
-	r             *gin.Engine
-	agentManager  *agentruntime.AgentManager
-	finclawConf   *finclawconfig.FinclawConfig
-	rssServerAddr string
-	agentHubAddr  string
-	authStore     *auth.Store
+	r            *gin.Engine
+	agentManager *agentruntime.AgentManager
+	finclawConf  *finclawconfig.FinclawConfig
+	agentHubAddr string
+	authStore    *auth.Store
 
 	weixinMu       sync.RWMutex
 	weixinChannels map[string]*weixin.WeixinChannel // channel name -> running channel
 }
 
 // NewFinClawRouter creates a new router instance
-func NewFinClawRouter(rssServerAddr, agentHubAddr string, agentManager *agentruntime.AgentManager, authStore *auth.Store, finclawConf *finclawconfig.FinclawConfig) *FinClawRouter {
+func NewFinClawRouter(agentHubAddr string, agentManager *agentruntime.AgentManager, authStore *auth.Store, finclawConf *finclawconfig.FinclawConfig) *FinClawRouter {
 	return &FinClawRouter{
-		rssServerAddr:  rssServerAddr,
 		agentHubAddr:   agentHubAddr,
 		agentManager:   agentManager,
 		authStore:      authStore,
@@ -76,7 +73,6 @@ func (fr *FinClawRouter) RoutesInit() error {
 	fr.webSocketRouter()
 	fr.mediaRouter()
 	fr.shareRouter()
-	fr.rssRouter()
 	fr.authRouter()
 	fr.agentManagerRouter()
 	fr.modelRouter()
@@ -106,11 +102,6 @@ func (fr *FinClawRouter) webSocketRouter() {
 			},
 		})
 	})
-}
-
-func (fr *FinClawRouter) rssRouter() {
-	rssRouter := rss.NewRssRouter(fr.rssServerAddr, fr.r)
-	rssRouter.ConfigRouter()
 }
 
 func (fr *FinClawRouter) agentManagerRouter() {
