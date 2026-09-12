@@ -131,6 +131,7 @@ export function placeholderRun(item: RunListItem): RunDetail {
     duration_seconds: item.duration_seconds,
     request: {
       strategy_name: item.strategy_name,
+      strategy_id: item.strategy_id ?? request?.strategy_id,
       symbols: item.symbols ?? request?.symbols ?? [],
       initial_cash: request?.initial_cash ?? 0,
       start_time: request?.start_time ?? '',

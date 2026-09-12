@@ -147,6 +147,10 @@ export default function BacktestPage() {
   const { confirm, dialog: confirmDialog } = useConfirm();
 
   const existingStrategyNames = useMemo(() => strategies.map((s) => s.name), [strategies]);
+  const selectedStrategy = useMemo(
+    () => strategies.find((item) => item.name === selectedName) ?? null,
+    [strategies, selectedName],
+  );
 
   useEffect(() => {
     if (strategyPane === 'runs') setRunsReady(true);
@@ -433,6 +437,7 @@ export default function BacktestPage() {
       if (!strategyName) return;
       const run = await submitBacktestRun({
         strategy_name: strategyName,
+        strategy_id: selectedStrategy?.id || strategies.find((item) => item.name === strategyName)?.id,
         initial_cash: cash,
         start_time: params.start_time,
         end_time: params.end_time,
@@ -914,6 +919,7 @@ export default function BacktestPage() {
                 {selectedName && runsReady ? (
                   <div className={strategyPane === 'runs' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
                     <BacktestRunsPanel
+                      strategyId={selectedStrategy?.id}
                       strategyName={selectedName}
                       refreshKey={runsRefreshKey}
                       focusRunId={focusRunId}
@@ -1000,6 +1006,7 @@ export default function BacktestPage() {
       <StrategyLinkShareDialog
         open={linkShareOpen}
         onOpenChange={setLinkShareOpen}
+        strategyId={selectedStrategy?.id}
         strategyName={selectedName ?? ''}
       />
       {confirmDialog}

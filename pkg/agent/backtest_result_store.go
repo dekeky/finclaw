@@ -21,12 +21,13 @@ type backtestIndexFile struct {
 }
 
 type backtestIndexEntry struct {
-	ID        string `json:"id"`
-	Strategy  string `json:"strategy"`
-	Name      string `json:"name,omitempty"`
-	Status    string `json:"status"`
-	Dir       string `json:"dir"`
-	UpdatedAt string `json:"updated_at"`
+	ID         string `json:"id"`
+	Strategy   string `json:"strategy"`
+	StrategyID string `json:"strategy_id,omitempty"`
+	Name       string `json:"name,omitempty"`
+	Status     string `json:"status"`
+	Dir        string `json:"dir"`
+	UpdatedAt  string `json:"updated_at"`
 }
 
 type backtestRunMeta struct {
@@ -39,6 +40,7 @@ type parsedBacktestRun struct {
 	Name         string
 	Status       string
 	StrategyName string
+	StrategyID   string
 	CreatedAt    string
 	UpdatedAt    string
 	StartedAt    string
@@ -69,8 +71,30 @@ func persistSubmittedBacktest(userID, runID, status, strategyName, source string
 	if strategyName == "" {
 		strategyName = strings.TrimSpace(req.StrategyName)
 	}
+	strategyID := strings.TrimSpace(req.StrategyID)
+	if strategyID == "" {
+		strategyID = lookupStrategyIDByName(userID, strategyName)
+	}
 	createdAt := time.Now()
 	displayName := defaultBacktestRunName(strategyName, createdAt)
+	request := map[string]any{
+		"strategy_name":     strategyName,
+		"initial_cash":      req.InitialCash,
+		"start_time":        req.StartTime,
+		"end_time":          req.EndTime,
+		"universe":          req.Universe,
+		"symbols":           req.Symbols,
+		"index":             req.Index,
+		"commission_rate":   req.CommissionRate,
+		"min_commission":    req.MinCommission,
+		"stamp_tax_rate":    req.StampTaxRate,
+		"transfer_fee_rate": req.TransferFeeRate,
+		"slippage":          req.Slippage,
+		"lot_size":          req.LotSize,
+	}
+	if strategyID != "" {
+		request["strategy_id"] = strategyID
+	}
 	payload := map[string]any{
 		"id":            runID,
 		"name":          displayName,
@@ -78,21 +102,10 @@ func persistSubmittedBacktest(userID, runID, status, strategyName, source string
 		"strategy_name": strategyName,
 		"created_at":    createdAt.Format(time.RFC3339),
 		"updated_at":    createdAt.UTC().Format(time.RFC3339),
-		"request": map[string]any{
-			"strategy_name":     strategyName,
-			"initial_cash":      req.InitialCash,
-			"start_time":        req.StartTime,
-			"end_time":          req.EndTime,
-			"universe":          req.Universe,
-			"symbols":           req.Symbols,
-			"index":             req.Index,
-			"commission_rate":   req.CommissionRate,
-			"min_commission":    req.MinCommission,
-			"stamp_tax_rate":    req.StampTaxRate,
-			"transfer_fee_rate": req.TransferFeeRate,
-			"slippage":          req.Slippage,
-			"lot_size":          req.LotSize,
-		},
+		"request":       request,
+	}
+	if strategyID != "" {
+		payload["strategy_id"] = strategyID
 	}
 	if strings.TrimSpace(source) != "" {
 		payload["source"] = source
@@ -112,19 +125,11 @@ func persistBacktestRun(userID string, raw json.RawMessage) error {
 	if run.ID == "" {
 		return fmt.Errorf("backtest run missing id")
 	}
-	if run.StrategyName == "" {
-		if existing, ok := lookupBacktestIndex(userID, run.ID); ok {
-			run.StrategyName = existing.Strategy
-			if run.Name == "" {
-				run.Name = existing.Name
-			}
-		} else {
-			run.StrategyName = "unknown"
-		}
-	}
+	inheritBacktestStrategy(userID, &run)
 	if run.Name == "" {
 		run.Name = backtestDisplayName(run)
 	}
+	raw = enrichPersistedRunPayload(raw, run)
 
 	backtestStoreMu.Lock()
 	defer backtestStoreMu.Unlock()
@@ -145,6 +150,214 @@ func persistBacktestRun(userID string, raw json.RawMessage) error {
 		return upsertBacktestIndexLocked(userID, run, dir)
 	}
 	return writeBacktestSnapshotLocked(userID, run, raw, dir, true)
+}
+
+func lookupStrategyIDByName(userID, name string) string {
+	name = strings.TrimSpace(name)
+	if userID == "" || name == "" {
+		return ""
+	}
+	return NewStrategyStore(userID).NameToIDMap()[name]
+}
+
+func inheritBacktestStrategy(userID string, run *parsedBacktestRun) {
+	if existing, ok := lookupBacktestIndex(userID, run.ID); ok {
+		if existing.Strategy != "" {
+			run.StrategyName = existing.Strategy
+		}
+		if existing.StrategyID != "" {
+			run.StrategyID = existing.StrategyID
+		}
+		if run.Name == "" {
+			run.Name = existing.Name
+		}
+	}
+	if run.StrategyID == "" && run.StrategyName != "" {
+		run.StrategyID = lookupStrategyIDByName(userID, run.StrategyName)
+	}
+	if run.StrategyName == "" {
+		run.StrategyName = "unknown"
+	}
+}
+
+func enrichPersistedRunPayload(raw json.RawMessage, run parsedBacktestRun) json.RawMessage {
+	var top map[string]any
+	if json.Unmarshal(raw, &top) != nil {
+		return raw
+	}
+	if run.StrategyName != "" {
+		top["strategy_name"] = run.StrategyName
+	}
+	if run.StrategyID != "" {
+		top["strategy_id"] = run.StrategyID
+	}
+	if req := asMap(top["request"]); req != nil {
+		if run.StrategyName != "" {
+			req["strategy_name"] = run.StrategyName
+		}
+		if run.StrategyID != "" {
+			req["strategy_id"] = run.StrategyID
+		}
+		top["request"] = req
+	}
+	out, err := json.Marshal(top)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func sameStrategyRef(itemID, itemName, strategyID, strategyName string) bool {
+	itemID = strings.TrimSpace(itemID)
+	strategyID = strings.TrimSpace(strategyID)
+	if itemID != "" && strategyID != "" {
+		return itemID == strategyID
+	}
+	return strings.TrimSpace(itemName) == strings.TrimSpace(strategyName)
+}
+
+func rebindBacktestsForStrategy(userID, strategyID, oldName, newName string) error {
+	strategyID = strings.TrimSpace(strategyID)
+	oldName = strings.TrimSpace(oldName)
+	newName = strings.TrimSpace(newName)
+	if userID == "" || newName == "" || oldName == newName {
+		return nil
+	}
+
+	backtestStoreMu.Lock()
+	defer backtestStoreMu.Unlock()
+
+	index, err := loadBacktestIndexLocked(userID)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for runID, entry := range index.Runs {
+		if !sameStrategyRef(entry.StrategyID, entry.Strategy, strategyID, oldName) {
+			continue
+		}
+		if strategyID != "" {
+			entry.StrategyID = strategyID
+		}
+		entry.Strategy = newName
+		run := parsedBacktestRun{
+			ID:           runID,
+			Name:         entry.Name,
+			StrategyName: newName,
+			StrategyID:   entry.StrategyID,
+			Status:       entry.Status,
+			UpdatedAt:    entry.UpdatedAt,
+		}
+		dir, err := allocateBacktestDirLocked(userID, run, index)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(AccountBacktestsRootForUser(userID), dir)
+		if err != nil {
+			rel = filepath.Join(newName, firstNonEmpty(entry.Name, runID))
+		}
+		entry.Dir = filepath.ToSlash(rel)
+		index.Runs[runID] = entry
+		patchBacktestStrategyFiles(dir, entry.StrategyID, newName)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	if err := saveBacktestIndexLocked(userID, index); err != nil {
+		return err
+	}
+	_ = rewriteBacktestReadmesLocked(userID)
+	removeEmptyBacktestStrategyDir(userID, oldName)
+	return nil
+}
+
+func patchBacktestStrategyFiles(dir, strategyID, strategyName string) {
+	resultPath := filepath.Join(dir, "result.json")
+	if data, err := os.ReadFile(resultPath); err == nil {
+		if patched, ok := patchStrategyFieldsJSON(data, strategyID, strategyName); ok {
+			_ = os.WriteFile(resultPath, patched, 0o600)
+		}
+	}
+	requestPath := filepath.Join(dir, "request.json")
+	if data, err := os.ReadFile(requestPath); err == nil {
+		if patched, ok := patchStrategyFieldsJSON(data, strategyID, strategyName); ok {
+			_ = os.WriteFile(requestPath, patched, 0o600)
+		}
+	}
+}
+
+func patchStrategyFieldsJSON(raw []byte, strategyID, strategyName string) ([]byte, bool) {
+	var top map[string]any
+	if json.Unmarshal(raw, &top) != nil {
+		return nil, false
+	}
+	if strategyName != "" {
+		top["strategy_name"] = strategyName
+	}
+	if strategyID != "" {
+		top["strategy_id"] = strategyID
+	}
+	if req := asMap(top["request"]); req != nil {
+		if strategyName != "" {
+			req["strategy_name"] = strategyName
+		}
+		if strategyID != "" {
+			req["strategy_id"] = strategyID
+		}
+		top["request"] = req
+	}
+	out, err := json.MarshalIndent(top, "", "  ")
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+func removeEmptyBacktestStrategyDir(userID, strategyName string) {
+	seg, err := safeBacktestPathSegment(strategyName)
+	if err != nil {
+		return
+	}
+	dir := filepath.Join(AccountBacktestsRootForUser(userID), seg)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, ent := range entries {
+		if ent.Name() == "README.md" && !ent.IsDir() {
+			continue
+		}
+		return
+	}
+	_ = os.RemoveAll(dir)
+}
+
+func backfillBacktestStrategyIDs(userID string) {
+	names := NewStrategyStore(userID).NameToIDMap()
+	if len(names) == 0 {
+		return
+	}
+	backtestStoreMu.Lock()
+	defer backtestStoreMu.Unlock()
+	index, err := loadBacktestIndexLocked(userID)
+	if err != nil {
+		return
+	}
+	changed := false
+	for id, entry := range index.Runs {
+		if strings.TrimSpace(entry.StrategyID) != "" {
+			continue
+		}
+		if sid := names[entry.Strategy]; sid != "" {
+			entry.StrategyID = sid
+			index.Runs[id] = entry
+			changed = true
+		}
+	}
+	if changed {
+		_ = saveBacktestIndexLocked(userID, index)
+	}
 }
 
 func slimLiveRunPayload(raw json.RawMessage) json.RawMessage {
@@ -294,6 +507,7 @@ func persistBacktestRename(userID, runID, name string) error {
 		ID:           runID,
 		Name:         name,
 		StrategyName: entry.Strategy,
+		StrategyID:   entry.StrategyID,
 		Status:       entry.Status,
 		UpdatedAt:    entry.UpdatedAt,
 	}
@@ -391,11 +605,16 @@ func parseBacktestRun(raw json.RawMessage) (parsedBacktestRun, error) {
 		asString(top["strategy_name"]),
 		asString(req["strategy_name"]),
 	)
+	strategyID := firstNonEmpty(
+		asString(top["strategy_id"]),
+		asString(req["strategy_id"]),
+	)
 	return parsedBacktestRun{
 		ID:           asString(top["id"]),
 		Name:         asString(top["name"]),
 		Status:       asString(top["status"]),
 		StrategyName: strategy,
+		StrategyID:   strategyID,
 		CreatedAt:    asString(top["created_at"]),
 		UpdatedAt:    firstNonEmpty(asString(top["updated_at"]), asString(top["finished_at"]), asString(top["created_at"])),
 		StartedAt:    asString(top["started_at"]),
@@ -618,12 +837,13 @@ func upsertBacktestIndexLocked(userID string, run parsedBacktestRun, dir string)
 		rel = filepath.Join(run.StrategyName, run.ID)
 	}
 	index.Runs[run.ID] = backtestIndexEntry{
-		ID:        run.ID,
-		Strategy:  run.StrategyName,
-		Name:      run.Name,
-		Status:    run.Status,
-		Dir:       filepath.ToSlash(rel),
-		UpdatedAt: firstNonEmpty(run.UpdatedAt, time.Now().UTC().Format(time.RFC3339)),
+		ID:         run.ID,
+		Strategy:   run.StrategyName,
+		StrategyID: firstNonEmpty(run.StrategyID, index.Runs[run.ID].StrategyID),
+		Name:       run.Name,
+		Status:     run.Status,
+		Dir:        filepath.ToSlash(rel),
+		UpdatedAt:  firstNonEmpty(run.UpdatedAt, time.Now().UTC().Format(time.RFC3339)),
 	}
 	return saveBacktestIndexLocked(userID, index)
 }
@@ -1033,6 +1253,7 @@ func localHasRun(userID, runID string) bool {
 }
 
 func loadLocalRunList(userID string) []json.RawMessage {
+	backfillBacktestStrategyIDs(userID)
 	backtestStoreMu.Lock()
 	index, err := loadBacktestIndexLocked(userID)
 	root := AccountBacktestsRootForUser(userID)
@@ -1080,6 +1301,7 @@ func runJSONToListItem(raw []byte, entry backtestIndexEntry) json.RawMessage {
 		"name":             firstNonEmpty(asString(top["name"]), entry.Name),
 		"status":           firstNonEmpty(asString(top["status"]), entry.Status),
 		"strategy_name":    firstNonEmpty(asString(top["strategy_name"]), asString(req["strategy_name"]), entry.Strategy),
+		"strategy_id":      firstNonEmpty(asString(top["strategy_id"]), asString(req["strategy_id"]), entry.StrategyID),
 		"created_at":       top["created_at"],
 		"updated_at":       firstNonEmpty(asString(top["updated_at"]), entry.UpdatedAt),
 		"started_at":       top["started_at"],

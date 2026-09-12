@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Dialog } from 'radix-ui';
 import { IconCopy, IconLink } from '@tabler/icons-react';
 import { listBacktestRuns, runDisplayName, type RunListItem } from '@/api/backtest';
+import { runBelongsToStrategy } from '@/lib/backtestStrategy';
 import { createStrategyPublicShare } from '@/api/strategies';
 import { Button } from '@/components/ui/button';
 import { formatDateMinute, STATUS_LABEL } from '@/components/backtest/format';
@@ -16,10 +17,12 @@ function isShareableRun(item: RunListItem): boolean {
 export function StrategyLinkShareDialog({
   open,
   onOpenChange,
+  strategyId,
   strategyName,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  strategyId?: string;
   strategyName: string;
 }) {
   const [items, setItems] = useState<RunListItem[]>([]);
@@ -31,8 +34,8 @@ export function StrategyLinkShareDialog({
   const [copied, setCopied] = useState(false);
 
   const runs = useMemo(
-    () => items.filter((item) => item.strategy_name === strategyName && isShareableRun(item)),
-    [items, strategyName],
+    () => items.filter((item) => runBelongsToStrategy(item, { id: strategyId, name: strategyName }) && isShareableRun(item)),
+    [items, strategyId, strategyName],
   );
 
   useEffect(() => {

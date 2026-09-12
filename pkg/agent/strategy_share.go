@@ -42,7 +42,7 @@ func (sr *StrategyRouter) createStrategyShare(c *gin.Context) {
 		return
 	}
 
-	runs, err := snapshotStrategyShareRuns(userID, detail.Name, req.RunIDs)
+	runs, err := snapshotStrategyShareRuns(userID, detail.ID, detail.Name, req.RunIDs)
 	if err != nil {
 		status := http.StatusBadRequest
 		if strings.Contains(err.Error(), "not found") {
@@ -72,7 +72,7 @@ func (sr *StrategyRouter) createStrategyShare(c *gin.Context) {
 	ginx.NewRender(c, http.StatusCreated).Data(createStrategyShareResp{Token: share.Token, URL: PublicShareURL(c, share.Token)})
 }
 
-func snapshotStrategyShareRuns(userID, strategyName string, runIDs []string) ([]json.RawMessage, error) {
+func snapshotStrategyShareRuns(userID, strategyID, strategyName string, runIDs []string) ([]json.RawMessage, error) {
 	if len(runIDs) > maxStrategyShareRuns {
 		return nil, fmt.Errorf("最多选择 %d 条回测记录", maxStrategyShareRuns)
 	}
@@ -92,7 +92,7 @@ func snapshotStrategyShareRuns(userID, strategyName string, runIDs []string) ([]
 		if err != nil {
 			return nil, err
 		}
-		if strings.TrimSpace(run.StrategyName) != strategyName {
+		if !sameStrategyRef(run.StrategyID, run.StrategyName, strategyID, strategyName) {
 			return nil, fmt.Errorf("backtest run %q does not belong to strategy %q", id, strategyName)
 		}
 		out = append(out, enrichRunSnapshot(userID, id, raw))

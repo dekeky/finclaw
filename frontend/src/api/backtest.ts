@@ -45,6 +45,7 @@ export type IndicatorItem = {
 
 export type RunRequest = {
   strategy_name: string;
+  strategy_id?: string;
   symbols?: string[];
   universe?: UniverseKind;
   index?: string | null;
@@ -65,6 +66,7 @@ export type RunListItem = {
   name?: string;
   status: string;
   strategy_name: string;
+  strategy_id?: string;
   created_at: string;
   updated_at: string;
   started_at?: string | null;
@@ -162,6 +164,7 @@ export type RunDetail = {
 
 export type SubmitRunRequest = {
   strategy_name: string;
+  strategy_id?: string;
   initial_cash: number;
   start_time: string;
   end_time: string;

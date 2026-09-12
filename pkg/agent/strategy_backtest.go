@@ -49,6 +49,7 @@ func (br *BacktestRouter) ConfigRouter() {
 
 type submitBacktestRequest struct {
 	StrategyName    string   `json:"strategy_name" binding:"required"`
+	StrategyID      string   `json:"strategy_id,omitempty"`
 	InitialCash     float64  `json:"initial_cash"`
 	StartTime       string   `json:"start_time"`
 	EndTime         string   `json:"end_time"`
@@ -120,6 +121,7 @@ func (br *BacktestRouter) submitRun(c *gin.Context) {
 		writeFquantError(c, err)
 		return
 	}
+	req.StrategyID = firstNonEmpty(strings.TrimSpace(req.StrategyID), detail.ID)
 	br.persistSubmitQuietly(userID, run.ID, run.Status, detail.Name, detail.Script, req)
 	if entry, ok := lookupBacktestIndex(userID, run.ID); ok {
 		run.Name = entry.Name

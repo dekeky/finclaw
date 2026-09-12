@@ -36,7 +36,7 @@ func TestSnapshotStrategyShareRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runs, err := snapshotStrategyShareRuns(userID, "dual_ma", []string{"run-share", "run-share", ""})
+	runs, err := snapshotStrategyShareRuns(userID, "", "dual_ma", []string{"run-share", "run-share", ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,10 +65,10 @@ func TestSnapshotStrategyShareRuns(t *testing.T) {
 		t.Fatalf("range %q %q", start, end)
 	}
 
-	if _, err := snapshotStrategyShareRuns(userID, "other", []string{"run-share"}); err == nil || !strings.Contains(err.Error(), "does not belong") {
+	if _, err := snapshotStrategyShareRuns(userID, "", "other", []string{"run-share"}); err == nil || !strings.Contains(err.Error(), "does not belong") {
 		t.Fatalf("expected strategy mismatch, got %v", err)
 	}
-	if _, err := snapshotStrategyShareRuns(userID, "dual_ma", []string{"missing"}); err == nil || !strings.Contains(err.Error(), "not found") {
+	if _, err := snapshotStrategyShareRuns(userID, "", "dual_ma", []string{"missing"}); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("expected missing run, got %v", err)
 	}
 }

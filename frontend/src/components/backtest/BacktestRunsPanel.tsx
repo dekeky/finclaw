@@ -10,6 +10,7 @@ import {
   type RunDetail,
   type RunListItem,
 } from '@/api/backtest';
+import { runBelongsToStrategy, runConflictsWithStrategy } from '@/lib/backtestStrategy';
 import { PanelResizeHandle } from '@/components/PanelResizeHandle';
 import { RunReport } from '@/components/backtest/RunReport';
 import RunConfigDialog from '@/components/backtest/RunConfigDialog';
@@ -117,16 +118,14 @@ function SourceIcon() {
   );
 }
 
-function belongsToStrategy(item: RunListItem, strategyName: string): boolean {
-  return item.strategy_name === strategyName;
-}
-
 export function BacktestRunsPanel({
+  strategyId,
   strategyName,
   refreshKey,
   focusRunId,
   active = true,
 }: {
+  strategyId?: string;
   strategyName: string;
   refreshKey: number;
   focusRunId: string | null;
@@ -154,6 +153,10 @@ export function BacktestRunsPanel({
   currentRef.current = current;
   const strategyNameRef = useRef(strategyName);
   strategyNameRef.current = strategyName;
+  const strategyIdRef = useRef(strategyId);
+  strategyIdRef.current = strategyId;
+  const strategyRef = () => ({ id: strategyIdRef.current, name: strategyNameRef.current });
+  const belongs = (item: RunListItem) => runBelongsToStrategy(item, strategyRef());
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const live = isLiveStatus(current?.status) || items.some((item) => isLiveStatus(item.status));
@@ -183,7 +186,7 @@ export function BacktestRunsPanel({
     setSourceView(null);
     setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only reset when strategy changes
-  }, [strategyName]);
+  }, [strategyId, strategyName]);
 
   useEffect(() => {
     if (!user) {
@@ -197,7 +200,7 @@ export function BacktestRunsPanel({
     listBacktestRuns()
       .then((list) => {
         if (cancelled) return;
-        const scoped = list.filter((item) => belongsToStrategy(item, strategyNameRef.current));
+        const scoped = list.filter((item) => belongs(item));
         setItems(scoped);
         const targetId =
           (selectedIdRef.current && scoped.some((item) => item.id === selectedIdRef.current)
@@ -226,7 +229,7 @@ export function BacktestRunsPanel({
     return () => {
       cancelled = true;
     };
-  }, [refreshKey, user, strategyName]);
+  }, [refreshKey, user, strategyId, strategyName]);
 
   useEffect(() => {
     if (!selectedId || !user) return;
@@ -245,7 +248,7 @@ export function BacktestRunsPanel({
     fetchRun(selectedId)
       .then((detail) => {
         if (cancelled || selectedIdRef.current !== selectedId) return;
-        if (detail.request?.strategy_name && detail.request.strategy_name !== strategyNameRef.current) {
+        if (runConflictsWithStrategy(detail.request, strategyRef())) {
           return;
         }
         commitCurrent(mergeLiveDetail(currentRef.current, detail));
@@ -263,7 +266,7 @@ export function BacktestRunsPanel({
     return () => {
       cancelled = true;
     };
-  }, [selectedId, user, strategyName]);
+  }, [selectedId, user, strategyId, strategyName]);
 
   useEffect(() => {
     if (!live || !user || !active) return;
@@ -316,7 +319,7 @@ export function BacktestRunsPanel({
         } else {
           const list = await listBacktestRuns();
           if (cancelled) return;
-          setItems(list.filter((item) => belongsToStrategy(item, strategyNameRef.current)));
+          setItems(list.filter((item) => belongs(item)));
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -337,7 +340,7 @@ export function BacktestRunsPanel({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [live, user, strategyName, active]);
+  }, [live, user, strategyId, strategyName, active]);
 
   function openRun(id: string) {
     if (id === selectedId) return;
@@ -419,7 +422,7 @@ export function BacktestRunsPanel({
       const remaining = items.filter((row) => row.id !== item.id);
       setItems(remaining);
       if (selectedId === item.id) {
-        const next = remaining.filter((row) => belongsToStrategy(row, strategyName))[0] ?? remaining[0] ?? null;
+        const next = remaining.filter((row) => belongs(row))[0] ?? remaining[0] ?? null;
         setSelectedId(next?.id ?? null);
         commitCurrent(
           next

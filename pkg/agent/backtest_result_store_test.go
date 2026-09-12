@@ -167,3 +167,50 @@ func TestSafeBacktestPathSegmentRejectsTraversal(t *testing.T) {
 		t.Fatalf("got %q err=%v", got, err)
 	}
 }
+
+func TestRenameStrategyRebindsBacktestsByID(t *testing.T) {
+	t.Setenv("FINCLAW_HOME", t.TempDir())
+	userID := "u_rebind"
+	store := NewStrategyStore(userID)
+	created, err := store.Create("dual_ma", StrategyPlatformFinClaw, "print(1)\n", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := json.RawMessage(`{
+		"id":"run-rebind",
+		"name":"早盘回测",
+		"status":"succeeded",
+		"strategy_name":"dual_ma",
+		"updated_at":"2026-09-05T01:00:00Z",
+		"request":{"strategy_name":"dual_ma","start_time":"2020-01-01","end_time":"2021-01-01","initial_cash":100000,"universe":"picks","symbols":["600000"]}
+	}`)
+	if err := persistBacktestRun(userID, raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Update("dual_ma", "dual_ma_v2", StrategyPlatformFinClaw, "print(2)\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	items := loadLocalRunList(userID)
+	if len(items) != 1 {
+		t.Fatalf("got %d runs", len(items))
+	}
+	var item map[string]any
+	if err := json.Unmarshal(items[0], &item); err != nil {
+		t.Fatal(err)
+	}
+	if asString(item["strategy_id"]) != created.ID {
+		t.Fatalf("strategy_id = %q want %q", asString(item["strategy_id"]), created.ID)
+	}
+	if asString(item["strategy_name"]) != "dual_ma_v2" {
+		t.Fatalf("strategy_name = %q", asString(item["strategy_name"]))
+	}
+	newDir := filepath.Join(AccountBacktestsRootForUser(userID), "dual_ma_v2", "早盘回测")
+	if _, err := os.Stat(filepath.Join(newDir, "result.json")); err != nil {
+		t.Fatalf("rebinding did not move run dir: %v", err)
+	}
+	oldDir := filepath.Join(AccountBacktestsRootForUser(userID), "dual_ma", "早盘回测")
+	if _, err := os.Stat(oldDir); !os.IsNotExist(err) {
+		t.Fatal("old strategy backtest dir still exists")
+	}
+}

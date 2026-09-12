@@ -28,6 +28,7 @@ async function parseGinx<T>(res: Response): Promise<GinxResponse<T>> {
 }
 
 export interface StrategySummary {
+  id: string;
   name: string;
   platform: StrategyPlatform;
   path: string;

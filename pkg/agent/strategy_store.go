@@ -8,9 +8,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type strategyIndexEntry struct {
+	ID        string    `json:"id"`
 	Platform  string    `json:"platform"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -21,6 +24,7 @@ type strategyIndexFile struct {
 }
 
 type strategySummary struct {
+	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	Platform  string    `json:"platform"`
 	Path      string    `json:"path"`
@@ -59,6 +63,29 @@ func normalizeStrategyName(name string) (string, error) {
 	return name, nil
 }
 
+func newStrategyID() string {
+	return uuid.NewString()
+}
+
+func ensureStrategyIDs(index *strategyIndexFile) bool {
+	if index == nil {
+		return false
+	}
+	changed := false
+	seen := make(map[string]string, len(index.Entries))
+	for name, entry := range index.Entries {
+		id := strings.TrimSpace(entry.ID)
+		if id == "" || seen[id] != "" {
+			id = newStrategyID()
+			entry.ID = id
+			index.Entries[name] = entry
+			changed = true
+		}
+		seen[id] = name
+	}
+	return changed
+}
+
 func (s *StrategyStore) indexPath() string {
 	return filepath.Join(s.root, "index.json")
 }
@@ -83,6 +110,19 @@ func (s *StrategyStore) loadIndex() (*strategyIndexFile, error) {
 		file.Entries = map[string]strategyIndexEntry{}
 	}
 	return &file, nil
+}
+
+func (s *StrategyStore) loadIndexEnsured() (*strategyIndexFile, error) {
+	index, err := s.loadIndex()
+	if err != nil {
+		return nil, err
+	}
+	if ensureStrategyIDs(index) {
+		if err := s.saveIndex(index); err != nil {
+			return nil, err
+		}
+	}
+	return index, nil
 }
 
 func (s *StrategyStore) saveIndex(file *strategyIndexFile) error {
@@ -126,6 +166,7 @@ func (s *StrategyStore) toSummary(name string, entry strategyIndexEntry) strateg
 		platform = StrategyPlatformFinClaw
 	}
 	return strategySummary{
+		ID:        entry.ID,
 		Name:      name,
 		Platform:  platform,
 		Path:      s.filePath(name),
@@ -184,6 +225,7 @@ func (s *StrategyStore) migrateLegacyLayout() error {
 		if _, exists := index.Entries[name]; !exists {
 			platform, _ := normalizeStrategyPlatform(legacy.Platform)
 			index.Entries[name] = strategyIndexEntry{
+				ID:        newStrategyID(),
 				Platform:  platform,
 				CreatedAt: legacy.CreatedAt,
 				UpdatedAt: legacy.UpdatedAt,
@@ -211,7 +253,7 @@ func (s *StrategyStore) List() ([]strategySummary, error) {
 	if err := s.migrateLegacyLayout(); err != nil {
 		return nil, err
 	}
-	index, err := s.loadIndex()
+	index, err := s.loadIndexEnsured()
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +277,7 @@ func (s *StrategyStore) Get(name string) (strategyDetail, error) {
 	if err := s.migrateLegacyLayout(); err != nil {
 		return strategyDetail{}, err
 	}
-	index, err := s.loadIndex()
+	index, err := s.loadIndexEnsured()
 	if err != nil {
 		return strategyDetail{}, err
 	}
@@ -264,7 +306,7 @@ func (s *StrategyStore) Create(name, platform, script, agentName string) (strate
 	if err := s.migrateLegacyLayout(); err != nil {
 		return strategyDetail{}, err
 	}
-	index, err := s.loadIndex()
+	index, err := s.loadIndexEnsured()
 	if err != nil {
 		return strategyDetail{}, err
 	}
@@ -276,6 +318,7 @@ func (s *StrategyStore) Create(name, platform, script, agentName string) (strate
 	}
 	now := time.Now().UTC()
 	entry := strategyIndexEntry{
+		ID:        newStrategyID(),
 		Platform:  platform,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -301,13 +344,16 @@ func (s *StrategyStore) Update(currentName string, patchName, platform, script s
 	if err := s.migrateLegacyLayout(); err != nil {
 		return strategyDetail{}, err
 	}
-	index, err := s.loadIndex()
+	index, err := s.loadIndexEnsured()
 	if err != nil {
 		return strategyDetail{}, err
 	}
 	entry, ok := index.Entries[currentName]
 	if !ok {
 		return strategyDetail{}, fmt.Errorf("strategy %q not found", currentName)
+	}
+	if strings.TrimSpace(entry.ID) == "" {
+		entry.ID = newStrategyID()
 	}
 	newName := strings.TrimSpace(patchName)
 	if newName == "" {
@@ -345,6 +391,11 @@ func (s *StrategyStore) Update(currentName string, patchName, platform, script s
 	if err := s.saveIndex(index); err != nil {
 		return strategyDetail{}, err
 	}
+	if newName != currentName {
+		if err := rebindBacktestsForStrategy(s.userID, entry.ID, currentName, newName); err != nil {
+			return strategyDetail{}, fmt.Errorf("rebind backtests: %w", err)
+		}
+	}
 	return s.toDetail(newName, entry, script), nil
 }
 
@@ -358,7 +409,7 @@ func (s *StrategyStore) SyncToAgent(_ string, strategyName string) error {
 	if err := s.migrateLegacyLayout(); err != nil {
 		return err
 	}
-	index, err := s.loadIndex()
+	index, err := s.loadIndexEnsured()
 	if err != nil {
 		return err
 	}
@@ -378,7 +429,7 @@ func (s *StrategyStore) PullFromAgent(_ string, strategyName string) (strategyDe
 	if err := s.migrateLegacyLayout(); err != nil {
 		return strategyDetail{}, err
 	}
-	index, err := s.loadIndex()
+	index, err := s.loadIndexEnsured()
 	if err != nil {
 		return strategyDetail{}, err
 	}
@@ -415,7 +466,7 @@ func (s *StrategyStore) Delete(name string) error {
 	if err := s.migrateLegacyLayout(); err != nil {
 		return err
 	}
-	index, err := s.loadIndex()
+	index, err := s.loadIndexEnsured()
 	if err != nil {
 		return err
 	}
@@ -430,4 +481,23 @@ func (s *StrategyStore) Delete(name string) error {
 		return fmt.Errorf("delete strategy file: %w", err)
 	}
 	return nil
+}
+
+func (s *StrategyStore) NameToIDMap() map[string]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.migrateLegacyLayout(); err != nil {
+		return map[string]string{}
+	}
+	index, err := s.loadIndexEnsured()
+	if err != nil {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(index.Entries))
+	for name, entry := range index.Entries {
+		if id := strings.TrimSpace(entry.ID); id != "" {
+			out[name] = id
+		}
+	}
+	return out
 }
