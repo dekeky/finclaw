@@ -1,3 +1,4 @@
+# 最近在快速迭代开发量化模块，线上体验可能不稳定，请多多包涵
 # Finclaw · AI 驱动的多 Agent 投研平台（零依赖,[下载](https://github.com/dekeky/finclaw/releases)可直接运行）
 > 开源维护不易，如果对您有帮助，麻烦 [Star ⭐](https://github.com/dekeky/finclaw) 支持一下
 
