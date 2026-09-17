@@ -34,6 +34,7 @@ func (br *BacktestRouter) ConfigRouter() {
 	group.POST("/runs", br.submitRun)
 	group.GET("/runs", br.listRuns)
 	group.GET("/runs/:id", br.getRun)
+	group.POST("/runs/:id/cancel", br.cancelRun)
 	group.PATCH("/runs/:id", br.renameRun)
 	group.DELETE("/runs/:id", br.deleteRun)
 	group.GET("/runs/:id/blotter", br.getRunBlotter)
@@ -247,6 +248,29 @@ func (br *BacktestRouter) renameRun(c *gin.Context) {
 	br.persistRunQuietly(userID, raw)
 	br.persistRenameQuietly(userID, runID, name)
 	writeRawJSON(c, raw)
+}
+
+func (br *BacktestRouter) cancelRun(c *gin.Context) {
+	userID := getUserID(c)
+	runID := strings.TrimSpace(c.Param("id"))
+	if localRunIsTerminal(userID, runID) {
+		if raw, ok := loadLocalRunRaw(userID, runID); ok {
+			writeRawJSON(c, raw)
+			return
+		}
+	}
+	username := fquant.UsernameForUser(userID)
+	raw, err := br.client.CancelRun(c.Request.Context(), username, runID)
+	if err != nil {
+		writeFquantError(c, err)
+		return
+	}
+	writeRawJSON(c, raw)
+	if isTerminalBacktestStatus(statusFromBacktestRaw(raw)) {
+		br.persistRunInBackground(userID, raw)
+		return
+	}
+	br.startPersistLoop(userID, runID)
 }
 
 func (br *BacktestRouter) deleteRun(c *gin.Context) {

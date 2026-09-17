@@ -620,6 +620,38 @@ func TestLiveRunReadsEquityFromFquant(t *testing.T) {
 	}
 }
 
+func TestCancelRunProxiesToFquant(t *testing.T) {
+	t.Setenv("FINCLAW_HOME", t.TempDir())
+	var cancelHits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/users/u_test/runs/run-live/cancel" {
+			http.NotFound(w, r)
+			return
+		}
+		cancelHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"run-live","status":"cancelled","strategy_name":"dual_ma"}`))
+	}))
+	defer srv.Close()
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Set("userId", "u_test")
+		c.Next()
+	})
+	NewBacktestRouter(engine, func(c *gin.Context) { c.Next() }, srv.URL).ConfigRouter()
+
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/backtest/runs/run-live/cancel", nil))
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("cancelled")) {
+		t.Fatalf("cancel status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if cancelHits != 1 {
+		t.Fatalf("fquant cancel hits = %d", cancelHits)
+	}
+}
+
 func TestBacktestRuntimeExposesFquant(t *testing.T) {
 	t.Setenv("FINCLAW_HOME", t.TempDir())
 	gin.SetMode(gin.TestMode)

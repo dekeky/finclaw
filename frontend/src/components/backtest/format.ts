@@ -282,4 +282,6 @@ export const STATUS_LABEL: Record<string, string> = {
   running: '运行中',
   succeeded: '已完成',
   failed: '失败',
+  cancelled: '已中断',
+  canceled: '已中断',
 };

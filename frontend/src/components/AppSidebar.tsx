@@ -1,5 +1,6 @@
 import {
   IconChartAreaLine,
+  IconChartCandle,
   IconCpu,
   IconRobot,
 } from '@tabler/icons-react';
@@ -36,6 +37,7 @@ const COMM_NAV = [
 
 const MORE_NAV = [
   { title: '量化', url: '/backtest', icon: IconChartAreaLine },
+  { title: '实盘模拟', url: '/paper', icon: IconChartCandle },
 ] as const;
 
 function isNavActive(currentPath: string, url: string): boolean {

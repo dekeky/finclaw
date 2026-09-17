@@ -77,6 +77,8 @@ func TestClientUpsertAndSubmit(t *testing.T) {
 			}
 			_ = json.Unmarshal(body, &payload)
 			writeJSON(w, http.StatusOK, map[string]any{"id": "run1", "name": payload.Name, "strategy_name": "dual_ma"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/users/u_1/runs/run1/cancel":
+			writeJSON(w, http.StatusOK, map[string]any{"id": "run1", "status": "cancelled"})
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/users/u_1/runs/run1":
 			writeJSON(w, http.StatusOK, map[string]any{"id": "run1"})
 		default:
@@ -137,6 +139,10 @@ func TestClientUpsertAndSubmit(t *testing.T) {
 	renamed, err := client.UpdateRunName(ctx, "u_1", "run1", "我的回测")
 	if err != nil || !strings.Contains(string(renamed), "我的回测") {
 		t.Fatalf("rename: err=%v body=%s", err, renamed)
+	}
+	cancelled, err := client.CancelRun(ctx, "u_1", "run1")
+	if err != nil || !strings.Contains(string(cancelled), "cancelled") {
+		t.Fatalf("cancel: err=%v body=%s", err, cancelled)
 	}
 	if _, err := client.DeleteRun(ctx, "u_1", "run1"); err != nil {
 		t.Fatalf("delete: %v", err)

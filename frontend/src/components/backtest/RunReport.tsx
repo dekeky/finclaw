@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchPublicShareBars } from '@/api/agentAssets';
 import { api, type PositionSnapshot, type RunDetail } from '@/api/backtest';
+import { isCancelledStatus, shouldShowReportBody, shouldShowReportSkeleton } from './liveRun';
 import BenchmarkPicker, { type OverlayItem } from './BenchmarkPicker';
 import EquityReturnChart from './EquityReturnChart';
 import Hint from './Hint';
@@ -24,9 +25,10 @@ import {
   isSuccessfulAction,
   type RebalanceEvent,
   type RejectRow,
+  type StrategyLog,
+  LogTable,
   RebalancePane,
 } from './RebalanceTable';
-
 const HS300: OverlayItem = { code: '000300', name: '沪深300', kind: 'index' };
 const PNL_PAGE_SIZE = 20;
 
@@ -52,6 +54,7 @@ export function RunReport({
   const [trades, setTrades] = useState<Record<string, unknown>[]>([]);
   const [rebalances, setRebalances] = useState<RebalanceEvent[]>([]);
   const [rejects, setRejects] = useState<RejectRow[]>([]);
+  const [logs, setLogs] = useState<StrategyLog[]>([]);
   const [fillOrders, setFillOrders] = useState<Record<string, unknown>[]>([]);
   const [fillRebalances, setFillRebalances] = useState<RebalanceEvent[]>([]);
   const [fillActionDays, setFillActionDays] = useState<string[]>([]);
@@ -75,6 +78,7 @@ export function RunReport({
     setTrades([]);
     setRebalances([]);
     setRejects([]);
+    setLogs([]);
     setFillOrders([]);
     setFillRebalances([]);
     setFillActionDays([]);
@@ -110,6 +114,7 @@ export function RunReport({
     setTrades([]);
     setRebalances([]);
     setRejects([]);
+    setLogs([]);
     setFillOrders([]);
     setFillRebalances([]);
     setFillActionDays([]);
@@ -140,6 +145,7 @@ export function RunReport({
       setFillRebalances(snapshotRebalances);
       setOrders(snapshotOrders);
       setRebalances(snapshotRebalances);
+      setLogs(asStrategyLogs(detail.result?.logs));
       setFillsReady(true);
       setBlotterReady(true);
       setFillsLoading(false);
@@ -180,6 +186,7 @@ export function RunReport({
         setOrders([]);
         setRebalances([]);
         setRejects([]);
+        setLogs([]);
         setBlotterLoading(false);
         setBlotterReady(false);
       }
@@ -195,6 +202,7 @@ export function RunReport({
         setTrades(payload.trades || []);
         setRebalances((payload.rebalances as RebalanceEvent[]) || []);
         setRejects((payload.rejects as RejectRow[]) || []);
+        setLogs(asStrategyLogs(payload.logs));
         setBlotterReady(true);
       })
       .catch(() => {
@@ -202,6 +210,7 @@ export function RunReport({
         setOrders([]);
         setRebalances([]);
         setRejects([]);
+        setLogs([]);
         setBlotterReady(true);
       })
       .finally(() => {
@@ -396,17 +405,22 @@ export function RunReport({
     ? equity.length
       ? `回测进行中，收益率已更新至 ${equity[equity.length - 1].time}。`
       : '回测进行中，正在计算净值…'
-    : null;
+    : isCancelledStatus(detail.status)
+      ? equity.length
+        ? `回测已中断，收益率已更新至 ${equity[equity.length - 1].time}。`
+        : '回测已中断。'
+      : null;
   const showFull = hasResult && !live;
-  const pending = !live && detail.status !== 'failed' && !hasResult;
+  const pending = shouldShowReportSkeleton(detail.status, hasResult);
+  const showBody = shouldShowReportBody(detail.status, hasResult, equity.length > 0);
 
   return (
     <div className="report">
       {detail.status === 'failed' && detail.error ? <div className="error">{detail.error.message}</div> : null}
-      {liveMessage ? <div className="empty">{liveMessage}</div> : null}
+      {liveMessage ? <div className="empty muted">{liveMessage}</div> : null}
       {pending ? <ReportSkeleton /> : null}
 
-      {showFull || live ? (
+      {showBody ? (
         <div className="report-split">
           {showFull ? (
             <div className={`report-head ${statsOpen ? 'open' : ''}`}>
@@ -473,10 +487,12 @@ export function RunReport({
               hideBenchmarkPicker={readOnly}
               rebalances={datedRebalances}
               rejects={rejects}
+              logs={logs}
               orders={orders}
               actionDays={actionDays}
               logsLoading={logPane && blotterLoading && !blotterReady}
               onOpenLogs={() => setLogPane(true)}
+              blotterLabel="回测日志"
             />
           </div>
 
@@ -557,10 +573,12 @@ function PnlPane({
   rebalances = [],
   rejects = [],
   orders = [],
+  logs = [],
   actionDays = [],
   logsLoading = false,
   onOpenLogs,
   hideBenchmarkPicker = false,
+  blotterLabel = '回测日志',
 }: {
   chart: Record<string, string | number | undefined>[];
   overlays: OverlayItem[];
@@ -579,12 +597,14 @@ function PnlPane({
   rebalances?: RebalanceEvent[];
   rejects?: RejectRow[];
   orders?: Record<string, unknown>[];
+  logs?: StrategyLog[];
   actionDays?: string[];
   logsLoading?: boolean;
   onOpenLogs?: () => void;
   hideBenchmarkPicker?: boolean;
+  blotterLabel?: string;
 }) {
-  const [pane, setPane] = useState<'pnl' | 'rebalance'>('pnl');
+  const [pane, setPane] = useState<'pnl' | 'rebalance' | 'logs'>('pnl');
   return (
     <div className="bt-returns">
       <div className="chart-title">
@@ -621,7 +641,18 @@ function PnlPane({
                 onOpenLogs?.();
               }}
             >
-              回测日志
+              {blotterLabel}
+            </button>
+            <button
+              type="button"
+              className={pane === 'logs' ? 'active' : ''}
+              onClick={() => {
+                setPane('logs');
+                onOpenLogs?.();
+              }}
+            >
+              日志
+              {logs.length ? <span className="tab-count">{logs.length}</span> : null}
             </button>
           </div>
           {pane === 'pnl' ? (
@@ -645,6 +676,13 @@ function PnlPane({
                 names={names}
                 onSelectSymbol={onSelectSymbol}
               />
+            )
+          ) : null}
+          {pane === 'logs' ? (
+            logsLoading ? (
+              <div className="empty muted">正在加载策略日志…</div>
+            ) : (
+              <LogTable rows={logs} />
             )
           ) : null}
         </div>
@@ -904,6 +942,15 @@ function pnlSortValue(
     case 'fills':
       return item.fills;
   }
+}
+
+function asStrategyLogs(raw?: Record<string, unknown>[]): StrategyLog[] {
+  if (!raw?.length) return [];
+  return raw.map((row) => ({
+    time: typeof row.time === 'string' ? row.time : undefined,
+    message: row.message == null ? '' : String(row.message),
+    level: typeof row.level === 'number' ? row.level : undefined,
+  }));
 }
 
 function compareSort(a: string | number, b: string | number, dir: 'asc' | 'desc'): number {

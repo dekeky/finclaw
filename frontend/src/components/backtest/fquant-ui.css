@@ -211,6 +211,12 @@
   background: rgba(230, 69, 69, 0.16);
 }
 
+.fquant-ui .run-status.cancelled,
+.fquant-ui .run-status.canceled {
+  color: var(--muted);
+  background: rgba(138, 155, 176, 0.16);
+}
+
 @keyframes run-status-pulse {
   0%,
   100% {
@@ -309,6 +315,11 @@
 
 .fquant-ui .run-item .dot.failed {
   background: var(--danger);
+}
+
+.fquant-ui .run-item .dot.cancelled,
+.fquant-ui .run-item .dot.canceled {
+  background: var(--muted);
 }
 
 .fquant-ui .report {
@@ -842,18 +853,29 @@
   opacity: 1;
 }
 
+button.symbol-link,
 .fquant-ui .symbol-link {
   border: 0;
   background: transparent;
   padding: 0;
-  color: var(--accent);
+  color: #ff6a00;
   cursor: pointer;
   font: inherit;
+  font-size: 13px;
+}
+
+button.symbol-link:hover:not(:disabled),
+.fquant-ui .symbol-link:hover {
+  color: #ff8533;
+  text-decoration: underline;
+}
+
+.fquant-ui .symbol-link {
+  color: var(--accent);
 }
 
 .fquant-ui .symbol-link:hover {
   color: var(--accent-hover);
-  text-decoration: underline;
 }
 
 .fquant-ui .blotter-table tfoot td {
@@ -1042,7 +1064,10 @@
   background: rgba(0, 0, 0, 0.55);
 }
 
-.modal-backdrop.inspect-layer { z-index: 50; }
+.modal-backdrop.inspect-layer {
+  z-index: 50;
+  pointer-events: auto;
+}
 
 .modal {
   width: min(520px, calc(100vw - 32px));
@@ -1481,6 +1506,19 @@
   pointer-events: none;
   z-index: 4;
   opacity: 0.9;
+}
+
+.fquant-ui .kline-box-zoom {
+  position: absolute;
+  pointer-events: none;
+  z-index: 5;
+  border: 1px solid rgba(255, 106, 0, 0.9);
+  background: rgba(255, 106, 0, 0.14);
+  box-sizing: border-box;
+}
+
+.fquant-ui .kline-box-zoom[hidden] {
+  display: none;
 }
 
 .fquant-ui .kline-hud-fill {

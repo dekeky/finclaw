@@ -17,9 +17,11 @@ import {
 import { placeFocusLine } from './chartFocusLine';
 import {
   type RangeSync,
-  focusedLogicalRange,
-  fullLogicalRange,
+  boxZoomLogicalRange,
   indexForDay,
+  initialVisibleRange,
+  isBoxZoomGesture,
+  isChartPlotPoint,
   isFullLogicalRange,
   sameLogicalRange,
 } from './rangeSync';
@@ -163,12 +165,14 @@ export default function KLineChart({
   rangeSync,
   timeAxis = true,
   focusDate,
+  initialVisibleBars,
 }: {
   data: CandlePoint[];
   height?: number;
   rangeSync?: RangeSync;
   timeAxis?: boolean;
   focusDate?: string | null;
+  initialVisibleBars?: number;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const focusLineRef = useRef<HTMLDivElement>(null);
@@ -186,6 +190,7 @@ export default function KLineChart({
   const ma20Ref = useRef<HTMLElement>(null);
   const buyRef = useRef<HTMLSpanElement>(null);
   const sellRef = useRef<HTMLSpanElement>(null);
+  const boxZoomRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
@@ -200,8 +205,11 @@ export default function KLineChart({
   const fittedRef = useRef(false);
   const userZoomedRef = useRef(false);
   const barCountRef = useRef(0);
+  const focusIndexRef = useRef(-1);
+  const visibleBarsRef = useRef(initialVisibleBars);
   const suppressUntilRef = useRef(0);
   rangeSyncRef.current = rangeSync;
+  visibleBarsRef.current = initialVisibleBars;
 
   const paintHud = (candle?: CandlePoint) => {
     if (!candle) return;
@@ -283,7 +291,7 @@ export default function KLineChart({
         dateFormat: 'yyyy-MM-dd',
         timeFormatter: (time: Time) => timeKey(time),
       },
-      handleScroll: { vertTouchDrag: false, mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true },
+      handleScroll: { vertTouchDrag: false, mouseWheel: false, pressedMouseMove: false, horzTouchDrag: true },
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
     });
     const series = chart.addCandlestickSeries({
@@ -327,15 +335,106 @@ export default function KLineChart({
     };
 
     chart.subscribeCrosshairMove(onMove);
-    const markUserZoom = () => {
-      if (fittedRef.current) userZoomedRef.current = true;
-    };
     const onWheel = (event: WheelEvent) => {
       event.stopPropagation();
       if (fittedRef.current) userZoomedRef.current = true;
     };
     host.addEventListener('wheel', onWheel, { passive: true });
-    host.addEventListener('pointerdown', markUserZoom);
+    const boxEl = boxZoomRef.current;
+    let boxDrag: { pointerId: number; startX: number; startY: number; active: boolean } | null = null;
+    const hideBox = () => {
+      if (!boxEl) return;
+      boxEl.hidden = true;
+    };
+    const localPoint = (event: PointerEvent | MouseEvent) => {
+      const rect = host.getBoundingClientRect();
+      return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    };
+    const plotMetrics = () => ({
+      width: chart.timeScale().width(),
+      height: host.clientHeight,
+      timeAxisHeight: chart.timeScale().height(),
+    });
+    const paintBox = (x0: number, y0: number, x1: number, y1: number) => {
+      if (!boxEl) return;
+      const left = Math.min(x0, x1);
+      const top = Math.min(y0, y1);
+      boxEl.hidden = false;
+      boxEl.style.left = `${left}px`;
+      boxEl.style.top = `${top}px`;
+      boxEl.style.width = `${Math.abs(x1 - x0)}px`;
+      boxEl.style.height = `${Math.abs(y1 - y0)}px`;
+    };
+    const applyRange = (next: { from: number; to: number }, userZoomed: boolean) => {
+      userZoomedRef.current = userZoomed;
+      applyingRef.current = true;
+      suppressUntilRef.current = performance.now() + 200;
+      chart.timeScale().setVisibleLogicalRange(next);
+      rangeSyncRef.current?.publish(next, sourceRef.current);
+      requestAnimationFrame(() => {
+        applyingRef.current = false;
+        placeFocusLine(chartRef.current, focusLineRef.current, focusBarRef.current);
+      });
+    };
+    const finishBox = (event: PointerEvent, apply: boolean) => {
+      if (!boxDrag || event.pointerId !== boxDrag.pointerId) return;
+      const start = boxDrag;
+      boxDrag = null;
+      hideBox();
+      try {
+        host.releasePointerCapture(event.pointerId);
+      } catch {
+        /* capture may already be released */
+      }
+      if (!apply || !start.active) return;
+      const { x } = localPoint(event);
+      const plotWidth = chart.timeScale().width();
+      const startX = Math.max(0, Math.min(start.startX, plotWidth));
+      const endX = Math.max(0, Math.min(x, plotWidth));
+      const fromLogical = chart.timeScale().coordinateToLogical(startX);
+      const toLogical = chart.timeScale().coordinateToLogical(endX);
+      if (fromLogical == null || toLogical == null) return;
+      const next = boxZoomLogicalRange(fromLogical, toLogical, barCountRef.current, plotWidth);
+      if (!next) return;
+      applyRange(next, true);
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      const point = localPoint(event);
+      if (!isChartPlotPoint(point.x, point.y, plotMetrics())) {
+        if (fittedRef.current) userZoomedRef.current = true;
+        return;
+      }
+      boxDrag = { pointerId: event.pointerId, startX: point.x, startY: point.y, active: false };
+      host.setPointerCapture(event.pointerId);
+    };
+    const onPointerMove = (event: PointerEvent) => {
+      if (!boxDrag || event.pointerId !== boxDrag.pointerId) return;
+      const point = localPoint(event);
+      if (!boxDrag.active) {
+        if (!isBoxZoomGesture(point.x - boxDrag.startX, point.y - boxDrag.startY)) return;
+        boxDrag.active = true;
+      }
+      paintBox(boxDrag.startX, boxDrag.startY, point.x, point.y);
+    };
+    const onPointerUp = (event: PointerEvent) => finishBox(event, true);
+    const onPointerCancel = (event: PointerEvent) => finishBox(event, false);
+    const onDblClick = (event: MouseEvent) => {
+      const point = localPoint(event);
+      if (!isChartPlotPoint(point.x, point.y, plotMetrics())) return;
+      const next = initialVisibleRange(barCountRef.current, {
+        focusIndex: focusIndexRef.current,
+        visibleBars: visibleBarsRef.current,
+        plotWidth: chart.timeScale().width(),
+      });
+      if (!next) return;
+      applyRange(next, false);
+    };
+    host.addEventListener('pointerdown', onPointerDown);
+    host.addEventListener('pointermove', onPointerMove);
+    host.addEventListener('pointerup', onPointerUp);
+    host.addEventListener('pointercancel', onPointerCancel);
+    host.addEventListener('dblclick', onDblClick);
     const onRange = (range: LogicalRange | null) => {
       placeFocusLine(chart, focusLineRef.current, focusBarRef.current);
       if (!range || applyingRef.current || !rangeSyncRef.current || !fittedRef.current) return;
@@ -358,12 +457,16 @@ export default function KLineChart({
       chart.applyOptions({ width: lastWidth, height: lastHeight });
       placeFocusLine(chart, focusLineRef.current, focusBarRef.current);
       if (userZoomedRef.current) return;
-      const full = fullLogicalRange(barCountRef.current, chart.timeScale().width());
-      if (!full) return;
+      const next = initialVisibleRange(barCountRef.current, {
+        focusIndex: focusIndexRef.current,
+        visibleBars: visibleBarsRef.current,
+        plotWidth: chart.timeScale().width(),
+      });
+      if (!next) return;
       applyingRef.current = true;
       suppressUntilRef.current = performance.now() + 200;
-      chart.timeScale().setVisibleLogicalRange(full);
-      rangeSyncRef.current?.publish(full, sourceRef.current);
+      chart.timeScale().setVisibleLogicalRange(next);
+      rangeSyncRef.current?.publish(next, sourceRef.current);
       requestAnimationFrame(() => {
         applyingRef.current = false;
       });
@@ -377,7 +480,11 @@ export default function KLineChart({
     return () => {
       observer.disconnect();
       host.removeEventListener('wheel', onWheel);
-      host.removeEventListener('pointerdown', markUserZoom);
+      host.removeEventListener('pointerdown', onPointerDown);
+      host.removeEventListener('pointermove', onPointerMove);
+      host.removeEventListener('pointerup', onPointerUp);
+      host.removeEventListener('pointercancel', onPointerCancel);
+      host.removeEventListener('dblclick', onDblClick);
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange);
       chart.unsubscribeCrosshairMove(onMove);
       chart.remove();
@@ -473,8 +580,13 @@ export default function KLineChart({
     if (candles.length > 0) {
       const days = candles.map((row) => String(row.time));
       const focusIndex = focusDate ? indexForDay(days, focusDate) : -1;
+      focusIndexRef.current = focusIndex;
       const plotWidth = chart.timeScale().width();
-      const focused = focusIndex >= 0 ? focusedLogicalRange(candles.length, focusIndex, 45, plotWidth) : null;
+      const initial = initialVisibleRange(candles.length, {
+        focusIndex,
+        visibleBars: initialVisibleBars,
+        plotWidth,
+      });
       const focusCandle = focusIndex >= 0 ? index.get(days[focusIndex]) : undefined;
       focusBarRef.current = focusIndex >= 0 ? days[focusIndex] : '';
       const apply = () => {
@@ -482,15 +594,13 @@ export default function KLineChart({
         const liveSeries = seriesRef.current;
         if (!live) return;
         const synced = rangeSyncRef.current?.last;
-        const full = fullLogicalRange(candles.length, plotWidth);
-        const initial = focused ?? full;
         applyingRef.current = true;
         suppressUntilRef.current = performance.now() + 200;
         if (!userZoomedRef.current && initial) {
           live.timeScale().setVisibleLogicalRange(initial);
           fittedRef.current = true;
           rangeSyncRef.current?.publish(initial, sourceRef.current);
-          if (focused) userZoomedRef.current = true;
+          if (focusIndex >= 0 && !initialVisibleBars) userZoomedRef.current = true;
         } else if (synced) {
           live.timeScale().setVisibleLogicalRange(synced);
           fittedRef.current = true;
@@ -513,7 +623,7 @@ export default function KLineChart({
       paintHud(focusCandle ?? previous);
       if (focusCandle) lastKeyRef.current = focusCandle.time;
     }
-  }, [data, focusDate]);
+  }, [data, focusDate, initialVisibleBars]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -572,6 +682,7 @@ export default function KLineChart({
       <div className="kline-pane" style={height ? { height } : undefined}>
         <div className="kline" ref={hostRef} style={height ? { height } : undefined} />
         <div className="chart-focus-line" ref={focusLineRef} hidden />
+        <div className="kline-box-zoom" ref={boxZoomRef} hidden />
       </div>
     </div>
   );

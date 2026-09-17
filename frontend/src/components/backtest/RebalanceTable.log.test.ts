@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mergeLogEvents, type RebalanceEvent, type RejectRow } from './RebalanceTable';
+import { filterStrategyLogs, mergeLogEvents, type RebalanceEvent, type RejectRow } from './RebalanceTable';
 
 test('keeps filled submitted rows and drops rejected ghosts', () => {
   const rows: RebalanceEvent[] = [
@@ -50,4 +50,14 @@ test('keeps filled submitted rows and drops rejected ghosts', () => {
     merged.filter((row) => row.status === 'submitted' && Object.keys(row.targets ?? {}).includes('600519')).length,
     0,
   );
+});
+
+test('filterStrategyLogs keeps rows inside the date range', () => {
+  const rows = [
+    { time: '2020-01-02', message: 'a' },
+    { time: '2020-02-03', message: 'b' },
+    { time: '2020-03-04', message: 'c' },
+  ];
+  assert.deepEqual(filterStrategyLogs(rows, '2020-02-01', '2020-02-28').map((row) => row.message), ['b']);
+  assert.equal(filterStrategyLogs(rows).length, 3);
 });

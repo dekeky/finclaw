@@ -22,6 +22,7 @@ export const STRATEGY_PLATFORMS: Record<StrategyPlatform, StrategyPlatformConfig
     promptHint:
       '使用 FinClaw / akquant 策略 API：必须定义且仅定义一个 akquant.Strategy 子类，实现 on_bar；'
       + '标的在点击回测时选择，不必写在策略里；'
+      + '可用 self.log("...") 写入回测报告「日志」页；'
       + '可用 from fquant.indicators import pe_ttm 等字段，写进 extra，在 on_bar 里用 bar.extra.get 读取；不写 extra 则只有 OHLCV；'
       + '不要写 if __name__ == "__main__"；不要使用聚宽的 initialize / handle_data。',
     defaultScript: `from akquant import Bar, Strategy

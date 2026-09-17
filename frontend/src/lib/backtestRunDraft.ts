@@ -18,6 +18,8 @@ export type BacktestRunDraft = {
   tab: UniverseKind;
   indexCode: string;
   picked: MarketSymbol[];
+  customPoolId: string;
+  customPoolName: string;
 };
 
 export const DEFAULT_BACKTEST_RUN_PARAMS: BacktestRunParams = {
@@ -60,6 +62,8 @@ export function emptyBacktestRunDraft(): BacktestRunDraft {
     tab: 'picks',
     indexCode: '000300',
     picked: [],
+    customPoolId: '',
+    customPoolName: '',
   };
 }
 
@@ -86,6 +90,8 @@ export function loadBacktestRunDraft(): BacktestRunDraft {
       tab,
       indexCode: asString(parsed.indexCode, fallback.indexCode) || fallback.indexCode,
       picked: asPicked(parsed.picked),
+      customPoolId: asString(parsed.customPoolId, fallback.customPoolId),
+      customPoolName: asString(parsed.customPoolName, fallback.customPoolName),
     };
   } catch {
     return fallback;

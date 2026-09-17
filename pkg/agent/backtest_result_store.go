@@ -1310,6 +1310,16 @@ func runJSONToListItem(raw []byte, entry backtestIndexEntry) json.RawMessage {
 		"symbols":          symbols,
 		"request":          req,
 	}
+	if strings.EqualFold(firstNonEmpty(asString(top["status"]), entry.Status), "succeeded") {
+		result := asMap(top["result"])
+		curve := result["equity_curve"]
+		if curve == nil {
+			curve = top["live_equity"]
+		}
+		if compact := compactEquityCurve(curve, galleryEquityPoints); len(compact) > 0 {
+			item["equity_curve"] = compact
+		}
+	}
 	out, err := json.Marshal(item)
 	if err != nil {
 		return json.RawMessage(`{}`)

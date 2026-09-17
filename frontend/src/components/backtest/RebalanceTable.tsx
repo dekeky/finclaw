@@ -7,6 +7,19 @@ import { virtualWindow } from "./VirtualList";
 const ROW_HEIGHT = 34;
 const PAGE_SIZE = 20;
 
+export type StrategyLog = { time?: string; message?: string; level?: number };
+
+export function filterStrategyLogs(rows: StrategyLog[], from = "", to = ""): StrategyLog[] {
+  if (!from && !to) return rows;
+  return rows.filter((row) => {
+    const day = dayKey(row.time);
+    if (!day) return false;
+    if (from && day < from) return false;
+    if (to && day > to) return false;
+    return true;
+  });
+}
+
 export type RebalanceEvent = {
   time?: string;
   method?: string;
@@ -476,26 +489,79 @@ function EventDetail({
   );
 }
 
-export function LogTable({ rows }: { rows: { time?: string; message?: string; level?: number }[] }) {
-  if (!rows.length) return <div className="empty">策略没有调用 self.log()。</div>;
+export function LogTable({ rows }: { rows: StrategyLog[] }) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [page, setPage] = useState(0);
+  const bounds = useMemo(() => dateBounds(rows), [rows]);
+  const datePresets = useMemo(() => filterPresets(bounds.min, bounds.max), [bounds.min, bounds.max]);
+  const filtered = useMemo(() => filterStrategyLogs(rows, from, to), [rows, from, to]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageRows = useMemo(
+    () => filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE),
+    [filtered, safePage],
+  );
+
+  useEffect(() => {
+    setPage(0);
+  }, [from, to]);
+
+  if (!rows.length) {
+    return <div className="empty muted">策略没有调用 self.log()。</div>;
+  }
+
   return (
-    <div className="table-wrap blotter analysis-table">
-      <table className="blotter-table">
-        <thead>
-          <tr>
-            <th>日期</th>
-            <th>日志</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, index) => (
-            <tr key={`${row.time}-${index}`}>
-              <td>{row.time || "—"}</td>
-              <td className="reason-cell">{row.message || "—"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="rebalance-pane">
+      <div className="blotter-filter">
+        <label>
+          日期
+          <DateRangePicker
+            start={from}
+            end={to}
+            min={bounds.min}
+            max={bounds.max}
+            allowEmpty
+            presets={datePresets}
+            placeholder="全部日期"
+            onChange={(nextStart, nextEnd) => {
+              setFrom(nextStart);
+              setTo(nextEnd);
+            }}
+          />
+        </label>
+        {from || to ? (
+          <button type="button" className="btn ghost" onClick={() => { setFrom(""); setTo(""); }}>
+            清除筛选
+          </button>
+        ) : null}
+        <span className="blotter-filter-count">共 {filtered.length} 条</span>
+      </div>
+      {pageRows.length ? (
+        <div className="table-wrap blotter analysis-table">
+          <table className="blotter-table">
+            <thead>
+              <tr>
+                <th>日期</th>
+                <th>日志</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pageRows.map((row, index) => (
+                <tr key={`${row.time}-${safePage}-${index}`}>
+                  <td>{row.time || "—"}</td>
+                  <td className="reason-cell">{row.message || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="empty muted">没有符合筛选条件的记录。</div>
+      )}
+      {filtered.length > PAGE_SIZE ? (
+        <Pager page={safePage} totalPages={totalPages} total={filtered.length} onChange={setPage} />
+      ) : null}
     </div>
   );
 }
@@ -822,7 +888,7 @@ function collectFilterSymbols(rows: RebalanceEvent[], names: Record<string, stri
   return [...seen].sort((a, b) => formatSymbolLabel(a, names).localeCompare(formatSymbolLabel(b, names), "zh-CN"));
 }
 
-function dateBounds(rows: RebalanceEvent[]): { min?: string; max?: string } {
+function dateBounds(rows: { time?: string }[]): { min?: string; max?: string } {
   let min = "";
   let max = "";
   for (const row of rows) {

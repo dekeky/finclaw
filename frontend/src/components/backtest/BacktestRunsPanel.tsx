@@ -1,6 +1,8 @@
-import { IconTrash } from '@tabler/icons-react';
+import { IconPlayerStop, IconTrash } from '@tabler/icons-react';
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
+  cancelBacktestRun,
   deleteBacktestRun,
   getBacktestRun,
   getFquantBacktestRun,
@@ -30,6 +32,10 @@ import {
   PANEL_WIDTH_LIMITS,
 } from '@/lib/panelWidths';
 import { saveBacktestViewState } from '@/lib/backtestViewState';
+import { withReturnTo } from '@/lib/navigationReturn';
+import { createPaperSession, listPaperSessions, type PaperSession } from '@/api/paper';
+import { Button } from '@/components/ui/button';
+import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 import { useAuth } from '@/state/auth';
 import { toast } from 'sonner';
 import {
@@ -121,16 +127,19 @@ function SourceIcon() {
 export function BacktestRunsPanel({
   strategyId,
   strategyName,
+  strategyPlatform,
   refreshKey,
   focusRunId,
   active = true,
 }: {
   strategyId?: string;
   strategyName: string;
+  strategyPlatform?: string;
   refreshKey: number;
   focusRunId: string | null;
   active?: boolean;
 }) {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const runResize = useHorizontalResize({
@@ -162,6 +171,27 @@ export function BacktestRunsPanel({
   const live = isLiveStatus(current?.status) || items.some((item) => isLiveStatus(item.status));
   const liveRef = useRef(live);
   liveRef.current = live;
+  const [paperSessions, setPaperSessions] = useState<PaperSession[]>([]);
+  const [paperBusy, setPaperBusy] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
+
+  useEffect(() => {
+    if (!user || !strategyName) {
+      setPaperSessions([]);
+      return;
+    }
+    let cancelled = false;
+    listPaperSessions({ strategy_name: strategyName, strategy_id: strategyId })
+      .then((rows) => {
+        if (!cancelled) setPaperSessions(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setPaperSessions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user, strategyName, strategyId, refreshKey]);
 
   function commitCurrent(detail: RunDetail | null) {
     const next = detail ? rememberRunDetail(detail) : null;
@@ -407,6 +437,57 @@ export function BacktestRunsPanel({
     }
   }
 
+  async function handleStartPaper() {
+    if (!current || current.status !== 'succeeded' || paperBusy) return;
+    if (strategyPlatform && strategyPlatform !== 'finclaw') {
+      toast.error('仅 FinClaw 策略可开启实盘模拟');
+      return;
+    }
+    setPaperBusy(true);
+    try {
+      const session = await createPaperSession({
+        strategy_name: strategyName,
+        strategy_id: strategyId,
+        from_run_id: current.id,
+      });
+      toast.success('已开启实盘模拟');
+      navigate(`/paper/${session.id}`, { state: withReturnTo('/backtest') });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '开启实盘模拟失败');
+    } finally {
+      setPaperBusy(false);
+    }
+  }
+
+  async function handleCancel() {
+    const run = currentRef.current;
+    if (!run || !isLiveStatus(run.status) || cancelBusy) return;
+    setCancelBusy(true);
+    try {
+      const detail = await cancelBacktestRun(run.id);
+      const next = commitCurrent(mergeLiveDetail(currentRef.current, detail));
+      if (next) {
+        setItems((rows) =>
+          rows.map((row) => (row.id === next.id ? patchListItemFromDetail(row, next) : row)),
+        );
+      }
+      toast.success('已中断回测');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '中断失败');
+    } finally {
+      setCancelBusy(false);
+    }
+  }
+
+  function openPaperSessions() {
+    const origin = withReturnTo('/backtest');
+    if (paperSessions.length === 1) {
+      navigate(`/paper/${paperSessions[0].id}`, { state: origin });
+      return;
+    }
+    navigate(`/paper?strategy=${encodeURIComponent(strategyName)}`, { state: origin });
+  }
+
   async function handleDelete(item: RunListItem, event: MouseEvent) {
     event.stopPropagation();
     if (item.status === 'running') {
@@ -461,6 +542,11 @@ export function BacktestRunsPanel({
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [nowLive]);
+
+  const showPaperSessions = paperSessions.length > 0;
+  const showStartPaper = current?.status === 'succeeded';
+  const showCancel = isLiveStatus(current?.status);
+  const showRunToolbar = strategyPlatform === 'finclaw' && (showPaperSessions || showStartPaper || showCancel);
 
   return (
     <div className="fquant-ui flex min-h-0 flex-1 flex-row overflow-hidden">
@@ -567,7 +653,43 @@ export function BacktestRunsPanel({
         <PanelResizeHandle {...runResize.handleProps} />
       </div>
       {current ? (
-        <RunReport key={current.id} detail={current} active={active} />
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {showRunToolbar ? (
+            <div className="flex shrink-0 items-center justify-end gap-2 border-b border-border/60 px-3 py-1.5">
+              {showPaperSessions ? (
+                <Button type="button" size="xs" variant="outline" onClick={openPaperSessions}>
+                  查看实盘模拟
+                </Button>
+              ) : null}
+              {showStartPaper ? (
+                <Button
+                  type="button"
+                  size="xs"
+                  className={PRIMARY_BUTTON_CLASS}
+                  disabled={paperBusy}
+                  onClick={() => void handleStartPaper()}
+                >
+                  开启实盘模拟
+                </Button>
+              ) : null}
+              {showCancel ? (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="destructive"
+                  disabled={cancelBusy}
+                  title="中断当前回测"
+                  aria-label="中断回测"
+                  onClick={() => void handleCancel()}
+                >
+                  <IconPlayerStop className="size-3.5" stroke={1.75} />
+                  {cancelBusy ? '中断中…' : '中断'}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+          <RunReport key={current.id} detail={current} active={active} />
+        </div>
       ) : (
         <div className="report empty min-w-0 flex-1">选择一条回测查看报告。</div>
       )}

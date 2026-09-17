@@ -74,6 +74,7 @@ export type RunListItem = {
   duration_seconds?: number | null;
   symbols: string[];
   request?: RunRequest;
+  equity_curve?: EquityPoint[];
 };
 
 export type EquityPoint = {
@@ -127,6 +128,7 @@ export type BacktestResult = {
   benchmarks?: BenchmarkSeries[];
   action_days?: string[];
   rebalances?: Record<string, unknown>[];
+  logs?: Record<string, unknown>[];
   holdings?: PositionSnapshot[];
   positions?: {
     symbol: string;
@@ -205,6 +207,11 @@ export const api = {
   deleteRun: (id: string) =>
     request<{ id: string }>(`${BACKTEST_API}/runs/${encodeURIComponent(id)}`, {
       method: 'DELETE',
+    }),
+
+  cancelRun: (id: string) =>
+    request<RunDetail>(`${BACKTEST_API}/runs/${encodeURIComponent(id)}/cancel`, {
+      method: 'POST',
     }),
 
   getRunBlotter: (id: string, query?: { page?: number; page_size?: number; from?: string; to?: string; symbol?: string; fill_day?: string; days_only?: boolean; full?: boolean; fills?: boolean }) => {
@@ -330,6 +337,10 @@ export async function renameBacktestRun(id: string, name: string): Promise<RunLi
 
 export async function deleteBacktestRun(id: string): Promise<void> {
   await api.deleteRun(id);
+}
+
+export async function cancelBacktestRun(id: string): Promise<RunDetail> {
+  return api.cancelRun(id);
 }
 
 export async function listMarketSymbols(query?: { q?: string; kind?: 'stock' | 'index'; codes?: string }): Promise<MarketSymbol[]> {

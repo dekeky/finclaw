@@ -8,6 +8,8 @@ import {
   seedCurrentRun,
   shouldContinueLivePoll,
   shouldFetchLiveRun,
+  shouldShowReportBody,
+  shouldShowReportSkeleton,
   shouldSkipStoredRefetch,
   type LivePollState,
 } from './liveRun';
@@ -128,4 +130,37 @@ test('does not clobber a loaded report with a list placeholder of the same run',
 test('skips refetching a cached completed run after coming back to the report', () => {
   assert.equal(shouldSkipStoredRefetch(completedRun(), 'succeeded'), true);
   assert.equal(shouldSkipStoredRefetch(completedRun({ status: 'running', result: undefined }), 'running'), false);
+  assert.equal(shouldSkipStoredRefetch(completedRun({ status: 'canceled' }), 'canceled'), true);
+  assert.equal(shouldSkipStoredRefetch(completedRun({ status: 'cancelled' }), 'cancelled'), true);
+});
+
+test('does not keep a cancelled report in the loading skeleton', () => {
+  assert.equal(shouldShowReportSkeleton('cancelled', false), false);
+  assert.equal(shouldShowReportSkeleton('canceled', false), false);
+  assert.equal(shouldShowReportSkeleton('failed', false), false);
+  assert.equal(shouldShowReportSkeleton('succeeded', false), true);
+  assert.equal(shouldShowReportSkeleton('running', false), false);
+});
+
+test('keeps a cancelled run chart when live equity already arrived', () => {
+  assert.equal(shouldShowReportBody('cancelled', false, true), true);
+  assert.equal(shouldShowReportBody('cancelled', false, false), false);
+  assert.equal(shouldShowReportBody('running', false, false), true);
+});
+
+test('keeps live equity when a run is cancelled without a stored result', () => {
+  const prev = completedRun({
+    id: 'run-live',
+    status: 'running',
+    result: undefined,
+    live_equity: [{ time: '2020-01-02', equity: 101000 }],
+  });
+  const merged = mergeLiveDetail(prev, {
+    ...prev,
+    status: 'cancelled',
+    result: undefined,
+    live_equity: undefined,
+  });
+  assert.equal(merged.status, 'cancelled');
+  assert.equal(merged.live_equity?.length, 1);
 });

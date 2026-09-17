@@ -395,6 +395,9 @@ func (s *StrategyStore) Update(currentName string, patchName, platform, script s
 		if err := rebindBacktestsForStrategy(s.userID, entry.ID, currentName, newName); err != nil {
 			return strategyDetail{}, fmt.Errorf("rebind backtests: %w", err)
 		}
+		if err := rebindPaperForStrategy(s.userID, entry.ID, currentName, newName); err != nil {
+			return strategyDetail{}, fmt.Errorf("rebind paper: %w", err)
+		}
 	}
 	return s.toDetail(newName, entry, script), nil
 }

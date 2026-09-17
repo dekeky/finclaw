@@ -13,9 +13,8 @@ import {
 import { placeFocusLine } from './chartFocusLine';
 import {
   type RangeSync,
-  focusedLogicalRange,
-  fullLogicalRange,
   indexForDay,
+  initialVisibleRange,
   isFullLogicalRange,
   sameLogicalRange,
 } from './rangeSync';
@@ -40,11 +39,13 @@ export default function StrategyReturnChart({
   height,
   rangeSync,
   focusDate,
+  initialVisibleBars,
 }: {
   data: ReturnPoint[];
   height?: number;
   rangeSync?: RangeSync;
   focusDate?: string | null;
+  initialVisibleBars?: number;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const focusLineRef = useRef<HTMLDivElement>(null);
@@ -57,8 +58,11 @@ export default function StrategyReturnChart({
   const fittedRef = useRef(false);
   const userZoomedRef = useRef(false);
   const barCountRef = useRef(0);
+  const focusIndexRef = useRef(-1);
+  const visibleBarsRef = useRef(initialVisibleBars);
   const suppressUntilRef = useRef(0);
   rangeSyncRef.current = rangeSync;
+  visibleBarsRef.current = initialVisibleBars;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -139,12 +143,16 @@ export default function StrategyReturnChart({
       chart.applyOptions({ width: lastWidth, height: lastHeight });
       placeFocusLine(chart, focusLineRef.current, focusBarRef.current);
       if (userZoomedRef.current) return;
-      const full = fullLogicalRange(barCountRef.current, chart.timeScale().width());
-      if (!full) return;
+      const next = initialVisibleRange(barCountRef.current, {
+        focusIndex: focusIndexRef.current,
+        visibleBars: visibleBarsRef.current,
+        plotWidth: chart.timeScale().width(),
+      });
+      if (!next) return;
       applyingRef.current = true;
       suppressUntilRef.current = performance.now() + 200;
-      chart.timeScale().setVisibleLogicalRange(full);
-      rangeSyncRef.current?.publish(full, sourceRef.current);
+      chart.timeScale().setVisibleLogicalRange(next);
+      rangeSyncRef.current?.publish(next, sourceRef.current);
       requestAnimationFrame(() => {
         applyingRef.current = false;
       });
@@ -185,22 +193,25 @@ export default function StrategyReturnChart({
     if (!points.length) return;
     const days = points.map((row) => String(row.time));
     const focusIndex = focusDate ? indexForDay(days, focusDate) : -1;
+    focusIndexRef.current = focusIndex;
     const plotWidth = chart.timeScale().width();
-    const focused = focusIndex >= 0 ? focusedLogicalRange(points.length, focusIndex, 45, plotWidth) : null;
+    const initial = initialVisibleRange(points.length, {
+      focusIndex,
+      visibleBars: initialVisibleBars,
+      plotWidth,
+    });
     focusBarRef.current = focusIndex >= 0 ? days[focusIndex] : '';
     const apply = () => {
       const live = chartRef.current;
       if (!live) return;
       const synced = rangeSyncRef.current?.last;
-      const full = fullLogicalRange(points.length, plotWidth);
-      const initial = focused ?? full;
       applyingRef.current = true;
       suppressUntilRef.current = performance.now() + 200;
       if (!userZoomedRef.current && initial) {
         live.timeScale().setVisibleLogicalRange(initial);
         fittedRef.current = true;
         rangeSyncRef.current?.publish(initial, sourceRef.current);
-        if (focused) userZoomedRef.current = true;
+        if (focusIndex >= 0 && !initialVisibleBars) userZoomedRef.current = true;
       } else if (synced) {
         live.timeScale().setVisibleLogicalRange(synced);
         fittedRef.current = true;
@@ -217,7 +228,7 @@ export default function StrategyReturnChart({
     };
     apply();
     requestAnimationFrame(apply);
-  }, [data, focusDate]);
+  }, [data, focusDate, initialVisibleBars]);
 
   useEffect(() => {
     const chart = chartRef.current;

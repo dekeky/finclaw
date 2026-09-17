@@ -4,8 +4,22 @@ export function isLiveStatus(status?: string | null): boolean {
   return status === 'queued' || status === 'running';
 }
 
+export function isCancelledStatus(status?: string | null): boolean {
+  return status === 'cancelled' || status === 'canceled';
+}
+
 export function isTerminalStatus(status?: string | null): boolean {
-  return status === 'succeeded' || status === 'failed' || status === 'cancelled';
+  return status === 'succeeded' || status === 'failed' || isCancelledStatus(status);
+}
+
+export function shouldShowReportSkeleton(status?: string | null, hasResult = false): boolean {
+  if (hasResult || isLiveStatus(status) || status === 'failed' || isCancelledStatus(status)) return false;
+  return true;
+}
+
+export function shouldShowReportBody(status?: string | null, hasResult = false, hasEquity = false): boolean {
+  if (isLiveStatus(status) || hasResult) return true;
+  return isCancelledStatus(status) && hasEquity;
 }
 
 export function hasChartableResult(detail?: RunDetail | null): boolean {

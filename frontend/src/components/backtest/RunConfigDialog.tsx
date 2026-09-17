@@ -4,7 +4,7 @@ import { api, type RunListItem, type RunRequest } from '@/api/backtest';
 import { formatMetric } from './format';
 
 const UNIVERSE_LABEL: Record<string, string> = {
-  picks: '自选股票',
+  picks: '股票选择',
   index: '指数成分',
   all: 'A股全部',
 };

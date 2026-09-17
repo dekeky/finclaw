@@ -1,7 +1,9 @@
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import { IconPencil, IconTrash } from '@tabler/icons-react';
 import { StrategyPlatformBadge } from '@/components/StrategyPlatformField';
+import { GalleryReturnChart } from '@/components/strategy/GalleryReturnChart';
 import { cn } from '@/lib/cn';
+import type { ReturnPt } from '@/lib/galleryReturn';
 import type { StrategyPlatform } from '@/lib/strategyPlatforms';
 import { PRIMARY_LIST_ITEM_SELECTED_CLASS } from '@/lib/primaryButton';
 import { formatAbsoluteTime, formatGalleryTime, galleryShellClassName } from '@/components/strategy/strategyGallery';
@@ -10,8 +12,10 @@ type StrategyGalleryTileProps = {
   title: string;
   platform: StrategyPlatform | string;
   subtitle?: string;
+  returnSeries?: ReturnPt[];
   metaLeft?: string;
   metaRight?: string;
+  metaRightClass?: string;
   updatedAt?: string;
   selected?: boolean;
   editing?: boolean;
@@ -29,8 +33,10 @@ export function StrategyGalleryTile({
   title,
   platform,
   subtitle,
+  returnSeries,
   metaLeft,
   metaRight,
+  metaRightClass,
   updatedAt,
   selected = false,
   editing = false,
@@ -84,9 +90,14 @@ export function StrategyGalleryTile({
             </span>
           </div>
           {subtitle ? (
-            <p className="mt-2 line-clamp-2 flex-1 text-xs leading-relaxed text-muted-foreground">
+            <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
               {subtitle}
             </p>
+          ) : null}
+          {returnSeries && returnSeries.length >= 2 ? (
+            <div className="mt-3 min-h-14 flex-1">
+              <GalleryReturnChart series={returnSeries} />
+            </div>
           ) : (
             <div className="flex-1" />
           )}
@@ -94,7 +105,7 @@ export function StrategyGalleryTile({
             <div className="min-w-0 truncate">
               {metaLeft ? <span>{metaLeft}</span> : null}
               {metaLeft && metaRight ? <span className="mx-1.5 opacity-40">·</span> : null}
-              {metaRight ? <span className="tabular-nums">{metaRight}</span> : null}
+              {metaRight ? <span className={cn('tabular-nums', metaRightClass)}>{metaRight}</span> : null}
             </div>
             {timeLabel ? (
               <span className="shrink-0 tabular-nums" title={absoluteHint || undefined}>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   IconArrowLeft,
   IconBuildingWarehouse,
@@ -35,7 +35,7 @@ import {
   PANEL_WIDTH_KEYS,
   PANEL_WIDTH_LIMITS,
 } from '@/lib/panelWidths';
-import { submitBacktestRun, type UniverseSelection } from '@/api/backtest';
+import { listBacktestRuns, getBacktestRun, submitBacktestRun, type RunListItem, type UniverseSelection } from '@/api/backtest';
 import { UniverseDialog } from '@/components/backtest/UniverseDialog';
 import type { BacktestRunParams } from '@/lib/backtestRunDraft';
 import {
@@ -72,7 +72,10 @@ import { useAuth } from '@/state/auth';
 import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { shareStrategyToLibrary, type StrategyLibrarySummary } from '@/api/strategyLibrary';
 import { StrategyLibraryDetailView, StrategyLibraryPanel } from '@/components/StrategyLibraryPanel';
+import { hasUsableReturnCurve, latestSucceededRunForStrategy, latestValidReturnSeries } from '@/lib/galleryReturn';
+import { formatPaperReturn, paperSignedClass } from '@/lib/paperSession';
 import { loadBacktestViewState, saveBacktestViewState } from '@/lib/backtestViewState';
+import { parseReturnTo } from '@/lib/navigationReturn';
 
 type EditorForm = {
   name: string;
@@ -106,11 +109,14 @@ function formFromDetail(detail: {
 
 export default function BacktestPage() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const returnTo = parseReturnTo(location.state);
   const { user } = useAuth();
   const { requireAuth } = useRequireAuth();
   const { refresh: refreshAgents, currentAgent } = useAgents();
   const initialView = useMemo(() => loadBacktestViewState(), []);
   const [strategies, setStrategies] = useState<StrategySummary[]>([]);
+  const [runs, setRuns] = useState<RunListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedName, setSelectedName] = useState<string | null>(initialView.selectedName);
@@ -191,6 +197,7 @@ export default function BacktestPage() {
   const refresh = useCallback(async () => {
     if (!user) {
       setStrategies([]);
+      setRuns([]);
       setLoading(false);
       setLoadError(null);
       setSelectedName(null);
@@ -219,12 +226,69 @@ export default function BacktestPage() {
   }, [refresh, refreshAgents]);
 
   useEffect(() => {
+    if (!user) {
+      setRuns([]);
+      return;
+    }
+    if (selectedName) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await listBacktestRuns();
+        if (cancelled) return;
+        const missing = new Set<string>();
+        for (const strategy of strategies) {
+          const owner = { id: strategy.id, name: strategy.name };
+          const valid = latestValidReturnSeries(list, owner);
+          if (valid.length >= 2) continue;
+          const latest = latestSucceededRunForStrategy(list, owner);
+          if (latest && !hasUsableReturnCurve(latest.equity_curve)) missing.add(latest.id);
+        }
+        if (!missing.size) {
+          setRuns(list);
+          return;
+        }
+        const details = await Promise.all(
+          [...missing].map((id) =>
+            getBacktestRun(id)
+              .then((detail) => [id, detail] as const)
+              .catch(() => null),
+          ),
+        );
+        if (cancelled) return;
+        const curves = new Map(
+          details.flatMap((row) => {
+            if (!row?.[1]?.result?.equity_curve?.length) return [];
+            return [[row[0], row[1]] as const];
+          }),
+        );
+        setRuns(
+          list.map((item) => {
+            const detail = curves.get(item.id);
+            if (!detail?.result?.equity_curve?.length) return item;
+            return {
+              ...item,
+              equity_curve: detail.result.equity_curve,
+              request: detail.request ?? item.request,
+            };
+          }),
+        );
+      } catch {
+        if (!cancelled) setRuns([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, selectedName, strategies]);
+
+  useEffect(() => {
     const state = location.state as { selectedStrategy?: string } | null;
     if (state?.selectedStrategy) {
       setSelectedName(state.selectedStrategy);
-      window.history.replaceState({}, document.title);
+      window.history.replaceState(returnTo ? { returnTo } : {}, document.title);
     }
-  }, [location.state]);
+  }, [location.state, returnTo]);
 
   const sortedStrategies = useMemo(() => {
     const rows = [...strategies];
@@ -590,6 +654,14 @@ export default function BacktestPage() {
     setFocusRunId(null);
   };
 
+  const handleBack = () => {
+    if (returnTo) {
+      navigate(returnTo);
+      return;
+    }
+    backToBrowse();
+  };
+
   const browseMode = showLibrary ? 'library' : 'mine';
   const browsing = !selectedName && !libraryEntry;
   // 仅「我的策略」详情展示右侧 AI；列表页与策略市场全程不展示。
@@ -619,8 +691,8 @@ export default function BacktestPage() {
               variant="ghost"
               size="icon"
               className="size-7 shrink-0"
-              onClick={backToBrowse}
-              aria-label="返回策略列表"
+              onClick={handleBack}
+              aria-label={returnTo ? '返回来源页' : '返回策略列表'}
             >
               <IconArrowLeft className="size-4" />
             </Button>
@@ -768,11 +840,16 @@ export default function BacktestPage() {
                       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                         {sortedStrategies.map((s) => {
                           const editing = editingName === s.name && renameSurface === 'card';
+                          const returnSeries = latestValidReturnSeries(runs, { id: s.id, name: s.name });
+                          const lastPct = returnSeries[returnSeries.length - 1]?.value;
                           return (
                             <StrategyGalleryTile
                               key={s.name}
                               title={s.name}
                               platform={s.platform}
+                              returnSeries={returnSeries}
+                              metaRight={lastPct != null ? formatPaperReturn(lastPct) : undefined}
+                              metaRightClass={lastPct != null ? paperSignedClass(lastPct) : undefined}
                               updatedAt={s.updated_at}
                               editing={editing}
                               draftName={draftName}
@@ -921,6 +998,7 @@ export default function BacktestPage() {
                     <BacktestRunsPanel
                       strategyId={selectedStrategy?.id}
                       strategyName={selectedName}
+                      strategyPlatform={form.platform}
                       refreshKey={runsRefreshKey}
                       focusRunId={focusRunId}
                       active={strategyPane === 'runs'}

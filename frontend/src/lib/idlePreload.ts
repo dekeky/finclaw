@@ -15,6 +15,7 @@ const TASKS: IdleTask[] = [
   () => import('./monacoSetup'),
   // 回测页自身 chunk
   () => import('../pages/BacktestPage'),
+  () => import('../pages/PaperPage'),
   // 聊天默认页的 markdown 渲染
   () => import('react-markdown'),
 ];

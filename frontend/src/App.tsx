@@ -10,6 +10,7 @@ const ModelsPage = lazyWithRetry(() => import('./pages/ModelsPage'));
 const AgentMarketPage = lazyWithRetry(() => import('./pages/AgentMarketPage'));
 const AgentsPage = lazyWithRetry(() => import('./pages/AgentsPage'));
 const BacktestPage = lazyWithRetry(() => import('./pages/BacktestPage'));
+const PaperPage = lazyWithRetry(() => import('./pages/PaperPage'));
 const ChatPage = lazyWithRetry(() => import('./pages/ChatPage'));
 const LoginPage = lazyWithRetry(() => import('./pages/LoginPage'));
 const SharePage = lazyWithRetry(() => import('./pages/SharePage'));
@@ -58,6 +59,8 @@ export default function App() {
           <Route path="/agents/market" element={<AgentMarketPage />} />
           <Route path="/backtest" element={<BacktestPage />} />
           <Route path="/backtest/library" element={<Navigate to="/backtest" replace />} />
+          <Route path="/paper" element={<PaperPage />} />
+          <Route path="/paper/:id" element={<PaperPage />} />
           <Route path="/weixin" element={<WeixinPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/chat" replace />} />

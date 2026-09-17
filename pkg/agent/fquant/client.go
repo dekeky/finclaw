@@ -96,6 +96,7 @@ type SubmitRunRequest struct {
 	InitialCash     float64  `json:"initial_cash"`
 	StartTime       string   `json:"start_time"`
 	EndTime         string   `json:"end_time"`
+	Paper           bool     `json:"paper,omitempty"`
 	Universe        string   `json:"universe"`
 	Symbols         []string `json:"symbols,omitempty"`
 	Index           string   `json:"index,omitempty"`
@@ -245,6 +246,14 @@ func (c *Client) UpdateRunName(ctx context.Context, username, runID, name string
 func (c *Client) DeleteRun(ctx context.Context, username, runID string) (json.RawMessage, error) {
 	var raw json.RawMessage
 	if err := c.doJSON(ctx, http.MethodDelete, c.userPath(username, "/runs/"+url.PathEscape(runID)), nil, &raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+func (c *Client) CancelRun(ctx context.Context, username, runID string) (json.RawMessage, error) {
+	var raw json.RawMessage
+	if err := c.doJSON(ctx, http.MethodPost, c.userPath(username, "/runs/"+url.PathEscape(runID)+"/cancel"), nil, &raw); err != nil {
 		return nil, err
 	}
 	return raw, nil
