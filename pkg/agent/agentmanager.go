@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/finclaw/internal/config"
 	"github.com/finclaw/pkg/agent/picoclaw"
@@ -182,8 +183,60 @@ func (m *AgentManager) GetWeixinOutboundCh(name string) chan bus.OutboundMessage
 	return m.weixinOutboundChs[name]
 }
 
+// outboundQueue is an unbounded FIFO queue that feeds a downstream channel from
+// a background goroutine. Push never blocks, so a slow consumer on one channel
+// cannot stall the dispatcher or other channels.
+type outboundQueue struct {
+	mu    sync.Mutex
+	cond  *sync.Cond
+	items []bus.OutboundMessage
+	ch    chan bus.OutboundMessage
+}
+
+func newOutboundQueue(ch chan bus.OutboundMessage) *outboundQueue {
+	q := &outboundQueue{ch: ch}
+	q.cond = sync.NewCond(&q.mu)
+	return q
+}
+
+func (q *outboundQueue) push(msg bus.OutboundMessage) {
+	q.mu.Lock()
+	q.items = append(q.items, msg)
+	q.mu.Unlock()
+	q.cond.Signal()
+}
+
+func (q *outboundQueue) len() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.items)
+}
+
+func (q *outboundQueue) run(ctx context.Context) {
+	for {
+		q.mu.Lock()
+		for len(q.items) == 0 {
+			q.cond.Wait()
+			if ctx.Err() != nil {
+				q.mu.Unlock()
+				return
+			}
+		}
+		msg := q.items[0]
+		q.items = q.items[1:]
+		q.mu.Unlock()
+
+		select {
+		case q.ch <- msg:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 // startOutboundDispatcher is the sole consumer of msgBus.OutboundChan() for an agent.
 // It demultiplexes replies so web (fin) and weixin channels operate in parallel.
+// Each target has its own unbounded queue so a slow channel cannot stall the other.
 func (m *AgentManager) startOutboundDispatcher(
 	name string,
 	msgBus *bus.MessageBus,
@@ -199,6 +252,38 @@ func (m *AgentManager) startOutboundDispatcher(
 	dispatchCtx, cancel := context.WithCancel(m.ctx)
 	m.outboundDispatcherCancels[name] = cancel
 
+	finclawQ := newOutboundQueue(finclawOutCh)
+	weixinQ := newOutboundQueue(weixinOutCh)
+	go finclawQ.run(dispatchCtx)
+	go weixinQ.run(dispatchCtx)
+
+	// Log a warning if either queue backs up too far — indicates a consumer
+	// is stuck and memory is growing.
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		const warnThreshold = 500
+		for {
+			select {
+			case <-dispatchCtx.Done():
+				return
+			case <-ticker.C:
+				if n := finclawQ.len(); n > warnThreshold {
+					logger.WarnCF("agent", "Finclaw outbound queue backing up", map[string]any{
+						"agent":  name,
+						"queued": n,
+					})
+				}
+				if n := weixinQ.len(); n > warnThreshold {
+					logger.WarnCF("agent", "Weixin outbound queue backing up", map[string]any{
+						"agent":  name,
+						"queued": n,
+					})
+				}
+			}
+		}
+	}()
+
 	go func() {
 		logger.InfoCF("agent", "Outbound dispatcher started", map[string]any{"agent": name})
 		for {
@@ -209,14 +294,16 @@ func (m *AgentManager) startOutboundDispatcher(
 				if !ok {
 					return
 				}
-				target := finclawOutCh
-				if msg.Channel == "weixin" {
-					target = weixinOutCh
+				// Some publishers (e.g. AgentLoop) only set Context.Channel
+				// and leave the top-level Channel field blank. Normalize so
+				// routing by Channel works correctly.
+				if msg.Channel == "" {
+					msg.Channel = msg.Context.Channel
 				}
-				select {
-				case target <- msg:
-				case <-dispatchCtx.Done():
-					return
+				if msg.Channel == "weixin" {
+					weixinQ.push(msg)
+				} else {
+					finclawQ.push(msg)
 				}
 			case mediaMsg, ok := <-msgBus.OutboundMediaChan():
 				if !ok {
