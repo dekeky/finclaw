@@ -166,6 +166,22 @@ func slicePaperResult(result map[string]any, goLive string, initialCash float64)
 	return sliced
 }
 
+// refreshPaperMetrics 用已存净值曲线重算指标，保证历史会话也能展示新增指标。
+func refreshPaperMetrics(result map[string]any, initialCash float64) {
+	if result == nil {
+		return
+	}
+	curve := parsePaperEquityCurve(result["equity_curve"])
+	if len(curve) == 0 {
+		return
+	}
+	tradeCount := 0
+	if trades, ok := result["trades"].([]any); ok {
+		tradeCount = len(trades)
+	}
+	result["metrics"] = paperMetricsFromCurve(curve, initialCash, tradeCount)
+}
+
 func paperMetricsFromCurve(curve []paperEquityPoint, initialCash float64, tradeCount int) map[string]any {
 	metrics := map[string]any{
 		"trade_count":      tradeCount,
@@ -204,7 +220,42 @@ func paperMetricsFromCurve(curve []paperEquityPoint, initialCash float64, tradeC
 	if days := paperCurveDays(curve); days > 1 && first > 0 && last > 0 {
 		metrics["annualized_return"] = math.Pow(last/first, 365.0/days) - 1
 	}
+	if sharpe, ok := paperSharpeRatio(curve); ok {
+		metrics["sharpe_ratio"] = sharpe
+	}
 	return metrics
+}
+
+// paperSharpeRatio 按日收益率计算年化夏普比率（无风险利率取 0）。
+func paperSharpeRatio(curve []paperEquityPoint) (float64, bool) {
+	if len(curve) < 3 {
+		return 0, false
+	}
+	returns := make([]float64, 0, len(curve)-1)
+	for i := 1; i < len(curve); i++ {
+		prev := curve[i-1].Equity
+		if prev <= 0 {
+			continue
+		}
+		returns = append(returns, curve[i].Equity/prev-1)
+	}
+	if len(returns) < 2 {
+		return 0, false
+	}
+	var sum float64
+	for _, r := range returns {
+		sum += r
+	}
+	mean := sum / float64(len(returns))
+	var variance float64
+	for _, r := range returns {
+		variance += (r - mean) * (r - mean)
+	}
+	std := math.Sqrt(variance / float64(len(returns)-1))
+	if std == 0 {
+		return 0, false
+	}
+	return mean / std * math.Sqrt(252), true
 }
 
 func paperCurveDays(curve []paperEquityPoint) float64 {

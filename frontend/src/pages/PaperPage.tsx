@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams, useSearchParams } from 'react-rout
 import {
   IconArrowLeft,
   IconChartCandle,
+  IconCode,
   IconLoader2,
   IconPencil,
   IconPlayerPause,
@@ -27,6 +28,7 @@ import {
 import { listBacktestRuns, type RunListItem, type UniverseSelection } from '@/api/backtest';
 import { listStrategies, type StrategySummary } from '@/api/strategies';
 import { UniverseDialog } from '@/components/backtest/UniverseDialog';
+import SourceDialog from '@/components/backtest/SourceDialog';
 import { PaperSessionView } from '@/components/paper/PaperSessionView';
 import { PaperStrategyPickDialog } from '@/components/paper/PaperStrategyPickDialog';
 import { StrategyGallerySkeleton } from '@/components/strategy/StrategyGallerySkeleton';
@@ -78,6 +80,7 @@ export default function PaperPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
   const [pickOpen, setPickOpen] = useState(false);
+  const [sourceOpen, setSourceOpen] = useState(false);
   const [universeOpen, setUniverseOpen] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
   const [pickedStrategy, setPickedStrategy] = useState<StrategySummary | null>(null);
@@ -121,6 +124,7 @@ export default function PaperPage() {
   }, [refreshList]);
 
   useEffect(() => {
+    setSourceOpen(false);
     if (!id) {
       setDetail(null);
       return;
@@ -381,7 +385,7 @@ export default function PaperPage() {
                 </button>
               </>
             )}
-            {detail.strategy_name ? (
+            {detail.strategy_name && detail.strategy_name !== detail.name ? (
               <button
                 type="button"
                 className="max-w-[min(16rem,28vw)] truncate px-1 text-sm text-muted-foreground hover:text-foreground"
@@ -447,6 +451,17 @@ export default function PaperPage() {
               >
                 <IconRefresh className="size-3.5" />
                 同步
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!detail.source}
+                title={detail.source ? '查看当前运行的策略源码' : '暂无源码快照'}
+                onClick={() => setSourceOpen(true)}
+              >
+                <IconCode className="size-3.5" />
+                源码
               </Button>
               <Button
                 type="button"
@@ -574,6 +589,14 @@ export default function PaperPage() {
         onOpenChange={setUniverseOpen}
         onConfirm={handleConfirmUniverse}
       />
+      {sourceOpen && detail?.source ? (
+        <SourceDialog
+          source={detail.source}
+          title={detail.name}
+          label="策略源码"
+          onClose={() => setSourceOpen(false)}
+        />
+      ) : null}
       {confirmDialog}
     </div>
   );

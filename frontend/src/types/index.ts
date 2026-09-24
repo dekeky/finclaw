@@ -39,6 +39,11 @@ export interface ChatMessage {
    * 每条消息各自持有，避免用会话级单值导致历史轮耗时被新一轮覆盖。
    */
   taskElapsedSec?: number;
+  /**
+   * 本轮被用户手动中断（撤销）。与 taskElapsedSec 同层持久化，
+   * 用于在「工作过程」条目上展示「已撤销」。
+   */
+  taskCancelled?: boolean;
 }
 
 export interface WSMessage {

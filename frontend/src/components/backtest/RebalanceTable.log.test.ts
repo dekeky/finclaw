@@ -52,6 +52,31 @@ test('keeps filled submitted rows and drops rejected ghosts', () => {
   );
 });
 
+test('mergeLogEvents interleaves strategy logs by day', () => {
+  const rows: RebalanceEvent[] = [
+    {
+      time: '2020-02-06',
+      method: 'order_target_percent',
+      status: 'submitted',
+      targets: { '601012': 0.95 },
+      reason: '短均线上穿',
+    },
+  ];
+  const logs = [
+    { time: '2020-02-07', message: '次日观察' },
+    { time: '2020-02-06 09:31:00', message: '开盘买入' },
+  ];
+  const merged = mergeLogEvents(rows, [], [], logs);
+  assert.deepEqual(
+    merged.map((row) => `${row.time}:${row.method}:${row.reason}`),
+    [
+      '2020-02-07:rebalance_log:次日观察',
+      '2020-02-06 09:31:00:rebalance_log:开盘买入',
+      '2020-02-06:order_target_percent:短均线上穿',
+    ],
+  );
+});
+
 test('filterStrategyLogs keeps rows inside the date range', () => {
   const rows = [
     { time: '2020-01-02', message: 'a' },

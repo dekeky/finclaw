@@ -33,6 +33,7 @@ export interface PersistedMessage {
   kind?: MessageKind;
   processSegments?: ProcessSegment[];
   taskElapsedSec?: number;
+  taskCancelled?: boolean;
 }
 
 export interface ConversationRecord {
@@ -307,6 +308,7 @@ function msgToPersisted(m: ChatMessage): PersistedMessage {
   if (m.kind) row.kind = m.kind;
   if (m.processSegments?.length) row.processSegments = m.processSegments;
   if (typeof m.taskElapsedSec === 'number') row.taskElapsedSec = m.taskElapsedSec;
+  if (m.taskCancelled) row.taskCancelled = true;
   return row;
 }
 
@@ -320,12 +322,22 @@ function persistedToMessages(rows: PersistedMessage[]): ChatMessage[] {
     kind: m.kind,
     processSegments: m.processSegments,
     taskElapsedSec: m.taskElapsedSec,
+    taskCancelled: m.taskCancelled,
   }));
 }
 
 function inferTitle(messages: ChatMessage[]): string {
   const firstUser = messages.find((m) => m.role === 'user');
   return titleFromContent(firstUser?.displayContent ?? firstUser?.content);
+}
+
+/**
+ * 由消息列表推断对话标题，供标签页展示。
+ * 尚无用户消息时返回空串，调用方自行决定占位文案（如「新对话」）。
+ */
+export function inferConversationTitle(messages: ChatMessage[]): string {
+  if (!messages.some((m) => m.role === 'user')) return '';
+  return inferTitle(messages);
 }
 
 function inferTitleFromRows(rows: PersistedMessage[]): string {

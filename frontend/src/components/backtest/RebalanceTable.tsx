@@ -141,12 +141,14 @@ export function RebalancePane({
   rows,
   rejects = [],
   orders = [],
+  logs = [],
   names,
   onSelectSymbol,
 }: {
   rows: RebalanceEvent[];
   rejects?: RejectRow[];
   orders?: Record<string, unknown>[];
+  logs?: StrategyLog[];
   names: Record<string, string>;
   onSelectSymbol: (symbol: string) => void;
 }) {
@@ -156,7 +158,7 @@ export function RebalancePane({
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
 
-  const merged = useMemo(() => mergeLogEvents(rows, rejects, orders), [rows, rejects, orders]);
+  const merged = useMemo(() => mergeLogEvents(rows, rejects, orders, logs), [rows, rejects, orders, logs]);
   const symbols = useMemo(() => collectFilterSymbols(merged, names), [merged, names]);
   const bounds = useMemo(() => dateBounds(merged), [merged]);
   const datePresets = useMemo(() => filterPresets(bounds.min, bounds.max), [bounds.min, bounds.max]);
@@ -365,6 +367,18 @@ export function RebalanceTable({
         <tbody>
           {display.map((item, index) => {
             const { event: row, eventIndex, fill } = item;
+            if (isStrategyLog(row)) {
+              const message = eventReason(row) || "—";
+              return (
+                <tr key={`${row.time}-log-${eventIndex}-${index}`}>
+                  {hideDate ? null : <td>{row.time || "—"}</td>}
+                  {hideDate ? null : <td>{METHOD_LABEL.rebalance_log}</td>}
+                  <td className="reason-cell log-message" colSpan={hideDate ? columns : columns - 2} title={message}>
+                    {message}
+                  </td>
+                </tr>
+              );
+            }
             const symbol = fill?.symbol || eventSymbols(row)[0];
             const symbols = symbol ? [symbol] : eventSymbols(row);
             const expandable = Boolean(row.scores || row.plan || (row.targets && Object.keys(row.targets).length > 1));
@@ -484,83 +498,6 @@ function EventDetail({
           <strong>入选</strong>
           <SymbolList symbols={row.selected} names={names} onSelectSymbol={onSelectSymbol} />
         </div>
-      ) : null}
-    </div>
-  );
-}
-
-export function LogTable({ rows }: { rows: StrategyLog[] }) {
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [page, setPage] = useState(0);
-  const bounds = useMemo(() => dateBounds(rows), [rows]);
-  const datePresets = useMemo(() => filterPresets(bounds.min, bounds.max), [bounds.min, bounds.max]);
-  const filtered = useMemo(() => filterStrategyLogs(rows, from, to), [rows, from, to]);
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const safePage = Math.min(page, totalPages - 1);
-  const pageRows = useMemo(
-    () => filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE),
-    [filtered, safePage],
-  );
-
-  useEffect(() => {
-    setPage(0);
-  }, [from, to]);
-
-  if (!rows.length) {
-    return <div className="empty muted">策略没有调用 self.log()。</div>;
-  }
-
-  return (
-    <div className="rebalance-pane">
-      <div className="blotter-filter">
-        <label>
-          日期
-          <DateRangePicker
-            start={from}
-            end={to}
-            min={bounds.min}
-            max={bounds.max}
-            allowEmpty
-            presets={datePresets}
-            placeholder="全部日期"
-            onChange={(nextStart, nextEnd) => {
-              setFrom(nextStart);
-              setTo(nextEnd);
-            }}
-          />
-        </label>
-        {from || to ? (
-          <button type="button" className="btn ghost" onClick={() => { setFrom(""); setTo(""); }}>
-            清除筛选
-          </button>
-        ) : null}
-        <span className="blotter-filter-count">共 {filtered.length} 条</span>
-      </div>
-      {pageRows.length ? (
-        <div className="table-wrap blotter analysis-table">
-          <table className="blotter-table">
-            <thead>
-              <tr>
-                <th>日期</th>
-                <th>日志</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.map((row, index) => (
-                <tr key={`${row.time}-${safePage}-${index}`}>
-                  <td>{row.time || "—"}</td>
-                  <td className="reason-cell">{row.message || "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="empty muted">没有符合筛选条件的记录。</div>
-      )}
-      {filtered.length > PAGE_SIZE ? (
-        <Pager page={safePage} totalPages={totalPages} total={filtered.length} onChange={setPage} />
       ) : null}
     </div>
   );
@@ -712,6 +649,7 @@ export function mergeLogEvents(
   rows: RebalanceEvent[],
   rejects: RejectRow[],
   orders: Record<string, unknown>[] = [],
+  logs: StrategyLog[] = [],
 ): RebalanceEvent[] {
   const covered = new Set<string>();
   for (const row of rows) {
@@ -728,7 +666,18 @@ export function mergeLogEvents(
     if (symbol && covered.has(`${day}|${symbol}`)) continue;
     extra.push(toRejectEvent(row));
   }
-  const merged = [...rows, ...extra].sort((left, right) => dayKey(right.time).localeCompare(dayKey(left.time)));
+  const notes = logs
+    .filter((row) => String(row.message ?? "").trim() || row.time)
+    .map((row): RebalanceEvent => ({
+      time: row.time,
+      method: "rebalance_log",
+      reason: String(row.message ?? ""),
+    }));
+  const merged = [...rows, ...extra, ...notes].sort((left, right) => {
+    const byDay = dayKey(right.time).localeCompare(dayKey(left.time));
+    if (byDay !== 0) return byDay;
+    return String(right.time || "").localeCompare(String(left.time || ""));
+  });
   if (!orders.length) return merged;
   return merged.filter((row) => {
     if (String(row.status || "").toLowerCase() !== "submitted") return true;
@@ -932,6 +881,10 @@ function involvedSymbols(row: RebalanceEvent): string[] {
     }
   }
   return [...seen];
+}
+
+function isStrategyLog(row: RebalanceEvent): boolean {
+  return String(row.method || "") === "rebalance_log";
 }
 
 function eventReason(row: RebalanceEvent): string {

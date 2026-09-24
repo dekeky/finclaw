@@ -1042,9 +1042,12 @@ export default function BacktestPage() {
                 className="h-full"
                 platform={form.platform}
                 strategyPath={form.path}
+                strategyId={selectedStrategy?.id}
+                strategyName={selectedName}
                 strategyReady={strategyReady}
                 analysisRun={analysisRun}
                 analysisFocus={analysisFocus}
+                onSelectAnalysisRun={setAnalysisRun}
                 onClearAnalysisRun={() => setAnalysisRun(null)}
                 onStrategyFileChanged={handleAgentFileChanged}
                 onCollapse={() => persistChatOpen(false)}

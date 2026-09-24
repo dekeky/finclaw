@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
+import { IconChartAreaLine } from '@tabler/icons-react';
 import { getMarketBars, listMarketSymbols, runDisplayName, type PricePoint, type RunDetail, type RunListItem } from '@/api/backtest';
 import type { PaperSessionDetail } from '@/api/paper';
 import '@/components/backtest/fquant-ui.css';
 import EquityReturnChart from '@/components/backtest/EquityReturnChart';
-import { formatDateMinute, STATUS_LABEL } from '@/components/backtest/format';
+import { formatDateMinute, formatMetric, STATUS_LABEL, type MetricSpec } from '@/components/backtest/format';
 import { RebalancePane, type RebalanceEvent } from '@/components/backtest/RebalanceTable';
 import { RunReport } from '@/components/backtest/RunReport';
 import { cumulativePct, toEquity } from '@/components/backtest/series';
@@ -24,13 +25,33 @@ import {
   type PaperQuote,
 } from '@/lib/paperPicks';
 import {
-  formatPaperMoney,
   formatPaperPrice,
   formatPaperReturn,
-  formatPaperSignedMoney,
   paperDisplayReturn,
   paperSignedClass,
 } from '@/lib/paperSession';
+
+const PAPER_HEAD_METRICS: MetricSpec[] = [
+  { key: 'total_return_pct', label: '累计收益率', kind: 'percent', signed: true, hint: '' },
+  { key: 'annualized_return', label: '年化收益率', kind: 'percent100', signed: true, hint: '' },
+  { key: 'max_drawdown_pct', label: '最大回撤', kind: 'drawdown', hint: '' },
+  { key: 'sharpe_ratio', label: '夏普比率', kind: 'ratio', signed: true, hint: '' },
+];
+
+function metricNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() && !Number.isNaN(Number(value))) return Number(value);
+  return null;
+}
+
+function paperMetricClass(value: unknown, spec: MetricSpec): string {
+  const number = metricNumber(value);
+  if (spec.kind === 'drawdown') {
+    return number && number !== 0 ? paperSignedClass(-Math.abs(number)) : 'text-muted-foreground';
+  }
+  if (!spec.signed) return '';
+  return paperSignedClass(number);
+}
 
 export function PaperSessionView({
   session,
@@ -69,7 +90,11 @@ export function PaperSessionView({
     const returns = cumulativePct(equity, session.initial_cash);
     return equity.map((point) => ({ time: point.time, strategy: returns.get(point.time) }));
   }, [equity, session.initial_cash]);
-  const pnl = Number.isFinite(session.equity) ? session.equity - session.initial_cash : null;
+  const hasCurve = chart.length >= 2;
+  const headMetrics: Record<string, unknown> = useMemo(() => {
+    const metrics: Record<string, unknown> = session.result?.metrics ?? {};
+    return { ...metrics, total_return_pct: metrics.total_return_pct ?? returnPct };
+  }, [session.result?.metrics, returnPct]);
   const kline = paperKlineWindow(session.last_bar_date);
   const catching = session.status === 'catching_up';
   const pickCodes = useMemo(() => pickSet?.picks.map((row) => row.symbol) ?? [], [pickSet]);
@@ -145,33 +170,35 @@ export function PaperSessionView({
         <div className="mx-auto w-full max-w-6xl px-4 py-6 pb-16 sm:px-6">
           <section>
             <div className="flex flex-wrap items-end gap-x-8 gap-y-3">
-              <div>
-                <div className="text-xs text-muted-foreground">累计收益</div>
-                <div className={cn('mt-1 text-[40px] leading-none font-semibold tabular-nums tracking-tight', paperSignedClass(returnPct))}>
-                  {formatPaperReturn(returnPct)}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">总资产</div>
-                <div className="mt-1 text-lg font-medium tabular-nums">{formatPaperMoney(session.equity)}</div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">盈亏</div>
-                <div className={cn('mt-1 text-lg font-medium tabular-nums', paperSignedClass(pnl))}>{formatPaperSignedMoney(pnl)}</div>
+              <div className="grid flex-1 grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-4">
+                {PAPER_HEAD_METRICS.map((spec) => {
+                  const value = headMetrics[spec.key];
+                  return (
+                    <div key={spec.key}>
+                      <div className="text-xs text-muted-foreground">{spec.label}</div>
+                      <div className={cn('mt-1 text-2xl leading-none font-semibold tabular-nums tracking-tight', paperMetricClass(value, spec))}>
+                        {formatMetric(value, spec.kind)}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
               <div className="ml-auto pb-1 text-xs tabular-nums text-muted-foreground">
                 {session.last_bar_date ? `同步至 ${session.last_bar_date}` : catching ? '同步中' : '尚未同步'}
               </div>
             </div>
-            {chart.length ? (
-              <div className="fquant-ui mt-4 overflow-hidden rounded-xl border border-border/70 bg-card">
+            <div className="fquant-ui mt-4 overflow-hidden rounded-xl border border-border/70 bg-card">
+              {hasCurve ? (
                 <div className="chart chart-return !h-[240px] sm:!h-[280px]">
                   <EquityReturnChart data={chart} overlays={[]} />
                 </div>
-              </div>
-            ) : (
-              <p className="mt-6 text-sm text-muted-foreground">{catching ? '净值正在计算' : '还没有收益曲线'}</p>
-            )}
+              ) : (
+                <div className="flex h-[240px] w-full flex-col items-center justify-center gap-2.5 sm:h-[280px]">
+                  <IconChartAreaLine className="size-7 text-muted-foreground/30" stroke={1.5} />
+                  <span className="text-2xl font-semibold tracking-[0.2em] text-muted-foreground/55">无数据</span>
+                </div>
+              )}
+            </div>
           </section>
 
           <PickPlaza pickSet={pickSet} names={names} quotes={quotes} catching={catching} onSelect={openSymbol} />

@@ -1376,6 +1376,13 @@ button.symbol-link:hover:not(:disabled),
   text-overflow: ellipsis;
 }
 
+.fquant-ui .blotter-table td.log-message {
+  max-width: none;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+}
+
 .fquant-ui .analysis-detail td {
   background: var(--bg-panel);
   white-space: normal !important;

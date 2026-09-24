@@ -7,6 +7,7 @@ import {
   findCompleteReplyIndexInTurn,
   findLastProcessIndexAfterUser,
   isTaskTimingActive,
+  isTurnCancelled,
 } from '../utils/chatTaskState';
 import {
   collectProcessSegmentsForTurn,
@@ -36,8 +37,12 @@ interface ChatContainerProps {
   dockDescription?: string;
   /** 仅展示历史记录，不显示「清空」等操作 */
   readOnly?: boolean;
+  /** 是否显示「清空对话」按钮；标签页模式已有「新对话」入口，可隐藏避免重复 */
+  showClear?: boolean;
   /** 当前思考任务的起始时间（ms）；用于刷新后让计时延续 */
   taskStartedAt?: number | null;
+  /** 工作过程进行中：向后端发送 /stop */
+  onInterrupt?: () => void;
 }
 
 function getTurnElapsedSec(messages: ChatMessage[], userIdx: number): number | undefined {
@@ -63,7 +68,9 @@ export function ChatContainer({
   dockTitle,
   dockDescription,
   readOnly = false,
+  showClear = true,
   taskStartedAt = null,
+  onInterrupt,
 }: ChatContainerProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   /** 上次已跟随滚动的正文回复快照；过程消息更新不触发视口滚动 */
@@ -112,16 +119,19 @@ export function ChatContainer({
       const isCurrentTurn = userIdx === lastUserIdx;
       const turnSegments = collectProcessSegmentsForTurn(messages, userIdx);
       const showTurnProcess = turnSegments.length > 0 && !(taskActive && isCurrentTurn);
+      const turnCancelled = isTurnCancelled(messages, userIdx);
 
       nodes.push(<MessageBubble key={messages[userIdx].id} message={messages[userIdx]} />);
 
-      if (showTurnProcess) {
+      // 被中断的轮次即使没有任何过程内容也要展示条目，保证点击后可见「已撤销」
+      if (showTurnProcess || turnCancelled) {
         nodes.push(
           <div key={`turn-process-${userIdx}`} className="flex min-w-0 w-full flex-col gap-1">
             <TurnProcessPanel
               segments={turnSegments}
               messageId={`turn-${userIdx}`}
               taskElapsedSeconds={getTurnElapsedSec(messages, userIdx)}
+              cancelled={turnCancelled}
             />
           </div>,
         );
@@ -192,7 +202,7 @@ export function ChatContainer({
 
   return (
     <div className="flex flex-col gap-4">
-      {hasUserMessages && variant !== 'dock' && !readOnly && (
+      {hasUserMessages && variant !== 'dock' && !readOnly && showClear && (
         <div className="flex justify-center">
           <button
             type="button"
@@ -212,6 +222,7 @@ export function ChatContainer({
             seconds={taskTiming.seconds}
             segments={activeTaskSegments}
             messageId={`turn-${lastUserIdx}`}
+            onInterrupt={onInterrupt}
           />
         </div>
       )}

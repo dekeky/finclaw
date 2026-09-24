@@ -26,7 +26,6 @@ import {
   type RebalanceEvent,
   type RejectRow,
   type StrategyLog,
-  LogTable,
   RebalancePane,
 } from './RebalanceTable';
 const HS300: OverlayItem = { code: '000300', name: '沪深300', kind: 'index' };
@@ -492,7 +491,6 @@ export function RunReport({
               actionDays={actionDays}
               logsLoading={logPane && blotterLoading && !blotterReady}
               onOpenLogs={() => setLogPane(true)}
-              blotterLabel="回测日志"
             />
           </div>
 
@@ -578,7 +576,6 @@ function PnlPane({
   logsLoading = false,
   onOpenLogs,
   hideBenchmarkPicker = false,
-  blotterLabel = '回测日志',
 }: {
   chart: Record<string, string | number | undefined>[];
   overlays: OverlayItem[];
@@ -602,9 +599,8 @@ function PnlPane({
   logsLoading?: boolean;
   onOpenLogs?: () => void;
   hideBenchmarkPicker?: boolean;
-  blotterLabel?: string;
 }) {
-  const [pane, setPane] = useState<'pnl' | 'rebalance' | 'logs'>('pnl');
+  const [pane, setPane] = useState<'pnl' | 'rebalance'>('pnl');
   return (
     <div className="bt-returns">
       <div className="chart-title">
@@ -641,18 +637,7 @@ function PnlPane({
                 onOpenLogs?.();
               }}
             >
-              {blotterLabel}
-            </button>
-            <button
-              type="button"
-              className={pane === 'logs' ? 'active' : ''}
-              onClick={() => {
-                setPane('logs');
-                onOpenLogs?.();
-              }}
-            >
               日志
-              {logs.length ? <span className="tab-count">{logs.length}</span> : null}
             </button>
           </div>
           {pane === 'pnl' ? (
@@ -667,22 +652,16 @@ function PnlPane({
           ) : null}
           {pane === 'rebalance' ? (
             logsLoading ? (
-              <div className="empty muted">正在加载回测日志…</div>
+              <div className="empty muted">正在加载日志…</div>
             ) : (
               <RebalancePane
                 rows={rebalances}
                 rejects={rejects}
                 orders={orders}
+                logs={logs}
                 names={names}
                 onSelectSymbol={onSelectSymbol}
               />
-            )
-          ) : null}
-          {pane === 'logs' ? (
-            logsLoading ? (
-              <div className="empty muted">正在加载策略日志…</div>
-            ) : (
-              <LogTable rows={logs} />
             )
           ) : null}
         </div>

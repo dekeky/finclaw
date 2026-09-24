@@ -108,8 +108,10 @@ export function samePaperPollSnapshot(prev: PaperSessionDetail | null, next: Pap
 
 export function paperCardMeta(session: PaperSession): { left: string; right: string } {
   const sync = session.last_bar_date ? `同步至 ${session.last_bar_date}` : paperStatusLabel(session.status);
+  // 模拟名称默认与来源策略同名，同名时不再重复展示。
+  const strategy = session.strategy_name?.trim() ?? '';
   return {
-    left: session.strategy_name || '策略',
+    left: strategy && strategy !== session.name ? strategy : '',
     right: `${formatPaperReturn(paperDisplayReturn(session))} · ${sync}`,
   };
 }

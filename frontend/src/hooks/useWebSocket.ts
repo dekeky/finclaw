@@ -9,12 +9,15 @@ import {
   hasCompleteReplyInTurn,
   isChatTaskActive,
   isIncompleteChatTask,
+  isTaskTimingActive,
   resolveRestoredTaskState,
+  stampTaskCancelledForTurn,
   stampTaskElapsedForTurn,
   turnNeedsElapsedStamp,
 } from '../utils/chatTaskState';
 import { isPicoclawToolFeedbackContent } from '../utils/foldPicoclawToolFeedback';
 import { isAssistantThoughtOnlyContent } from '../utils/splitAssistantContent';
+import { isStopCommandReply } from '../utils/stopCommandReply';
 import { prepareStoredChatMessages } from '../utils/prepareStoredChatMessages';
 import {
   genSessionId,
@@ -184,6 +187,11 @@ export interface UseWebSocketReturn {
   /** 收起「正在思考」指示（仅本地 UI，不中断服务端生成） */
   stop: () => void;
   /**
+   * 中断当前回复：向后端发送 /stop 真中止生成，并在本地把该轮标记为「已撤销」。
+   * 后端的英文回执不回显，由本地「已撤销」状态呈现。
+   */
+  interrupt: () => void;
+  /**
    * 清空聊天区。startNewSession 时切换到全新会话并重连（当前对话作为历史记录保留）；
    * 再加 discard 则把当前对话从历史记录中删除（如用户显式删除当前对话）。
    */
@@ -241,6 +249,9 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
   /** 与 taskStartedAt 同步，用于在 callback 内避免重复 beginTask */
   const taskStartedAtRef = useRef<number | null>(null);
   taskStartedAtRef.current = taskStartedAt;
+  /** 与 isTyping 同步，供 callback 内判断当前是否处于工作中 */
+  const isTypingRef = useRef(false);
+  isTypingRef.current = isTyping;
   const wsRef = useRef<WebSocket | null>(null);
   /** 多 Agent：agentId -> sessionId（内存 map，与 localStorage sessions map 同步） */
   const sessionByAgentRef = useRef<Map<string, string>>(new Map(Object.entries(loadSessionMap())));
@@ -591,6 +602,10 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         const hasAttachments = Array.isArray(msg.payload?.attachments) && msg.payload!.attachments!.length > 0;
         if (!content && !hasAttachments) {
           console.warn('[Finclaw WS] Empty content in message.send:', msg);
+          break;
+        }
+        if (role !== 'user' && isStopCommandReply(content)) {
+          console.log('[Finclaw WS] Skipping /stop command reply:', content.slice(0, 64));
           break;
         }
         if (isEchoedUserReply(messagesRef.current, content, role)) {
@@ -1111,6 +1126,47 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     return () => clearInterval(timer);
   }, [reconnect, connect]);
 
+  /**
+   * 中断当前回复：把 /stop 发给后端真中止生成，同时在本地把该轮标记为「已撤销」。
+   * picoclaw 的英文回执（Task stopped. 等）由 handleIncoming 丢弃，不进入对话。
+   */
+  const interrupt = useCallback(() => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setSendError('Connection lost. Please reconnect.');
+      return;
+    }
+
+    console.log('[Finclaw WS] Sending /stop (interrupt)');
+    ws.send(JSON.stringify({
+      type: 'message.send',
+      id: genId(),
+      session_id: getCurrentSessionId() || undefined,
+      payload: { content: '/stop' },
+    }));
+
+    const msgs = messagesRef.current;
+    if (!isTaskTimingActive(msgs, isTypingRef.current, taskStartedAtRef.current)) return;
+
+    const userIdx = findLastUserIndex(msgs);
+    let next = stampTaskCancelledForTurn(msgs, userIdx);
+    const start = taskStartedAtRef.current;
+    if (start != null) {
+      const elapsed = Math.max(0, Math.floor((Date.now() - start) / 1000));
+      next = stampTaskElapsedForTurn(next, elapsed, userIdx);
+    }
+
+    if (typingFallbackRef.current) {
+      clearTimeout(typingFallbackRef.current);
+      typingFallbackRef.current = null;
+    }
+    clearSendConfirm();
+    messagesRef.current = next;
+    setMessages(commitMessages(next));
+    setIsTyping(false);
+    endTask();
+  }, [clearSendConfirm, commitMessages, endTask, getCurrentSessionId]);
+
   const send = useCallback(
     (content: string, media?: string[], opts?: { displayContent?: string }) => {
       const ws = wsRef.current;
@@ -1124,6 +1180,12 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
       const mediaList = (media ?? []).filter((m) => typeof m === 'string' && m.trim());
       const slashCommand = normalizeSlashInput(content).trim();
       const isClearCommand = slashCommand === '/clear';
+
+      if (slashCommand === '/stop') {
+        // 与中断按钮同一套逻辑：发 /stop 中止后端，本地标记该轮「已撤销」。
+        interrupt();
+        return;
+      }
 
       if (isClearCommand) {
         // /clear：清空当前对话的消息内容（前端存储 + 历史记录中该条对话的内容），
@@ -1225,7 +1287,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
         reconnect();
       }, SEND_CONFIRM_TIMEOUT);
     },
-    [beginTask, endTask, applySessionId, getCurrentSessionId, reconnect, clearSendConfirm, flushDraftNow, getSessionForAgent],
+    [beginTask, endTask, applySessionId, getCurrentSessionId, reconnect, clearSendConfirm, flushDraftNow, getSessionForAgent, interrupt],
   );
 
   const stop = useCallback(() => {
@@ -1414,6 +1476,7 @@ export function useWebSocket(url: string | null, options?: UseWebSocketOptions):
     sendError,
     send,
     stop,
+    interrupt,
     clearMessages,
     restoreMessages,
     getSessionId: getCurrentSessionId,

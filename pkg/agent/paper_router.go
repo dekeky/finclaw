@@ -436,6 +436,7 @@ func (pr *PaperRouter) sessionView(userID string, sess paperSession, includeResu
 		"request":           paperRequestView(sess),
 	}
 	if result, ok := loadPaperLatest(userID, sess.ID); ok {
+		refreshPaperMetrics(result, sess.InitialCash)
 		if compact := compactEquityCurve(result["equity_curve"], galleryEquityPoints); len(compact) > 0 {
 			view["equity_curve"] = compact
 		}

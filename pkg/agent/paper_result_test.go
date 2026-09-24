@@ -1,8 +1,38 @@
 package agentruntime
 
 import (
+	"math"
 	"testing"
 )
+
+func TestPaperMetricsSharpeRatio(t *testing.T) {
+	curve := []paperEquityPoint{
+		{Time: "2026-01-01", Equity: 100000},
+		{Time: "2026-01-02", Equity: 101000},
+		{Time: "2026-01-03", Equity: 100500},
+		{Time: "2026-01-04", Equity: 102000},
+	}
+	metrics := paperMetricsFromCurve(curve, 100000, 0)
+	sharpe, ok := metrics["sharpe_ratio"].(float64)
+	if !ok || math.IsNaN(sharpe) || math.IsInf(sharpe, 0) {
+		t.Fatalf("sharpe = %#v", metrics["sharpe_ratio"])
+	}
+	if _, ok := metrics["annualized_return"].(float64); !ok {
+		t.Fatalf("annualized_return = %#v", metrics["annualized_return"])
+	}
+}
+
+func TestPaperMetricsSharpeRatioFlatCurve(t *testing.T) {
+	curve := []paperEquityPoint{
+		{Time: "2026-01-01", Equity: 100000},
+		{Time: "2026-01-02", Equity: 100000},
+		{Time: "2026-01-03", Equity: 100000},
+	}
+	metrics := paperMetricsFromCurve(curve, 100000, 0)
+	if _, ok := metrics["sharpe_ratio"]; ok {
+		t.Fatalf("flat curve should not set sharpe: %#v", metrics)
+	}
+}
 
 func TestSlicePaperResultFromGoLive(t *testing.T) {
 	result := map[string]any{

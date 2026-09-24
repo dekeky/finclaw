@@ -11,10 +11,13 @@ const FONT_DEFAULT = 13;
 export default function SourceDialog({
   source,
   title,
+  label = '回测源码',
   onClose,
 }: {
   source: string;
   title: string;
+  /** 标题后缀，区分回测源码与实盘模拟源码快照。 */
+  label?: string;
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -55,7 +58,7 @@ export default function SourceDialog({
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="modal-head">
-          <strong id="source-title">{title} · 回测源码</strong>
+          <strong id="source-title">{title} · {label}</strong>
           <div className="modal-head-actions">
             <button className="source-copy-btn" type="button" onClick={() => void copySource()} title="复制源码">
               {copied ? '已复制' : '复制'}

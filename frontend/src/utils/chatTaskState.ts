@@ -200,6 +200,45 @@ export function isTaskTimingActive(
   taskStartedAtMs: number | null,
 ): boolean {
   if (hasCompleteReplyInTurn(messages)) return false;
+  // 用户已手动撤销该轮：即使随后还有迟到的过程消息到达，也不再回到「工作中」
+  const lastUserIdx = findLastUserIndex(messages);
+  if (lastUserIdx >= 0 && isTurnCancelled(messages, lastUserIdx)) return false;
   if (isChatTaskActive(messages, isTyping)) return true;
   return isIncompleteChatTask(messages) && taskStartedAtMs != null;
+}
+
+/**
+ * 撤销标记落点：优先该轮「工作过程」消息，其次正文，最后回落到该轮的 user 消息
+ * （还没有任何产出时也要能标出这一轮已撤销）。
+ */
+function findCancelStampIndex(messages: ChatMessage[], afterUserIndex: number): number {
+  if (afterUserIndex < 0) return -1;
+  const processIdx = findLastProcessIndexAfterUser(messages, afterUserIndex);
+  if (processIdx >= 0) return processIdx;
+  const replyIdx = findCompleteReplyIndexAfterUser(messages, afterUserIndex);
+  if (replyIdx >= 0) return replyIdx;
+  return afterUserIndex;
+}
+
+/** 把该轮标记为用户手动中断（撤销）。 */
+export function stampTaskCancelledForTurn(
+  msgs: ChatMessage[],
+  afterUserIndex: number,
+): ChatMessage[] {
+  const targetIdx = findCancelStampIndex(msgs, afterUserIndex);
+  if (targetIdx < 0 || msgs[targetIdx].taskCancelled) return msgs;
+  const next = [...msgs];
+  next[targetIdx] = { ...next[targetIdx], taskCancelled: true };
+  return next;
+}
+
+/** 该轮是否被用户手动中断（撤销）。扫描整轮，避免标记所在消息被后续消息取代后丢失。 */
+export function isTurnCancelled(messages: ChatMessage[], afterUserIndex: number): boolean {
+  if (afterUserIndex < 0) return false;
+  if (messages[afterUserIndex]?.taskCancelled) return true;
+  const { start, end } = getTurnRange(messages, afterUserIndex);
+  for (let i = start; i < end; i++) {
+    if (messages[i].taskCancelled) return true;
+  }
+  return false;
 }

@@ -1,13 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { IconAlertTriangle, IconBuildingStore, IconChevronsRight, IconMessagePlus, IconX } from '@tabler/icons-react';
+import { BacktestMentionHints } from '@/components/BacktestMentionHints';
 import { ChatComposerToolbar } from '@/components/chrome/ChatComposerToolbar';
 import { ChatContainer } from '@/components/ChatContainer';
 import { ChatSlashHints, handleSlashInputKeyDown } from '@/components/ChatSlashHints';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { listBacktestRuns, runDisplayName } from '@/api/backtest';
 import { buildAgentWsUrl } from '@/lib/agentWsUrl';
+import { runBelongsToStrategy } from '@/lib/backtestStrategy';
+import {
+  filterMentionRuns,
+  findBacktestMention,
+  mentionableBacktests,
+  mentionKey,
+  removeBacktestMention,
+  type MentionRun,
+} from '@/lib/backtestMention';
 import { findStrategyFileTouchInTurn, turnHasUserMessage } from '@/lib/strategyFileDetect';
 import {
   buildStrategyAgentPrompt,
@@ -31,10 +42,13 @@ const STRATEGY_QUICK_PROMPTS = [
 interface StrategyChatPanelProps {
   platform: StrategyPlatform;
   strategyPath?: string | null;
+  strategyId?: string | null;
+  strategyName?: string | null;
   strategyReady: boolean;
   analysisRun?: BacktestAnalysisTarget | null;
   analysisFocus?: number;
   onClearAnalysisRun?: () => void;
+  onSelectAnalysisRun?: (target: BacktestAnalysisTarget) => void;
   onStrategyFileChanged?: (agentName: string) => void;
   onCollapse?: () => void;
   className?: string;
@@ -43,10 +57,13 @@ interface StrategyChatPanelProps {
 export function StrategyChatPanel({
   platform,
   strategyPath,
+  strategyId,
+  strategyName,
   strategyReady,
   analysisRun,
   analysisFocus = 0,
   onClearAnalysisRun,
+  onSelectAnalysisRun,
   onStrategyFileChanged,
   onCollapse,
   className,
@@ -65,12 +82,19 @@ export function StrategyChatPanel({
     isTyping,
     sendError,
     send,
+    interrupt,
     clearMessages,
     reconnect,
     taskStartedAt,
   } = useWebSocket(wsUrl, { persistAgentKey: persistKey });
 
   const [value, setValue] = useState('');
+  const [cursor, setCursor] = useState(0);
+  const [mentionRuns, setMentionRuns] = useState<MentionRun[]>([]);
+  const [mentionLoading, setMentionLoading] = useState(false);
+  const [mentionError, setMentionError] = useState(false);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [dismissedMention, setDismissedMention] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const lastPulledTouchRef = useRef<string | null>(null);
   const wasTypingRef = useRef(false);
@@ -88,6 +112,69 @@ export function StrategyChatPanel({
     inputRef.current?.focus();
   }, [analysisFocus, analysisRun]);
 
+  const mention = platform === 'finclaw' && onSelectAnalysisRun
+    ? findBacktestMention(value, cursor)
+    : null;
+  const mentionOpen = Boolean(mention && dismissedMention !== mentionKey(mention));
+  const filteredMentions = useMemo(
+    () => (mentionOpen && mention ? filterMentionRuns(mentionRuns, mention.query) : []),
+    [mentionOpen, mention, mentionRuns],
+  );
+
+  useEffect(() => {
+    setMentionIndex(0);
+  }, [mention?.start, mention?.query]);
+
+  useEffect(() => {
+    setMentionRuns([]);
+    setMentionError(false);
+  }, [strategyId, strategyName]);
+
+  useEffect(() => {
+    if (!mentionOpen || !strategyName) return;
+    let cancelled = false;
+    setMentionLoading(true);
+    setMentionError(false);
+    listBacktestRuns()
+      .then((list) => {
+        if (cancelled) return;
+        const scoped = list.filter((item) => runBelongsToStrategy(item, { id: strategyId, name: strategyName }));
+        setMentionRuns(mentionableBacktests(scoped, runDisplayName));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMentionRuns([]);
+          setMentionError(true);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setMentionLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mentionOpen, strategyId, strategyName]);
+
+  const selectMention = useCallback((run: MentionRun) => {
+    const active = findBacktestMention(value, cursor);
+    onSelectAnalysisRun?.({ id: run.id, name: run.name, status: run.status });
+    if (!active) return;
+    const next = removeBacktestMention(value, active);
+    setValue(next.value);
+    setCursor(next.cursor);
+    setDismissedMention(null);
+    requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(next.cursor, next.cursor);
+    });
+  }, [cursor, onSelectAnalysisRun, value]);
+
+  const syncCursor = (element: HTMLTextAreaElement) => {
+    setCursor(element.selectionStart ?? element.value.length);
+  };
+
   const handleSend = useCallback(
     (text: string) => {
       if (!requireAuth()) return;
@@ -98,9 +185,16 @@ export function StrategyChatPanel({
       lastPulledTouchRef.current = null;
       send(content, undefined, { displayContent: trimmed });
       setValue('');
+      setCursor(0);
     },
     [requireAuth, status, strategyReady, buildMessage, send],
   );
+
+  const handleInterrupt = useCallback(() => {
+    if (!requireAuth()) return;
+    if (status !== 'connected') return;
+    interrupt();
+  }, [requireAuth, status, interrupt]);
 
   const handleNewChat = useCallback(() => {
     if (!requireAuth()) return;
@@ -241,6 +335,7 @@ export function StrategyChatPanel({
                 dockTitle="智能生成策略"
                 dockDescription="描述量化思路，Agent 将直接修改左侧当前策略文件。"
                 taskStartedAt={taskStartedAt}
+                onInterrupt={handleInterrupt}
               />
             </ErrorBoundary>
           </div>
@@ -260,6 +355,11 @@ export function StrategyChatPanel({
             <form
               onSubmit={(e) => {
                 e.preventDefault();
+                if (mentionOpen && filteredMentions.length > 0) {
+                  const pick = filteredMentions[Math.min(mentionIndex, filteredMentions.length - 1)];
+                  if (pick) selectMention(pick);
+                  return;
+                }
                 handleSend(value);
               }}
             >
@@ -279,7 +379,18 @@ export function StrategyChatPanel({
                     </span>
                   </div>
                 ) : null}
-                <ChatSlashHints value={value} onPick={(command) => setValue(command)} />
+                {mentionOpen && mention ? (
+                  <BacktestMentionHints
+                    runs={filteredMentions}
+                    activeIndex={mentionIndex}
+                    loading={mentionLoading}
+                    error={mentionError}
+                    query={mention.query}
+                    onPick={selectMention}
+                  />
+                ) : (
+                  <ChatSlashHints value={value} onPick={(command) => setValue(command)} />
+                )}
                 <textarea
                   ref={inputRef}
                   className="min-h-9 w-full resize-none bg-transparent px-1.5 py-1.5 text-sm leading-normal text-foreground outline-none placeholder:text-muted-foreground"
@@ -288,13 +399,52 @@ export function StrategyChatPanel({
                       ? '请先保存策略…'
                       : analysisRun
                         ? '针对这次回测提问，例如：分析收益、回撤和交易'
-                        : '描述你想要的量化策略…'
+                        : platform === 'finclaw'
+                          ? '输入@可选择回测记录'
+                          : '描述你想要的量化策略…'
                   }
                   rows={2}
                   value={value}
-                  onChange={(e) => setValue(e.target.value)}
+                  onChange={(e) => {
+                    setValue(e.target.value);
+                    syncCursor(e.target);
+                  }}
+                  onClick={(e) => syncCursor(e.currentTarget)}
+                  onKeyUp={(e) => syncCursor(e.currentTarget)}
+                  onSelect={(e) => syncCursor(e.currentTarget)}
                   disabled={status !== 'connected' || !strategyReady}
                   onKeyDown={(e) => {
+                    if (e.nativeEvent.isComposing) return;
+                    if (mentionOpen && mention) {
+                      if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setDismissedMention(mentionKey(mention));
+                        return;
+                      }
+                      if (filteredMentions.length > 0 && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+                        e.preventDefault();
+                        const count = filteredMentions.length;
+                        setMentionIndex((index) => {
+                          const current = ((index % count) + count) % count;
+                          return e.key === 'ArrowDown' ? (current + 1) % count : (current - 1 + count) % count;
+                        });
+                        return;
+                      }
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        if (filteredMentions.length > 0) {
+                          const pick = filteredMentions[Math.min(mentionIndex, filteredMentions.length - 1)];
+                          if (pick) selectMention(pick);
+                        }
+                        return;
+                      }
+                      if (e.key === 'Tab' && filteredMentions.length > 0) {
+                        e.preventDefault();
+                        const pick = filteredMentions[Math.min(mentionIndex, filteredMentions.length - 1)];
+                        if (pick) selectMention(pick);
+                        return;
+                      }
+                    }
                     handleSlashInputKeyDown(e, value, {
                       onAutocomplete: (command) => setValue(command),
                       onSend: () => handleSend(value),

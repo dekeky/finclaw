@@ -1,5 +1,6 @@
-import { IconAlertTriangle, IconBuildingStore, IconFolder, IconHistory, IconMessagePlus, IconPhoto, IconTrash, IconX } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBuildingStore, IconFolder, IconHistory, IconPhoto, IconTrash, IconX } from '@tabler/icons-react';
 import { ChatComposerToolbar } from '@/components/chrome/ChatComposerToolbar';
+import { ConversationTabs } from '@/components/chrome/ConversationTabs';
 import { SidebarExpandTrigger } from '@/components/chrome/SidebarExpandTrigger';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
 import { ChatContainer } from '../components/ChatContainer';
@@ -32,10 +33,12 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   deleteConversation,
+  inferConversationTitle,
   listConversations,
   loadConversation,
   type ConversationSummary,
 } from '@/lib/chatPersistence';
+import { loadAgentTabs, saveAgentTabs, type ChatTab } from '@/lib/chatTabs';
 import { useAuth } from '@/state/auth';
 import { prefetchModels } from '@/api/models';
 import { getAgent } from '@/api/agents';
@@ -45,6 +48,15 @@ import TextareaAutosize from 'react-textarea-autosize';
 import { filesToPendingImages, type PendingImage } from '@/lib/imageAttach';
 import { cn } from '@/lib/cn';
 import { TOOLBAR_ICON_BUTTON_CLASS } from '@/lib/toolbarButton';
+
+interface TabsState {
+  /** 该组标签所属的 Agent，避免切换 Agent 时把旧标签写入新 Agent */
+  agent: string | null;
+  tabs: ChatTab[];
+  activeId: string | null;
+}
+
+const EMPTY_TABS: TabsState = { agent: null, tabs: [], activeId: null };
 
 export default function ChatPage() {
   const { user } = useAuth();
@@ -71,6 +83,7 @@ export default function ChatPage() {
     restoreMessages,
     getSessionId,
     reconnect,
+    interrupt,
     taskStartedAt,
   } = useChatSession();
 
@@ -146,6 +159,48 @@ export default function ChatPage() {
     }
   }, [requireAuth]);
 
+  // ── 对话标签页 ──
+  const [tabsState, setTabsState] = useState<TabsState>(EMPTY_TABS);
+  const { tabs, activeId: activeTabId } = tabsState;
+
+  // 切换 Agent：载入该 Agent 上次打开的标签集合（首次使用以当前会话种子化一条）
+  useEffect(() => {
+    if (!currentAgent) {
+      setTabsState(EMPTY_TABS);
+      return;
+    }
+    const seeded = loadAgentTabs(currentAgent);
+    setTabsState({ agent: currentAgent, tabs: seeded.tabs, activeId: seeded.activeId });
+  }, [currentAgent]);
+
+  // 激活标签与实际会话指针保持一致（刷新 / 首次载入时对齐）
+  useEffect(() => {
+    if (!currentAgent || tabsState.agent !== currentAgent || !activeTabId) return;
+    if (activeTabId === getSessionId()) return;
+    restoreMessages(loadConversation(activeTabId), activeTabId);
+  }, [currentAgent, tabsState.agent, activeTabId, getSessionId, restoreMessages]);
+
+  // 标签集合变化 → 落盘
+  useEffect(() => {
+    if (!tabsState.agent || tabsState.agent !== currentAgent) return;
+    if (tabsState.tabs.length === 0) return;
+    saveAgentTabs(tabsState.agent, tabsState.tabs, tabsState.activeId);
+  }, [tabsState, currentAgent]);
+
+  // 当前对话标题变化 → 同步到激活标签
+  useEffect(() => {
+    if (!activeTabId) return;
+    const title = inferConversationTitle(messages);
+    if (!title) return;
+    setTabsState((prev) => {
+      const idx = prev.tabs.findIndex((t) => t.id === activeTabId);
+      if (idx < 0 || prev.tabs[idx]!.title === title) return prev;
+      const next = [...prev.tabs];
+      next[idx] = { ...next[idx]!, title };
+      return { ...prev, tabs: next };
+    });
+  }, [messages, activeTabId]);
+
   // 历史对话列表（含当前对话）：打开面板或数据变更时刷新
   const conversationList = useMemo(() => {
     if (!currentAgent) return [];
@@ -156,19 +211,76 @@ export default function ChatPage() {
 
   const bumpHistory = useCallback(() => setHistoryRev((n) => n + 1), []);
 
-  // 新对话：当前对话持续落盘、本身就是历史记录，直接切换到新会话即可
-  const handleNewChat = useCallback(() => {
-    if (!requireAuth()) return;
+  // 新对话：作为新标签页打开，当前对话持续保留在标签栏与历史记录中
+  const handleNewTab = useCallback(() => {
+    if (!requireAuth() || !currentAgent) return;
     clearMessages({ startNewSession: true });
+    const sid = getSessionId();
+    if (!sid) return;
+    setTabsState((prev) => {
+      const base = prev.agent === currentAgent ? prev : EMPTY_TABS;
+      return {
+        agent: currentAgent,
+        tabs: [...base.tabs, { id: sid, title: '' }],
+        activeId: sid,
+      };
+    });
     bumpHistory();
-  }, [requireAuth, clearMessages, bumpHistory]);
+  }, [requireAuth, currentAgent, clearMessages, getSessionId, bumpHistory]);
+
+  const handleSelectTab = useCallback((id: string) => {
+    if (id === getSessionId()) {
+      setTabsState((prev) => ({ ...prev, activeId: id }));
+      return;
+    }
+    setTabsState((prev) => ({ ...prev, activeId: id }));
+    restoreMessages(loadConversation(id), id);
+  }, [getSessionId, restoreMessages]);
+
+  const handleCloseTab = useCallback((id: string) => {
+    if (!requireAuth() || !currentAgent) return;
+    const prev = tabsState.agent === currentAgent ? tabsState : EMPTY_TABS;
+    const idx = prev.tabs.findIndex((t) => t.id === id);
+    if (idx < 0) return;
+    const remaining = prev.tabs.filter((t) => t.id !== id);
+
+    // 关闭最后一个标签 → 打开一条全新对话
+    if (remaining.length === 0) {
+      clearMessages({ startNewSession: true });
+      const sid = getSessionId();
+      setTabsState({
+        agent: currentAgent,
+        tabs: sid ? [{ id: sid, title: '' }] : [],
+        activeId: sid,
+      });
+      bumpHistory();
+      return;
+    }
+
+    const closingActive = prev.activeId === id;
+    const nextActiveId = closingActive ? remaining[Math.min(idx, remaining.length - 1)]!.id : prev.activeId;
+    setTabsState({ agent: currentAgent, tabs: remaining, activeId: nextActiveId });
+    if (closingActive && nextActiveId) {
+      restoreMessages(loadConversation(nextActiveId), nextActiveId);
+    }
+    bumpHistory();
+  }, [requireAuth, currentAgent, tabsState, clearMessages, getSessionId, restoreMessages, bumpHistory]);
 
   const handleRestoreConversation = useCallback(
     (item: ConversationSummary) => {
-      restoreMessages(loadConversation(item.id), item.id);
+      if (!currentAgent) return;
       setHistoryOpen(false);
+      setTabsState((prev) => {
+        const base = prev.agent === currentAgent ? prev : EMPTY_TABS;
+        const exists = base.tabs.some((t) => t.id === item.id);
+        const tabs = exists ? base.tabs : [...base.tabs, { id: item.id, title: item.title }];
+        return { agent: currentAgent, tabs, activeId: item.id };
+      });
+      if (item.id !== getSessionId()) {
+        restoreMessages(loadConversation(item.id), item.id);
+      }
     },
-    [restoreMessages],
+    [currentAgent, getSessionId, restoreMessages],
   );
 
   const handleDeleteConversation = useCallback(
@@ -176,14 +288,29 @@ export default function ChatPage() {
       e.stopPropagation();
       if (!requireAuth() || !currentAgent) return;
       if (convId === getSessionId()) {
-        // 删除的是当前对话：清空聊天区并丢弃记录，切换到新会话
+        // 删除的是当前对话：清空聊天区、丢弃记录，并替换为一条全新对话标签
         clearMessages({ startNewSession: true, discard: true });
+        const sid = getSessionId();
+        setTabsState((prev) => {
+          const remaining = prev.tabs.filter((t) => t.id !== convId);
+          if (sid) remaining.push({ id: sid, title: '' });
+          return { agent: currentAgent, tabs: remaining, activeId: sid ?? remaining[0]?.id ?? null };
+        });
         bumpHistory();
         return;
       }
-      if (deleteConversation(convId)) bumpHistory();
+      if (deleteConversation(convId)) {
+        // 若该对话作为标签打开，同步关闭（不影响当前激活对话的消息）
+        setTabsState((prev) => {
+          if (!prev.tabs.some((t) => t.id === convId)) return prev;
+          const remaining = prev.tabs.filter((t) => t.id !== convId);
+          const activeId = prev.activeId === convId ? (remaining[0]?.id ?? null) : prev.activeId;
+          return { ...prev, tabs: remaining, activeId };
+        });
+        bumpHistory();
+      }
     },
-    [requireAuth, currentAgent, bumpHistory, getSessionId, clearMessages],
+    [requireAuth, currentAgent, getSessionId, clearMessages, bumpHistory],
   );
 
   const noAgents = agents.length === 0 && agentsLoadStatus === 'ready';
@@ -206,6 +333,12 @@ export default function ChatPage() {
     setPendingImages([]);
   };
 
+  const handleInterrupt = () => {
+    if (!requireAuth()) return;
+    if (status !== 'connected') return;
+    interrupt();
+  };
+
   const handlePickImages = async (e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -219,28 +352,33 @@ export default function ChatPage() {
     setPendingImages((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const busyIds = useMemo(
+    () => (activeTabId && isTyping ? new Set([activeTabId]) : undefined),
+    [activeTabId, isTyping],
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#f7f7f8] dark:bg-background">
-      {/* 主区顶栏单行 — 新对话 · 文档 · 历史 · 主题 */}
-      <div className="flex shrink-0 items-center gap-2 px-5 py-2">
+      {/* 顶栏一行 — 对话标签 · 新对话 · 文档 · 历史 · 主题 */}
+      <div className="flex shrink-0 items-center gap-2 border-b border-border/50 bg-card/40 px-3 py-1.5">
         <SidebarExpandTrigger />
-        <div className="flex min-w-0 flex-1 items-center gap-0.5">
-          {agentsLoadStatus === 'ready' && agents.length > 0 && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className={TOOLBAR_ICON_BUTTON_CLASS}
-                  aria-label="新对话"
-                  onClick={handleNewChat}
-                >
-                  <IconMessagePlus className="size-[18px]" stroke={1.75} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">新对话</TooltipContent>
-            </Tooltip>
+        {currentAgent && tabs.length > 0 ? (
+          <ConversationTabs
+            tabs={tabs}
+            activeId={activeTabId}
+            onSelect={handleSelectTab}
+            onClose={handleCloseTab}
+            onNew={handleNewTab}
+            busyIds={busyIds}
+          />
+        ) : (
+          <div className="min-w-0 flex-1" />
+        )}
+        <div className="flex shrink-0 items-center gap-1">
+          {agentsLoadStatus === 'error' && agentsLoadError && (
+            <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs text-destructive" onClick={() => void refresh()}>
+              重试
+            </Button>
           )}
           {currentAgent && (
             <Tooltip>
@@ -262,13 +400,6 @@ export default function ChatPage() {
               </TooltipTrigger>
               <TooltipContent side="bottom">文档</TooltipContent>
             </Tooltip>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {agentsLoadStatus === 'error' && agentsLoadError && (
-            <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs text-destructive" onClick={() => void refresh()}>
-              重试
-            </Button>
           )}
           {currentAgent && (
             <Tooltip>
@@ -355,9 +486,11 @@ export default function ChatPage() {
                   <ChatContainer
                     messages={messages}
                     isTyping={isTyping}
-                    onClear={handleNewChat}
+                    onClear={handleNewTab}
+                    showClear={false}
                     agentName={currentAgent}
                     taskStartedAt={taskStartedAt}
+                    onInterrupt={handleInterrupt}
                   />
                 </ErrorBoundary>
               </div>
@@ -500,7 +633,7 @@ export default function ChatPage() {
           <SheetHeader className="border-b border-border/60 px-4 py-4 text-left">
             <SheetTitle className="text-base">历史对话</SheetTitle>
             <SheetDescription className="text-xs">
-              所有对话（含当前）自动保存在这里；点击记录载入主聊天区，点击删除图标可移除该条对话。仅保存在本机浏览器。
+              所有对话（含当前）自动保存在这里；点击记录会在上方标签栏打开该对话，点击删除图标可移除。仅保存在本机浏览器。
             </SheetDescription>
           </SheetHeader>
 
@@ -523,11 +656,15 @@ export default function ChatPage() {
                       >
                         <span className="flex items-start gap-1.5">
                           <span className="line-clamp-2 min-w-0 font-medium leading-snug">{item.title}</span>
-                          {item.id === activeConversationId && (
+                          {item.id === activeConversationId ? (
                             <Badge variant="secondary" className="mt-px shrink-0 px-1.5 text-[10px]">
                               当前
                             </Badge>
-                          )}
+                          ) : tabs.some((t) => t.id === item.id) ? (
+                            <Badge variant="secondary" className="mt-px shrink-0 px-1.5 text-[10px]">
+                              已打开
+                            </Badge>
+                          ) : null}
                         </span>
                         <span className="text-[11px] text-muted-foreground">
                           {new Date(item.updatedAt).toLocaleString()} · {item.messageCount} 条消息

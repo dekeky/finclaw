@@ -5,6 +5,7 @@ import {
   IconFileText,
   IconFolderOpen,
   IconPencil,
+  IconPlayerStop,
   IconSearch,
   IconSparkles,
   IconTerminal2,
@@ -13,6 +14,7 @@ import {
   IconWorld,
   IconWriting,
 } from '@tabler/icons-react';
+import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { extractStrategyUserRequest } from '@/lib/strategyPlatforms';
 import type { ChatMessage, ProcessSegment } from '../types';
@@ -301,10 +303,13 @@ export function ActiveTaskPanel({
   seconds,
   segments,
   messageId,
+  onInterrupt,
 }: {
   seconds: number;
   segments: ProcessSegment[];
   messageId: string;
+  /** 发送 /stop。中断后的正文由后端经聊天接口返回，不在本地改写。 */
+  onInterrupt?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const userPinnedRef = useRef(false);
@@ -326,7 +331,23 @@ export function ActiveTaskPanel({
 
   return (
     <ThinkingIndicatorShell>
-      <ThinkingIndicator seconds={seconds} statusLabel={statusLabel} />
+      <div className="flex min-w-0 items-center gap-2">
+        <ThinkingIndicator seconds={seconds} statusLabel={statusLabel} />
+        {onInterrupt ? (
+          <Button
+            type="button"
+            variant="destructive"
+            size="xs"
+            className="shrink-0"
+            title="中断当前回复"
+            aria-label="中断当前回复"
+            onClick={onInterrupt}
+          >
+            <IconPlayerStop className="size-3" stroke={1.75} />
+            中断
+          </Button>
+        ) : null}
+      </div>
       {segments.length > 0 && (
         <ProcessStreamBody
           segments={segments}
@@ -352,10 +373,13 @@ export function TurnProcessPanel({
   segments,
   messageId,
   taskElapsedSeconds,
+  cancelled = false,
 }: {
   segments: ProcessSegment[];
   messageId: string;
   taskElapsedSeconds?: number;
+  /** 该轮被用户手动中断（撤销）：条目上展示「已撤销」 */
+  cancelled?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -375,7 +399,63 @@ export function TurnProcessPanel({
     setOpen((v) => !v);
   };
 
-  if (actionCount === 0) return null;
+  if (actionCount === 0 && !cancelled) return null;
+
+  const headerContent = (
+    <>
+      {actionCount > 0 && (
+        <IconChevronRight
+          className={`size-3 shrink-0 text-violet-500/70 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+          stroke={2}
+        />
+      )}
+      <span className="min-w-0 flex-1 truncate text-xs font-medium text-violet-700/90 dark:text-violet-300/90">
+        工作过程
+      </span>
+      <div className="flex shrink-0 items-center gap-1.5">
+        {actionCount > 0 && (
+          <ProcessStatIconBadge
+            tooltip={`行动轮次：${actionCount}`}
+            count={actionCount}
+            icon={<IconTimeline className={PROCESS_STAT_ICON_CLASS} stroke={1.75} aria-hidden />}
+          />
+        )}
+        {thoughtCount > 0 && (
+          <ProcessStatIconBadge
+            tooltip={`思考步数：${thoughtCount}`}
+            count={thoughtCount}
+            icon={<IconSparkles className={PROCESS_STAT_ICON_CLASS} stroke={1.75} aria-hidden />}
+          />
+        )}
+        {toolCount > 0 && (
+          <ProcessStatIconBadge
+            tooltip={`工具调用：${toolCount}`}
+            count={toolCount}
+            icon={<IconTool className={PROCESS_STAT_ICON_CLASS} stroke={1.75} aria-hidden />}
+          />
+        )}
+        {cancelled && (
+          <span className="inline-flex shrink-0 items-center rounded-md border border-muted-foreground/25 bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+            已撤销
+          </span>
+        )}
+        {taskElapsedSeconds !== undefined && (
+          <ElapsedTimeBadge seconds={taskElapsedSeconds} />
+        )}
+      </div>
+    </>
+  );
+
+  // 该轮没有任何过程内容（工作刚开始就被撤销）：只展示头部，不提供展开
+  if (actionCount === 0) {
+    return (
+      <div className={`${PROCESS_PANEL_SHELL_CLASS} overflow-hidden`}>
+        <div className="flex w-full items-center gap-2 px-3 py-2.5 text-left">
+          {headerContent}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`${PROCESS_PANEL_SHELL_CLASS} overflow-hidden`}>
@@ -384,39 +464,7 @@ export function TurnProcessPanel({
         onClick={handleToggle}
         className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-violet-500/10 ${open ? 'border-b border-violet-500/15' : ''}`}
       >
-        <IconChevronRight
-          className={`size-3 shrink-0 text-violet-500/70 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
-          stroke={2}
-        />
-        <span className="min-w-0 flex-1 truncate text-xs font-medium text-violet-700/90 dark:text-violet-300/90">
-          工作过程
-        </span>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {actionCount > 0 && (
-            <ProcessStatIconBadge
-              tooltip={`行动轮次：${actionCount}`}
-              count={actionCount}
-              icon={<IconTimeline className={PROCESS_STAT_ICON_CLASS} stroke={1.75} aria-hidden />}
-            />
-          )}
-          {thoughtCount > 0 && (
-            <ProcessStatIconBadge
-              tooltip={`思考步数：${thoughtCount}`}
-              count={thoughtCount}
-              icon={<IconSparkles className={PROCESS_STAT_ICON_CLASS} stroke={1.75} aria-hidden />}
-            />
-          )}
-          {toolCount > 0 && (
-            <ProcessStatIconBadge
-              tooltip={`工具调用：${toolCount}`}
-              count={toolCount}
-              icon={<IconTool className={PROCESS_STAT_ICON_CLASS} stroke={1.75} aria-hidden />}
-            />
-          )}
-          {taskElapsedSeconds !== undefined && (
-            <ElapsedTimeBadge seconds={taskElapsedSeconds} />
-          )}
-        </div>
+        {headerContent}
       </button>
       {open && (
         <ProcessStreamBody
