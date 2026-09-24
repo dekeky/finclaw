@@ -45,6 +45,7 @@ type paperSession struct {
 	Status          string   `json:"status"`
 	StrategyName    string   `json:"strategy_name"`
 	StrategyID      string   `json:"strategy_id,omitempty"`
+	LibraryEntryID  string   `json:"library_entry_id,omitempty"`
 	GoLive          string   `json:"go_live"`
 	EngineStart     string   `json:"engine_start"`
 	LastBarDate     string   `json:"last_bar_date,omitempty"`

@@ -97,6 +97,9 @@ type FinclawConfigServer struct {
 	ServerAddr         string                    `toml:"serverAddr"`
 	AgentHubAddr       string                    `toml:"agentHubAddr"`
 	FquantAddr         string                    `toml:"fquantAddr"`
+	FdataAddr          string                    `toml:"fdataAddr"`
+	FdataUser          string                    `toml:"fdataUser"`
+	FdataPassword      string                    `toml:"fdataPassword"`
 	SMTP               *SMTPSettings             `toml:"smtp"`
 	FinClawChannelConf *finclaw.FinChannelConfig `toml:"finClawChannel"`
 	Channels           map[string]*ChannelConfig `toml:"channels"`
@@ -158,6 +161,7 @@ func loadFinclawConfig() (finServerConf *FinclawConfigServer, err error) {
 	}
 	ensureDefaultChannels(finServerConf)
 	ensureDefaultFquant(finServerConf)
+	ensureDefaultFdata(finServerConf)
 	if ensureDefaultSMTP(finServerConf) {
 		if err := appendSMTPSectionIfMissing(); err != nil {
 			return nil, err

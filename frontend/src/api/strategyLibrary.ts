@@ -1,5 +1,7 @@
 import type { GinxResponse } from '../types/api';
 import type { StrategyPlatform } from '@/lib/strategyPlatforms';
+import type { RunDetail, EquityPoint } from './backtest';
+import type { PaperSessionDetail, PaperStatus } from './paper';
 import type { StrategyDetail } from './strategies';
 import { getToken } from './auth';
 
@@ -38,11 +40,20 @@ export interface StrategyLibrarySummary {
   install_count: number;
   created_at: string;
   updated_at: string;
+  paper_status?: PaperStatus;
+  go_live?: string;
+  return_pct?: number;
+  equity?: number;
+  initial_cash?: number;
+  last_bar_date?: string;
+  equity_curve?: EquityPoint[];
 }
 
 export interface StrategyLibraryDetail extends StrategyLibrarySummary {
   script: string;
   user_id: string;
+  paper?: PaperSessionDetail;
+  runs?: RunDetail[];
 }
 
 export interface StrategyLibraryListBody {

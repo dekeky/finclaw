@@ -11,6 +11,20 @@ func TestConfLoad(t *testing.T) {
 	t.Logf("serverAddr=%s agentHubAddr=%s", conf.ServerAddr, conf.AgentHubAddr)
 }
 
+func TestEnsureDefaultFdata(t *testing.T) {
+	empty := &FinclawConfigServer{}
+	ensureDefaultFdata(empty)
+	if empty.FdataAddr != DefaultFdataAddr {
+		t.Fatalf("empty addr = %q, want %q", empty.FdataAddr, DefaultFdataAddr)
+	}
+
+	custom := &FinclawConfigServer{FdataAddr: "http://127.0.0.1:8000"}
+	ensureDefaultFdata(custom)
+	if custom.FdataAddr != "http://127.0.0.1:8000" {
+		t.Fatalf("custom addr overwritten: %q", custom.FdataAddr)
+	}
+}
+
 func TestEnsureDefaultFquant(t *testing.T) {
 	empty := &FinclawConfigServer{}
 	ensureDefaultFquant(empty)

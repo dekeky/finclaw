@@ -14,35 +14,38 @@ func generateLibraryEntryID() string {
 
 // StrategyLibrarySummary is the list view of a shared strategy.
 type StrategyLibrarySummary struct {
-	ID           string    `json:"id"`
-	AuthorName   string    `json:"author_name"`
-	Title        string    `json:"title"`
-	Summary      string    `json:"summary"`
-	Platform     string    `json:"platform"`
-	SourceName   string    `json:"source_name,omitempty"`
-	InstallCount int       `json:"install_count"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID             string    `json:"id"`
+	AuthorName     string    `json:"author_name"`
+	Title          string    `json:"title"`
+	Summary        string    `json:"summary"`
+	Platform       string    `json:"platform"`
+	SourceName     string    `json:"source_name,omitempty"`
+	InstallCount   int       `json:"install_count"`
+	PaperSessionID string    `json:"-"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // StrategyLibraryDetail includes the full script.
 type StrategyLibraryDetail struct {
 	StrategyLibrarySummary
-	Script string `json:"script"`
-	UserID string `json:"user_id"`
+	Script   string `json:"script"`
+	UserID   string `json:"user_id"`
+	RunsJSON string `json:"-"`
 }
 
 func entryToSummary(e StrategyLibraryEntry) StrategyLibrarySummary {
 	return StrategyLibrarySummary{
-		ID:           e.ID,
-		AuthorName:   e.AuthorName,
-		Title:        e.Title,
-		Summary:      e.Summary,
-		Platform:     e.Platform,
-		SourceName:   e.SourceName,
-		InstallCount: e.InstallCount,
-		CreatedAt:    e.CreatedAt,
-		UpdatedAt:    e.UpdatedAt,
+		ID:             e.ID,
+		AuthorName:     e.AuthorName,
+		Title:          e.Title,
+		Summary:        e.Summary,
+		Platform:       e.Platform,
+		SourceName:     e.SourceName,
+		InstallCount:   e.InstallCount,
+		PaperSessionID: e.PaperSessionID,
+		CreatedAt:      e.CreatedAt,
+		UpdatedAt:      e.UpdatedAt,
 	}
 }
 
@@ -51,6 +54,7 @@ func entryToDetail(e StrategyLibraryEntry) StrategyLibraryDetail {
 		StrategyLibrarySummary: entryToSummary(e),
 		Script:                 e.Script,
 		UserID:                 e.UserID,
+		RunsJSON:               e.RunsJSON,
 	}
 }
 
@@ -123,6 +127,29 @@ func (s *Store) CreateStrategyLibraryEntry(p CreateStrategyLibraryEntryParams) (
 	}
 	detail := entryToDetail(entry)
 	return &detail, nil
+}
+
+// UpdateStrategyLibraryLive stores the showcase paper session and backtest snapshots.
+func (s *Store) UpdateStrategyLibraryLive(id, paperSessionID, runsJSON string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("strategy library entry not found")
+	}
+	updates := map[string]any{"updated_at": time.Now().UTC()}
+	if paperSessionID != "" {
+		updates["paper_session_id"] = paperSessionID
+	}
+	if runsJSON != "" {
+		updates["runs_json"] = runsJSON
+	}
+	result := s.db.Model(&StrategyLibraryEntry{}).Where("id = ?", id).Updates(updates)
+	if result.Error != nil {
+		return fmt.Errorf("update strategy library live: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("strategy library entry not found")
+	}
+	return nil
 }
 
 // IncrementStrategyLibraryInstallCount bumps install count after a successful install.

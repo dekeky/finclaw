@@ -95,6 +95,8 @@ export function paperPollFingerprint(session: PaperSessionDetail): string {
     session.equity,
     session.last_error ?? '',
     session.result?.orders?.length ?? 0,
+    session.result?.rebalances?.length ?? 0,
+    session.result?.holdings?.length ?? 0,
     session.result?.equity_curve?.length ?? 0,
     session.result?.prices?.length ?? 0,
   ].join('|');

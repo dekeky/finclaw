@@ -120,11 +120,22 @@ export function strategyBacktestsDir(strategyPath?: string | null): string | und
   return replaced;
 }
 
+/** A finished backtest the user pinned onto the strategy chat for analysis. */
+export type BacktestAnalysisTarget = {
+  id: string;
+  name: string;
+  status: string;
+};
+
+export function canAnalyzeBacktest(status: string): boolean {
+  return status === 'succeeded' || status === 'failed' || status === 'cancelled' || status === 'canceled';
+}
+
 /** Build the user message sent to Agent with platform context and strategy file path. */
 export function buildStrategyAgentPrompt(
   platform: StrategyPlatform,
   userRequest: string,
-  options?: { strategyPath?: string },
+  options?: { strategyPath?: string; analysisRun?: BacktestAnalysisTarget | null },
 ): string {
   const trimmed = userRequest.trim();
   if (!trimmed) return trimmed;
@@ -135,15 +146,27 @@ export function buildStrategyAgentPrompt(
     config.promptHint,
   ];
 
+  const analysisRun = options?.analysisRun?.id ? options.analysisRun : null;
   const strategyPath = options?.strategyPath?.trim();
   if (strategyPath) {
     lines.push(
       '',
       `【策略文件】${strategyPath}`,
-      '请直接读取并修改上述策略文件，将改动写入文件；不要只在对话中贴出完整代码。',
+      analysisRun
+        ? '用户正在定向分析下方指定的回测。先阅读该回测的结果文件再回答；不要改策略文件，除非用户明确要求修改。'
+        : '请直接读取并修改上述策略文件，将改动写入文件；不要只在对话中贴出完整代码。',
     );
     const resultsDir = platform === 'finclaw' ? strategyBacktestsDir(strategyPath) : undefined;
-    if (resultsDir) {
+    if (resultsDir && analysisRun) {
+      lines.push(
+        '',
+        `【定向回测】${analysisRun.name}`,
+        `回测 ID：${analysisRun.id}`,
+        `状态：${analysisRun.status}`,
+        `【回测结果目录】${resultsDir}`,
+        `请只分析这一次回测。它的子目录在上述目录下，文件夹名通常就是回测名称「${analysisRun.name}」（重名时带 -2 等后缀）。先打开候选目录的 result.json，确认其中 id 等于 ${analysisRun.id}，再 read_file 阅读同目录的 summary.md；需要成交、持仓或净值细节再读 blotter.json / result.json。不要改用其他回测，不要凭记忆编造指标。`,
+      );
+    } else if (resultsDir) {
       lines.push(
         '',
         `【回测结果目录】${resultsDir}`,

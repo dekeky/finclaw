@@ -1,6 +1,7 @@
 package agentruntime
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net"
@@ -13,19 +14,33 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type barsFetcher interface {
+	GetBars(ctx context.Context, codes, indexes []string, startTime, endTime string) (*fquant.BarsResponse, error)
+}
+
 // BacktestRouter proxies native FinClaw strategy runs to the fquant service.
 type BacktestRouter struct {
 	r              *gin.Engine
 	authMiddleware gin.HandlerFunc
 	client         *fquant.Client
+	bars           barsFetcher
 }
 
 func NewBacktestRouter(r *gin.Engine, authMiddleware gin.HandlerFunc, fquantAddr string) *BacktestRouter {
+	client := fquant.New(fquantAddr)
 	return &BacktestRouter{
 		r:              r,
 		authMiddleware: authMiddleware,
-		client:         fquant.New(fquantAddr),
+		client:         client,
+		bars:           client,
 	}
+}
+
+func (br *BacktestRouter) WithBars(bars barsFetcher) *BacktestRouter {
+	if br != nil && bars != nil {
+		br.bars = bars
+	}
+	return br
 }
 
 func (br *BacktestRouter) ConfigRouter() {
@@ -430,7 +445,7 @@ func (br *BacktestRouter) marketBars(c *gin.Context) {
 		ginx.NewRender(c, http.StatusBadRequest).Err(errors.New("codes 不能为空"))
 		return
 	}
-	out, err := br.client.GetBars(c.Request.Context(), codes, indexes, c.Query("start_time"), c.Query("end_time"))
+	out, err := br.bars.GetBars(c.Request.Context(), codes, indexes, c.Query("start_time"), c.Query("end_time"))
 	if err != nil {
 		writeFquantError(c, err)
 		return

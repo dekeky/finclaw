@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { getMarketBars, listMarketSymbols, runDisplayName, type PricePoint, type RunListItem } from '@/api/backtest';
+import { getMarketBars, listMarketSymbols, runDisplayName, type PricePoint, type RunDetail, type RunListItem } from '@/api/backtest';
 import type { PaperSessionDetail } from '@/api/paper';
 import '@/components/backtest/fquant-ui.css';
 import EquityReturnChart from '@/components/backtest/EquityReturnChart';
 import { formatDateMinute, STATUS_LABEL } from '@/components/backtest/format';
 import { RebalancePane, type RebalanceEvent } from '@/components/backtest/RebalanceTable';
+import { RunReport } from '@/components/backtest/RunReport';
 import { cumulativePct, toEquity } from '@/components/backtest/series';
 import SymbolInspectDialog from '@/components/backtest/SymbolInspectDialog';
+import { StrategyCodeEditor } from '@/components/StrategyCodeEditor';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/cn';
 import {
@@ -30,24 +32,26 @@ import {
   paperSignedClass,
 } from '@/lib/paperSession';
 
-type PlazaTab = 'curve' | 'trades' | 'runs';
-
-const TABS: { id: PlazaTab; label: string }[] = [
-  { id: 'curve', label: '收益' },
-  { id: 'trades', label: '成交' },
-  { id: 'runs', label: '回测' },
-];
-
 export function PaperSessionView({
   session,
   runs,
   onOpenRun,
+  selectedRun,
+  script,
+  emptyRunsText,
+  emptyRunsHint,
+  canOpenBacktest,
 }: {
   session: PaperSessionDetail;
   runs: RunListItem[];
   onOpenRun: (runId?: string) => void;
+  selectedRun?: RunDetail | null;
+  script?: string;
+  emptyRunsText?: string;
+  emptyRunsHint?: string;
+  canOpenBacktest?: boolean;
 }) {
-  const [tab, setTab] = useState<PlazaTab>('curve');
+  const openBacktest = canOpenBacktest ?? Boolean(session.strategy_name && !session.strategy_missing);
   const [names, setNames] = useState<Record<string, string>>({});
   const [quotes, setQuotes] = useState<Record<string, PaperQuote>>({});
   const [inspectSymbol, setInspectSymbol] = useState<string | null>(null);
@@ -65,7 +69,6 @@ export function PaperSessionView({
     const returns = cumulativePct(equity, session.initial_cash);
     return equity.map((point) => ({ time: point.time, strategy: returns.get(point.time) }));
   }, [equity, session.initial_cash]);
-  const sparkline = useMemo(() => equity.map((point) => point.value), [equity]);
   const pnl = Number.isFinite(session.equity) ? session.equity - session.initial_cash : null;
   const kline = paperKlineWindow(session.last_bar_date);
   const catching = session.status === 'catching_up';
@@ -75,6 +78,8 @@ export function PaperSessionView({
     () => (session.result?.prices ?? []).filter((point) => point.symbol === inspectSymbol),
     [session.result?.prices, inspectSymbol],
   );
+  const showRuns = Boolean(selectedRun) || runs.length > 0 || Boolean(emptyRunsText);
+  const showTrades = rebalances.length > 0 || orders.length > 0;
 
   useEffect(() => {
     const fromOrders = orders.map((row) => String(row.symbol ?? '').trim()).filter(Boolean);
@@ -132,59 +137,49 @@ export function PaperSessionView({
           {session.last_error}
         </div>
       ) : null}
-      {catching ? (
-        <div className="border-b border-border/50 px-4 py-1.5 text-xs text-muted-foreground">正在追赶最新日线…</div>
-      ) : null}
       {session.strategy_missing ? (
         <div className="border-b border-destructive/30 px-4 py-1.5 text-xs text-destructive">来源策略已删除</div>
       ) : null}
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="mx-auto w-full max-w-2xl px-4 py-4 pb-10">
-          <HeroReturn session={session} returnPct={returnPct} pnl={pnl} sparkline={sparkline} />
-
-          <PickPlaza
-            pickSet={pickSet}
-            names={names}
-            quotes={quotes}
-            catching={catching}
-            onSelect={openSymbol}
-          />
-
-          <div className="mt-5">
-            <div className="mb-3 flex rounded-lg bg-muted/60 p-0.5">
-              {TABS.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={cn(
-                    'h-8 flex-1 rounded-md text-sm font-medium transition-colors',
-                    tab === item.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-                  )}
-                  onClick={() => setTab(item.id)}
-                >
-                  {item.label}
-                  {item.id === 'runs' && runs.length ? (
-                    <span className="ml-1 text-[11px] text-muted-foreground">{runs.length}</span>
-                  ) : null}
-                </button>
-              ))}
-            </div>
-
-            {tab === 'curve' ? (
-              chart.length ? (
-                <div className="fquant-ui overflow-hidden rounded-xl border border-border/70 bg-card">
-                  <div className="chart chart-return !h-[240px]">
-                    <EquityReturnChart data={chart} overlays={[]} />
-                  </div>
+        <div className="mx-auto w-full max-w-6xl px-4 py-6 pb-16 sm:px-6">
+          <section>
+            <div className="flex flex-wrap items-end gap-x-8 gap-y-3">
+              <div>
+                <div className="text-xs text-muted-foreground">累计收益</div>
+                <div className={cn('mt-1 text-[40px] leading-none font-semibold tabular-nums tracking-tight', paperSignedClass(returnPct))}>
+                  {formatPaperReturn(returnPct)}
                 </div>
-              ) : (
-                <EmptyNote text={catching ? '净值正在计算' : '还没有收益曲线'} />
-              )
-            ) : null}
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">总资产</div>
+                <div className="mt-1 text-lg font-medium tabular-nums">{formatPaperMoney(session.equity)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">盈亏</div>
+                <div className={cn('mt-1 text-lg font-medium tabular-nums', paperSignedClass(pnl))}>{formatPaperSignedMoney(pnl)}</div>
+              </div>
+              <div className="ml-auto pb-1 text-xs tabular-nums text-muted-foreground">
+                {session.last_bar_date ? `同步至 ${session.last_bar_date}` : catching ? '同步中' : '尚未同步'}
+              </div>
+            </div>
+            {chart.length ? (
+              <div className="fquant-ui mt-4 overflow-hidden rounded-xl border border-border/70 bg-card">
+                <div className="chart chart-return !h-[240px] sm:!h-[280px]">
+                  <EquityReturnChart data={chart} overlays={[]} />
+                </div>
+              </div>
+            ) : (
+              <p className="mt-6 text-sm text-muted-foreground">{catching ? '净值正在计算' : '还没有收益曲线'}</p>
+            )}
+          </section>
 
-            {tab === 'trades' ? (
-              rebalances.length || orders.length ? (
+          <PickPlaza pickSet={pickSet} names={names} quotes={quotes} catching={catching} onSelect={openSymbol} />
+
+          {showTrades ? (
+            <section className="mt-10">
+              <h2 className="mb-3 text-sm font-medium text-muted-foreground">成交</h2>
+              {rebalances.length || orders.length ? (
                 <div className="fquant-ui overflow-hidden rounded-xl border border-border/70 bg-card">
                   <RebalancePane
                     rows={rebalances}
@@ -194,18 +189,47 @@ export function PaperSessionView({
                   />
                 </div>
               ) : (
-                <EmptyNote text={catching ? '成交记录同步中' : '还没有成交记录'} />
-              )
-            ) : null}
+                <p className="text-sm text-muted-foreground">{catching ? '成交记录同步中' : '还没有成交'}</p>
+              )}
+            </section>
+          ) : null}
 
-            {tab === 'runs' ? (
-              <RunsList
-                runs={runs}
-                canOpen={Boolean(session.strategy_name) && !session.strategy_missing}
-                onOpen={onOpenRun}
-              />
-            ) : null}
-          </div>
+          {showRuns ? (
+            <section className="mt-10">
+              <h2 className="mb-3 text-sm font-medium text-muted-foreground">回测</h2>
+              {selectedRun ? (
+                <div className="overflow-hidden rounded-xl border border-border/70 bg-card">
+                  <button
+                    type="button"
+                    className="w-full border-b border-border/60 px-5 py-2.5 text-left text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                    onClick={() => onOpenRun()}
+                  >
+                    返回列表
+                  </button>
+                  <div className="fquant-ui min-h-[420px]">
+                    <RunReport detail={selectedRun} readOnly />
+                  </div>
+                </div>
+              ) : (
+                <RunsList
+                  runs={runs}
+                  canOpen={openBacktest}
+                  onOpen={onOpenRun}
+                  emptyText={emptyRunsText}
+                  emptyHint={emptyRunsHint}
+                />
+              )}
+            </section>
+          ) : null}
+
+          {script != null ? (
+            <section className="mt-10">
+              <h2 className="mb-3 text-sm font-medium text-muted-foreground">代码</h2>
+              <div className="overflow-hidden rounded-xl border border-border/70">
+                <StrategyCodeEditor value={script} readOnly className="h-[480px]" />
+              </div>
+            </section>
+          ) : null}
         </div>
       </ScrollArea>
 
@@ -230,48 +254,6 @@ export function PaperSessionView({
   );
 }
 
-function HeroReturn({
-  session,
-  returnPct,
-  pnl,
-  sparkline,
-}: {
-  session: PaperSessionDetail;
-  returnPct: number;
-  pnl: number | null;
-  sparkline: number[];
-}) {
-  return (
-    <section className="rounded-2xl border border-border/70 bg-card px-5 py-4">
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <div className="text-xs text-muted-foreground">累计收益</div>
-          <div className={cn('mt-1 text-[40px] leading-none font-semibold tabular-nums tracking-tight', paperSignedClass(returnPct))}>
-            {formatPaperReturn(returnPct)}
-          </div>
-        </div>
-        <PaperSparkline values={sparkline} className="mb-1 h-12 w-[132px] shrink-0" />
-      </div>
-      <div className="mt-4 grid grid-cols-3 gap-3 border-t border-border/60 pt-3 text-xs">
-        <HeroStat label="权益" value={formatPaperMoney(session.equity)} />
-        <HeroStat label="盈亏" value={formatPaperSignedMoney(pnl)} tone={pnl} />
-        <HeroStat label="同步" value={session.last_bar_date || '尚未同步'} />
-      </div>
-    </section>
-  );
-}
-
-function HeroStat({ label, value, tone }: { label: string; value: string; tone?: number | null }) {
-  return (
-    <div>
-      <div className="text-muted-foreground">{label}</div>
-      <div className={cn('mt-0.5 text-sm font-medium tabular-nums', tone != null ? paperSignedClass(tone) : 'text-foreground')}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
 function PickPlaza({
   pickSet,
   names,
@@ -286,62 +268,36 @@ function PickPlaza({
   onSelect: (symbol: string, focusDate?: string) => void;
 }) {
   return (
-    <section className="mt-4 overflow-hidden rounded-2xl border border-border/70 bg-card">
-      <div className="flex items-end justify-between gap-3 px-4 pt-3.5 pb-2">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-[15px] font-semibold">最新选股</h2>
-            {pickSet?.badge ? (
-              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">{pickSet.badge}</span>
-            ) : null}
-          </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {pickSet?.hint || (catching ? '同步完成后会显示下一交易日待买入标的' : '用当前交易日信号找待买入标的')}
-          </p>
-        </div>
-        {pickSet?.picks.length ? (
-          <span className="text-xs text-muted-foreground">{pickSet.picks.length} 只</span>
-        ) : null}
+    <section className="mt-10">
+      <div className="mb-3 flex items-baseline gap-2">
+        <h2 className="text-sm font-medium text-muted-foreground">选股</h2>
+        {pickSet?.badge ? <span className="text-xs text-muted-foreground/80">{pickSet.badge}</span> : null}
       </div>
       {pickSet?.picks.length ? (
-        <>
-          <div className="grid grid-cols-[minmax(0,1fr)_72px_56px] gap-2 px-4 pb-1.5 text-[11px] text-muted-foreground">
-            <span>名称</span>
-            <span className="text-right">现价/涨跌</span>
-            <span className="text-right">操作</span>
-          </div>
-          <ul className="divide-y divide-border/60">
-            {pickSet.picks.map((pick, index) => (
-              <PickRow
-                key={pick.symbol}
-                rank={index + 1}
-                pick={pick}
-                name={names[pick.symbol]}
-                quote={quotes[pick.symbol]}
-                onSelect={() => onSelect(pick.symbol, pickSet.signalDay)}
-              />
-            ))}
-          </ul>
-        </>
+        <ul className="divide-y divide-border/60 rounded-xl border border-border/70 bg-card">
+          {pickSet.picks.map((pick) => (
+            <PickRow
+              key={pick.symbol}
+              pick={pick}
+              name={names[pick.symbol]}
+              quote={quotes[pick.symbol]}
+              onSelect={() => onSelect(pick.symbol, pickSet.signalDay)}
+            />
+          ))}
+        </ul>
       ) : (
-        <EmptyNote
-          className="border-0 py-10"
-          text={catching ? '正在用当前交易日数据选股' : '暂无待买入标的'}
-          hint="首次启动只看今天的信号，列出下一交易日开盘应买入的股票。"
-        />
+        <p className="text-sm text-muted-foreground">{catching ? '正在选股' : '暂无选股'}</p>
       )}
     </section>
   );
 }
 
 function PickRow({
-  rank,
   pick,
   name,
   quote,
   onSelect,
 }: {
-  rank: number;
   pick: PaperPick;
   name?: string;
   quote?: PaperQuote;
@@ -356,33 +312,30 @@ function PickRow({
       : pick.side === 'hold'
         ? 'text-muted-foreground'
         : 'text-[#e11d2e] dark:text-[#ff6b6b]';
+  const detail = [pick.reason, pick.weight != null ? formatPaperWeight(pick.weight) : '']
+    .filter(Boolean)
+    .join(' · ');
   return (
     <li>
       <button
         type="button"
-        className="grid w-full grid-cols-[minmax(0,1fr)_72px_56px] items-center gap-2 px-4 py-3 text-left hover:bg-muted/40"
+        className="grid w-full grid-cols-[minmax(0,1fr)_auto_4.5rem] items-center gap-4 px-4 py-3 text-left hover:bg-muted/40 sm:px-5"
         onClick={onSelect}
       >
-        <div className="flex min-w-0 items-start gap-2.5">
-          <span className="mt-0.5 w-4 shrink-0 text-center text-xs tabular-nums text-muted-foreground">{rank}</span>
-          <div className="min-w-0">
-            <div className="flex items-baseline gap-1.5">
-              <span className="truncate text-[15px] font-semibold leading-tight">{name || pick.symbol}</span>
-              {name ? <span className="shrink-0 text-[11px] text-muted-foreground">{pick.symbol}</span> : null}
-            </div>
-            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-              {pick.reason || formatPaperWeight(pick.weight)}
-              {pick.reason && pick.weight != null ? ` · ${formatPaperWeight(pick.weight)}` : ''}
-            </p>
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <span className="truncate font-medium leading-tight">{name || pick.symbol}</span>
+            {name ? <span className="shrink-0 text-xs text-muted-foreground">{pick.symbol}</span> : null}
           </div>
+          {detail ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{detail}</p> : null}
         </div>
         <div className="text-right tabular-nums">
           <div className="text-sm leading-tight">{formatPaperPrice(close)}</div>
-          <div className={cn('text-[11px] leading-tight', paperSignedClass(change ?? null))}>
+          <div className={cn('text-xs leading-tight', paperSignedClass(change ?? null))}>
             {change == null ? '—' : formatPaperReturn(change)}
           </div>
         </div>
-        <div className={cn('text-right text-xs font-semibold', actionClass)}>{action}</div>
+        <div className={cn('text-right text-sm font-medium', actionClass)}>{action}</div>
       </button>
     </li>
   );
@@ -392,74 +345,56 @@ function RunsList({
   runs,
   canOpen,
   onOpen,
+  emptyText,
+  emptyHint,
 }: {
   runs: RunListItem[];
   canOpen: boolean;
   onOpen: (runId?: string) => void;
+  emptyText?: string;
+  emptyHint?: string;
 }) {
   if (!runs.length) {
-    return <EmptyNote text="当前策略还没有回测" hint="去量化页跑一次回测，记录会显示在这里。" />;
+    return (
+      <p className="text-sm text-muted-foreground">
+        {emptyText || '还没有回测'}
+        {emptyHint ? <span className="mt-1 block text-xs">{emptyHint}</span> : null}
+      </p>
+    );
   }
   return (
     <div className="overflow-hidden rounded-xl border border-border/70 bg-card">
       <ul className="divide-y divide-border/60">
-        {runs.slice(0, 12).map((run) => (
-          <li key={run.id}>
-            <button
-              type="button"
-              className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-muted/40"
-              onClick={() => onOpen(run.id)}
-            >
-              <span className="min-w-0 truncate text-sm">{runDisplayName(run) || formatDateMinute(run.started_at || run.created_at)}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">
-                {formatDateMinute(run.started_at || run.created_at)}
-                <span className="ml-2">{STATUS_LABEL[run.status] ?? run.status}</span>
-              </span>
-            </button>
-          </li>
-        ))}
+        {runs.map((run) => {
+          const when = formatDateMinute(run.started_at || run.created_at);
+          const label = runDisplayName(run);
+          return (
+            <li key={run.id}>
+              <button
+                type="button"
+                className="flex w-full items-center justify-between gap-3 px-5 py-3 text-left hover:bg-muted/40"
+                onClick={() => onOpen(run.id)}
+              >
+                <span className="min-w-0 truncate text-sm">{label || when}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {STATUS_LABEL[run.status] ?? run.status}
+                  {label ? ` · ${when}` : ''}
+                </span>
+              </button>
+            </li>
+          );
+        })}
       </ul>
       {canOpen ? (
         <button
           type="button"
-          className="w-full border-t border-border/60 py-2 text-center text-xs text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+          className="w-full border-t border-border/60 py-2.5 text-center text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground"
           onClick={() => onOpen()}
         >
           打开回测
         </button>
       ) : null}
     </div>
-  );
-}
-
-function EmptyNote({ text, hint, className }: { text: string; hint?: string; className?: string }) {
-  return (
-    <div className={cn('rounded-xl border border-dashed border-border/70 px-4 py-8 text-center', className)}>
-      <p className="text-sm text-foreground/80">{text}</p>
-      {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
-    </div>
-  );
-}
-
-function PaperSparkline({ values, className }: { values: number[]; className?: string }) {
-  if (values.length < 2) return <div className={className} />;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = max - min || 1;
-  const width = 132;
-  const height = 48;
-  const path = values
-    .map((value, index) => {
-      const x = (index / (values.length - 1)) * width;
-      const y = height - ((value - min) / span) * (height - 4) - 2;
-      return `${index === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(' ');
-  const up = values[values.length - 1] >= values[0];
-  return (
-    <svg viewBox={`0 0 ${width} ${height}`} className={className} aria-hidden>
-      <path d={path} fill="none" stroke={up ? '#e11d2e' : '#00a870'} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
-    </svg>
   );
 }
 

@@ -15,14 +15,24 @@ type PaperRouter struct {
 	r              *gin.Engine
 	authMiddleware gin.HandlerFunc
 	client         *fquant.Client
+	bars           barsFetcher
 }
 
 func NewPaperRouter(r *gin.Engine, authMiddleware gin.HandlerFunc, fquantAddr string) *PaperRouter {
+	client := fquant.New(fquantAddr)
 	return &PaperRouter{
 		r:              r,
 		authMiddleware: authMiddleware,
-		client:         fquant.New(fquantAddr),
+		client:         client,
+		bars:           client,
 	}
+}
+
+func (pr *PaperRouter) WithBars(bars barsFetcher) *PaperRouter {
+	if pr != nil && bars != nil {
+		pr.bars = bars
+	}
+	return pr
 }
 
 func (pr *PaperRouter) ConfigRouter() {
@@ -403,7 +413,7 @@ func (pr *PaperRouter) sessionView(userID string, sess paperSession, includeResu
 		"status":            sess.Status,
 		"strategy_name":     sess.StrategyName,
 		"strategy_id":       sess.StrategyID,
-		"strategy_missing":  !strategyStillExists(userID, sess.StrategyID, sess.StrategyName),
+		"strategy_missing":  strings.TrimSpace(sess.LibraryEntryID) == "" && !strategyStillExists(userID, sess.StrategyID, sess.StrategyName),
 		"go_live":           sess.GoLive,
 		"engine_start":      sess.EngineStart,
 		"last_bar_date":     sess.LastBarDate,

@@ -145,6 +145,77 @@ test('ignores warmup rebalances before go-live', () => {
   assert.equal(set?.picks[0].reason, 'live');
 });
 
+test('first live day uses same-day holdings when blotter has no targets', () => {
+  const set = collectPaperPicks(
+    {
+      metrics: {},
+      equity_curve: [{ time: '2026-09-16', equity: 101000 }],
+      trades: [{ time: '2026-09-16', symbol: '000001' }],
+      orders: [],
+      holdings: [
+        { time: '2026-09-16', symbol: '000001', quantity: 800, market_value: 96000, equity: 101000, close: 12 },
+      ],
+    },
+    '2026-09-16',
+    '2026-09-16',
+  );
+  assert.equal(set?.picks.length, 1);
+  assert.equal(set?.picks[0].symbol, '000001');
+  assert.equal(set?.picks[0].pending, true);
+  assert.equal(set?.picks[0].timing, 'next_open');
+  assert.equal(set?.badge, '下一交易日开盘');
+});
+
+test('first live day uses same-day orders when rebalance has no targets', () => {
+  const set = collectPaperPicks(
+    {
+      metrics: {},
+      equity_curve: [{ time: '2026-09-16', equity: 101000 }],
+      trades: [],
+      orders: [
+        {
+          symbol: '600000',
+          created_at: '2026-09-16',
+          status: 'submitted',
+          side: 'buy',
+          quantity: 100,
+        },
+      ],
+      rebalances: [{ time: '2026-09-16', method: 'order_target_percent', status: 'submitted', reason: '短均线上穿' }],
+    },
+    '2026-09-16',
+    '2026-09-16',
+  );
+  assert.equal(set?.picks.length, 1);
+  assert.equal(set?.picks[0].symbol, '600000');
+  assert.equal(set?.picks[0].pending, true);
+  assert.equal(set?.picks[0].reason, '短均线上穿');
+});
+
+test('reads symbols from plan legs when targets are missing', () => {
+  const set = collectPaperPicks(
+    {
+      metrics: {},
+      equity_curve: [],
+      trades: [],
+      orders: [],
+      rebalances: [
+        {
+          time: '2026-09-16',
+          method: 'rebalance_to_topn',
+          reason: '轮动',
+          plan: { increase_legs: [{ symbol: '000063', target_percent: 0.4 }] },
+        },
+      ],
+    },
+    '2026-09-16',
+    '2026-09-10',
+  );
+  assert.equal(set?.picks.length, 1);
+  assert.equal(set?.picks[0].symbol, '000063');
+  assert.equal(set?.picks[0].reason, '轮动');
+});
+
 test('first live day ignores warmup rebalances and holdings', () => {
   const set = collectPaperPicks(
     {

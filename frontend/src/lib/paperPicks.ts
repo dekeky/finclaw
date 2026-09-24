@@ -28,9 +28,17 @@ type OrderLike = Record<string, unknown>;
 
 type RebalanceLike = {
   time?: string;
+  created_at?: string;
+  date?: string;
   reason?: string;
   targets?: Record<string, unknown> | null;
   selected?: string[] | null;
+  plan?: Record<string, unknown> | null;
+};
+
+type PositionLike = {
+  symbol?: string;
+  quantity?: number | null;
 };
 
 function dayKey(value?: string | number | null): string {
@@ -42,11 +50,34 @@ function dayKey(value?: string | number | null): string {
 }
 
 function eventDay(row: RebalanceLike): string {
-  return dayKey(row.time);
+  return dayKey(row.time) || dayKey(row.created_at) || dayKey(row.date);
 }
 
 function isMetaKey(key: string): boolean {
   return TARGET_META_KEYS.has(key);
+}
+
+function addSymbol(out: [string, number | null][], symbol: string, weight: number | null) {
+  const code = String(symbol ?? '').trim();
+  if (!code || isMetaKey(code)) return;
+  out.push([code, weight]);
+}
+
+function planEntries(row: RebalanceLike): [string, number | null][] {
+  const plan = row.plan;
+  if (!plan) return [];
+  const out: [string, number | null][] = [];
+  for (const key of ['increase_legs', 'reduce_legs', 'skipped_legs']) {
+    const legs = plan[key];
+    if (!Array.isArray(legs)) continue;
+    for (const leg of legs) {
+      if (!leg || typeof leg !== 'object') continue;
+      const item = leg as { symbol?: unknown; target_percent?: unknown; weight?: unknown };
+      const raw = Number(item.target_percent ?? item.weight);
+      addSymbol(out, String(item.symbol ?? ''), Number.isFinite(raw) ? raw : null);
+    }
+  }
+  return out;
 }
 
 function targetEntries(row: RebalanceLike): [string, number | null][] {
@@ -59,12 +90,9 @@ function targetEntries(row: RebalanceLike): [string, number | null][] {
     }
   }
   if (out.length) return out;
-  for (const symbol of row.selected ?? []) {
-    const code = String(symbol ?? '').trim();
-    if (!code || isMetaKey(code)) continue;
-    out.push([code, null]);
-  }
-  return out;
+  for (const symbol of row.selected ?? []) addSymbol(out, symbol, null);
+  if (out.length) return out;
+  return planEntries(row);
 }
 
 function orderDay(order: OrderLike, key: string): string {
@@ -125,6 +153,11 @@ function timingFor(order: OrderLike | undefined, signalDay: string, lastBar: str
   return { timing: 'close', pending: false, fillPrice };
 }
 
+function heldRow(row: { quantity?: number | null }): boolean {
+  const qty = Number(row.quantity);
+  return Number.isFinite(qty) && Math.abs(qty) > 1e-12;
+}
+
 function latestHoldings(holdings: PositionSnapshot[], lastBar: string): PositionSnapshot[] {
   if (!holdings.length) return [];
   let day = '';
@@ -134,12 +167,15 @@ function latestHoldings(holdings: PositionSnapshot[], lastBar: string): Position
     if (lastBar && time > lastBar) continue;
     if (time > day) day = time;
   }
-  if (!day) return [];
-  return holdings.filter((row) => {
-    if (dayKey(row.time) !== day) return false;
-    const qty = Number(row.quantity);
-    return Number.isFinite(qty) && Math.abs(qty) > 1e-12;
-  });
+  if (!day) return holdings.filter((row) => !dayKey(row.time) && heldRow(row));
+  return holdings.filter((row) => dayKey(row.time) === day && heldRow(row));
+}
+
+function liveDayHoldings(holdings: PositionSnapshot[], liveDay: string): PositionSnapshot[] {
+  if (!liveDay) return [];
+  const sameDay = holdings.filter((row) => dayKey(row.time) === liveDay && heldRow(row));
+  if (sameDay.length) return sameDay;
+  return holdings.filter((row) => !dayKey(row.time) && heldRow(row));
 }
 
 function picksFromEvents(
@@ -169,6 +205,31 @@ function picksFromEvents(
   return [...bySymbol.values()];
 }
 
+function picksFromOrders(orders: OrderLike[], signalDay: string, lastBar: string): PaperPick[] {
+  if (!signalDay) return [];
+  const bySymbol = new Map<string, PaperPick>();
+  for (const order of orders) {
+    const symbol = String(order.symbol ?? '').trim();
+    if (!symbol) continue;
+    const created = orderCreatedDay(order);
+    const filled = orderFillDay(order);
+    if (created !== signalDay && filled !== signalDay) continue;
+    const qty = Number(order.filled_quantity ?? order.quantity);
+    if (Number.isFinite(qty) && qty <= 0) continue;
+    const { timing, pending, fillPrice } = timingFor(order, signalDay, lastBar);
+    bySymbol.set(symbol, {
+      symbol,
+      weight: null,
+      side: sideFromWeight(null, order),
+      reason: String(order.reason ?? '').trim() || bySymbol.get(symbol)?.reason || '',
+      timing,
+      pending,
+      fillPrice,
+    });
+  }
+  return [...bySymbol.values()];
+}
+
 function picksFromHoldings(holdings: PositionSnapshot[]): PaperPick[] {
   return holdings.map((row) => {
     const equity = Number(row.equity);
@@ -187,6 +248,30 @@ function picksFromHoldings(holdings: PositionSnapshot[]): PaperPick[] {
       fillPrice: Number.isFinite(Number(row.close)) ? Number(row.close) : null,
     };
   });
+}
+
+function picksFromPositions(positions: PositionLike[]): PaperPick[] {
+  return positions
+    .filter((row) => String(row.symbol ?? '').trim() && heldRow(row))
+    .map((row) => ({
+      symbol: String(row.symbol).trim(),
+      weight: null,
+      side: 'hold' as const,
+      reason: '',
+      timing: 'hold' as const,
+      pending: false,
+      fillPrice: null,
+    }));
+}
+
+function asNextOpenPicks(picks: PaperPick[]): PaperPick[] {
+  return picks.map((pick) => ({
+    ...pick,
+    pending: true,
+    timing: 'next_open' as const,
+    fillPrice: null,
+    side: pick.side === 'sell' ? 'sell' : 'buy',
+  }));
 }
 
 function titleFor(picks: PaperPick[], signalDay: string): { title: string; badge: string; hint: string } {
@@ -254,27 +339,29 @@ export function collectPaperPicks(
   }
   if (!signalDay) signalDay = lastBar;
   const events = rebalances.filter((row) => eventDay(row) === signalDay);
-  let picks = picksFromEvents(events, orders, lastBar || signalDay);
+  const bar = lastBar || signalDay;
+  let picks = picksFromEvents(events, orders, bar);
+  if (!picks.length) {
+    picks = picksFromOrders(orders, signalDay, bar);
+    const reason = events.map((row) => String(row.reason ?? '').trim()).find(Boolean) || '';
+    if (reason) picks = picks.map((pick) => ({ ...pick, reason: pick.reason || reason }));
+  }
   if (isFirstLivePreview(lastBar, live)) {
+    if (!picks.length) picks = picksFromHoldings(liveDayHoldings(result.holdings ?? [], bar));
+    if (!picks.length) picks = picksFromPositions((result.positions ?? []) as PositionLike[]);
     if (!picks.length) return null;
-    picks = picks.map((pick) => ({
-      ...pick,
-      pending: true,
-      timing: 'next_open' as const,
-      fillPrice: null,
-      side: pick.side === 'sell' ? 'sell' : 'buy',
-    }));
     return {
-      signalDay: lastBar || signalDay,
+      signalDay: bar,
       title: '最新选股',
       badge: '下一交易日开盘',
       hint: '下一交易日开盘买入',
-      picks,
+      picks: asNextOpenPicks(picks),
     };
   }
   if (!picks.length) {
-    const holdings = latestHoldings(result.holdings ?? [], lastBar || signalDay);
+    const holdings = latestHoldings(result.holdings ?? [], bar);
     picks = picksFromHoldings(holdings);
+    if (!picks.length) picks = picksFromPositions((result.positions ?? []) as PositionLike[]);
     if (!signalDay && holdings[0]) signalDay = dayKey(holdings[0].time);
   }
   if (!picks.length) return null;

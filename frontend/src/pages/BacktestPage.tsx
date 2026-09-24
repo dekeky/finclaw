@@ -53,6 +53,7 @@ import {
   DEFAULT_STRATEGY_PLATFORM,
   getStrategyPlatformConfig,
   normalizeStrategyPlatform,
+  type BacktestAnalysisTarget,
   type StrategyPlatform,
 } from '@/lib/strategyPlatforms';
 import { useConfirm } from '@/components/ui/confirm-dialog';
@@ -193,6 +194,12 @@ export default function BacktestPage() {
       // ignore quota
     }
   }
+  const [analysisRun, setAnalysisRun] = useState<BacktestAnalysisTarget | null>(null);
+  const [analysisFocus, setAnalysisFocus] = useState(0);
+
+  useEffect(() => {
+    setAnalysisRun(null);
+  }, [selectedName]);
 
   const refresh = useCallback(async () => {
     if (!user) {
@@ -638,6 +645,17 @@ export default function BacktestPage() {
   const strategyReady = !dirty && Boolean(form.path);
   const platformConfig = getStrategyPlatformConfig(form.platform);
 
+  function addRunToChat(target: BacktestAnalysisTarget) {
+    if (!strategyReady) {
+      toast.error('请先保存策略，再把回测加入对话');
+      return;
+    }
+    setAnalysisRun(target);
+    setAnalysisFocus((value) => value + 1);
+    persistChatOpen(true);
+    toast.success(`已加入对话：${target.name}`);
+  }
+
   const openLibrary = () => {
     setShowLibrary(true);
     setSelectedName(null);
@@ -1002,6 +1020,12 @@ export default function BacktestPage() {
                       refreshKey={runsRefreshKey}
                       focusRunId={focusRunId}
                       active={strategyPane === 'runs'}
+                      analysisRunId={analysisRun?.id}
+                      onAddToChat={addRunToChat}
+                      onAnalysisRunRename={(name) => {
+                        setAnalysisRun((prev) => (prev ? { ...prev, name } : prev));
+                      }}
+                      onAnalysisRunClear={() => setAnalysisRun(null)}
                     />
                   </div>
                 ) : null}
@@ -1019,6 +1043,9 @@ export default function BacktestPage() {
                 platform={form.platform}
                 strategyPath={form.path}
                 strategyReady={strategyReady}
+                analysisRun={analysisRun}
+                analysisFocus={analysisFocus}
+                onClearAnalysisRun={() => setAnalysisRun(null)}
                 onStrategyFileChanged={handleAgentFileChanged}
                 onCollapse={() => persistChatOpen(false)}
               />

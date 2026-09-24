@@ -9,7 +9,6 @@ import (
 	"github.com/dekeky/rssmanager/pkg/ginx"
 	"github.com/finclaw/internal/auth"
 	agentruntime "github.com/finclaw/pkg/agent"
-	"github.com/finclaw/pkg/agent/fquant"
 	"github.com/gin-gonic/gin"
 )
 
@@ -162,7 +161,7 @@ func (fr *FinClawRouter) handlePublicStrategyShareBars(c *gin.Context) {
 	if q := strings.TrimSpace(c.Query("end_time")); q != "" {
 		end = q
 	}
-	out, err := fquant.New(fr.fquantAddr()).GetBars(c.Request.Context(), []string{code}, nil, start, end)
+	out, err := fr.fdataClient().GetBars(c.Request.Context(), []string{code}, nil, start, end)
 	if err != nil {
 		ginx.NewRender(c, http.StatusBadGateway).Err(err)
 		return

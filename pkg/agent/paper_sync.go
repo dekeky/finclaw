@@ -60,14 +60,32 @@ func (pr *PaperRouter) StartScheduler() {
 	}()
 }
 
-func (pr *PaperRouter) kickAllRunning() {
+func paperSchedulerUserIDs() []string {
+	seen := map[string]struct{}{libraryPaperOwnerID: {}}
+	ids := []string{libraryPaperOwnerID}
 	if userHomeLoader == nil {
-		return
+		return ids
 	}
-	ids, err := userHomeLoader.ListUserIDs()
+	listed, err := userHomeLoader.ListUserIDs()
 	if err != nil {
-		return
+		return ids
 	}
+	for _, id := range listed {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func (pr *PaperRouter) kickAllRunning() {
+	ids := paperSchedulerUserIDs()
 	for _, userID := range ids {
 		sessions, err := listPaperSessions(userID)
 		if err != nil {
@@ -247,7 +265,7 @@ func (pr *PaperRouter) latestMarketDate(ctx context.Context, sess paperSession) 
 			indexes = []string{"000300"}
 		}
 	}
-	out, err := pr.client.GetBars(ctx, codes, indexes, start, end)
+	out, err := pr.bars.GetBars(ctx, codes, indexes, start, end)
 	if err != nil {
 		return "", err
 	}

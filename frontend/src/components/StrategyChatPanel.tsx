@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { IconAlertTriangle, IconBuildingStore, IconChevronsRight, IconMessagePlus } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBuildingStore, IconChevronsRight, IconMessagePlus, IconX } from '@tabler/icons-react';
 import { ChatComposerToolbar } from '@/components/chrome/ChatComposerToolbar';
 import { ChatContainer } from '@/components/ChatContainer';
 import { ChatSlashHints, handleSlashInputKeyDown } from '@/components/ChatSlashHints';
@@ -11,6 +11,7 @@ import { buildAgentWsUrl } from '@/lib/agentWsUrl';
 import { findStrategyFileTouchInTurn, turnHasUserMessage } from '@/lib/strategyFileDetect';
 import {
   buildStrategyAgentPrompt,
+  type BacktestAnalysisTarget,
   type StrategyPlatform,
 } from '@/lib/strategyPlatforms';
 import { TOOLBAR_ICON_BUTTON_CLASS } from '@/lib/toolbarButton';
@@ -31,6 +32,9 @@ interface StrategyChatPanelProps {
   platform: StrategyPlatform;
   strategyPath?: string | null;
   strategyReady: boolean;
+  analysisRun?: BacktestAnalysisTarget | null;
+  analysisFocus?: number;
+  onClearAnalysisRun?: () => void;
   onStrategyFileChanged?: (agentName: string) => void;
   onCollapse?: () => void;
   className?: string;
@@ -40,6 +44,9 @@ export function StrategyChatPanel({
   platform,
   strategyPath,
   strategyReady,
+  analysisRun,
+  analysisFocus = 0,
+  onClearAnalysisRun,
   onStrategyFileChanged,
   onCollapse,
   className,
@@ -64,15 +71,22 @@ export function StrategyChatPanel({
   } = useWebSocket(wsUrl, { persistAgentKey: persistKey });
 
   const [value, setValue] = useState('');
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const lastPulledTouchRef = useRef<string | null>(null);
   const wasTypingRef = useRef(false);
 
   const buildMessage = useCallback(
     (text: string) => buildStrategyAgentPrompt(platform, text, {
       strategyPath: strategyPath ?? undefined,
+      analysisRun,
     }),
-    [platform, strategyPath],
+    [platform, strategyPath, analysisRun],
   );
+
+  useEffect(() => {
+    if (!analysisRun || analysisFocus === 0) return;
+    inputRef.current?.focus();
+  }, [analysisFocus, analysisRun]);
 
   const handleSend = useCallback(
     (text: string) => {
@@ -250,10 +264,32 @@ export function StrategyChatPanel({
               }}
             >
               <div className="relative rounded-xl border border-border/60 bg-card px-2 pt-2 pb-1.5 shadow-sm">
+                {analysisRun ? (
+                  <div className="mb-1 flex items-center gap-1 px-1">
+                    <span className="inline-flex min-w-0 items-center gap-1 rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-700 dark:text-violet-300">
+                      <span className="truncate">定向分析 · {analysisRun.name}</span>
+                      <button
+                        type="button"
+                        className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-full text-violet-700/80 hover:bg-violet-500/15 hover:text-violet-800 dark:text-violet-200"
+                        aria-label="移出对话"
+                        onClick={onClearAnalysisRun}
+                      >
+                        <IconX className="size-3" stroke={2} />
+                      </button>
+                    </span>
+                  </div>
+                ) : null}
                 <ChatSlashHints value={value} onPick={(command) => setValue(command)} />
                 <textarea
+                  ref={inputRef}
                   className="min-h-9 w-full resize-none bg-transparent px-1.5 py-1.5 text-sm leading-normal text-foreground outline-none placeholder:text-muted-foreground"
-                  placeholder={strategyReady ? '描述你想要的量化策略…' : '请先保存策略…'}
+                  placeholder={
+                    !strategyReady
+                      ? '请先保存策略…'
+                      : analysisRun
+                        ? '针对这次回测提问，例如：分析收益、回撤和交易'
+                        : '描述你想要的量化策略…'
+                  }
                   rows={2}
                   value={value}
                   onChange={(e) => setValue(e.target.value)}

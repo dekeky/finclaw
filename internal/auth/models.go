@@ -40,17 +40,19 @@ func (AssetShare) TableName() string { return "asset_shares" }
 
 // StrategyLibraryEntry is a user-shared quant strategy in the community library.
 type StrategyLibraryEntry struct {
-	ID           string    `gorm:"primaryKey;size:64" json:"id"`
-	UserID       string    `gorm:"index;not null;size:64" json:"user_id"`
-	AuthorName   string    `gorm:"column:author_name;not null;default:''" json:"author_name"`
-	Title        string    `gorm:"not null;size:128" json:"title"`
-	Summary      string    `gorm:"not null;default:''" json:"summary"`
-	Platform     string    `gorm:"not null;size:32" json:"platform"`
-	Script       string    `gorm:"type:text;not null" json:"script"`
-	SourceName   string    `gorm:"column:source_name;size:128;default:''" json:"source_name,omitempty"`
-	InstallCount int       `gorm:"column:install_count;not null;default:0" json:"install_count"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID             string    `gorm:"primaryKey;size:64" json:"id"`
+	UserID         string    `gorm:"index;not null;size:64" json:"user_id"`
+	AuthorName     string    `gorm:"column:author_name;not null;default:''" json:"author_name"`
+	Title          string    `gorm:"not null;size:128" json:"title"`
+	Summary        string    `gorm:"not null;default:''" json:"summary"`
+	Platform       string    `gorm:"not null;size:32" json:"platform"`
+	Script         string    `gorm:"type:text;not null" json:"script"`
+	SourceName     string    `gorm:"column:source_name;size:128;default:''" json:"source_name,omitempty"`
+	InstallCount   int       `gorm:"column:install_count;not null;default:0" json:"install_count"`
+	PaperSessionID string    `gorm:"column:paper_session_id;size:64;default:''" json:"paper_session_id,omitempty"`
+	RunsJSON       string    `gorm:"column:runs_json;type:text;not null;default:'[]'" json:"-"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 func (StrategyLibraryEntry) TableName() string { return "strategy_library_entries" }

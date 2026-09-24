@@ -16,6 +16,7 @@ import {
 import { OVERLAY_COLORS, type OverlayItem } from './BenchmarkPicker';
 import { chartRestoreAction, isChartHostReady } from './chartHost';
 import { fullLogicalRange } from './rangeSync';
+import { actionMarkerDays } from './returnChartMarkers';
 
 export type ReturnChartRow = Record<string, string | number | undefined>;
 
@@ -69,8 +70,10 @@ export default function EquityReturnChart({
   const labelsRef = useRef<Record<string, string>>({});
   const inspectRef = useRef(onInspectDay);
   inspectRef.current = onInspectDay;
-  const actionDaysRef = useRef(new Set<string>());
-  actionDaysRef.current = new Set(actionDays ?? []);
+  const actionDaysRef = useRef<string[]>([]);
+  actionDaysRef.current = actionDays ?? [];
+  const actionDaySetRef = useRef(new Set<string>());
+  actionDaySetRef.current = new Set((actionDays ?? []).map((day) => String(day).slice(0, 10)));
   const lastBarCountRef = useRef(0);
   const hadStrategyRef = useRef(false);
   const dataRef = useRef(data);
@@ -85,7 +88,7 @@ export default function EquityReturnChart({
     const day = String(row.time ?? '');
     lastKeyRef.current = day;
     setText(dateRef.current, day);
-    setText(actionHintRef.current, actionDaysRef.current.has(day.slice(0, 10)) ? '有调仓' : '');
+    setText(actionHintRef.current, actionDaySetRef.current.has(day.slice(0, 10)) ? '有调仓' : '');
     const strategy = row.strategy;
     if (typeof strategy === 'number' && Number.isFinite(strategy)) {
       setText(strategyRef.current, formatPct(strategy), toneClass(strategy));
@@ -182,6 +185,14 @@ export default function EquityReturnChart({
     for (const item of nextOverlays) {
       overlaySeriesRef.current.get(item.code)?.setData(overlayPoints.get(item.code) ?? []);
     }
+    const markers: SeriesMarker<Time>[] = actionMarkerDays(actionDaysRef.current, rows).map((day) => ({
+      time: day as Time,
+      position: 'inBar',
+      color: '#ff6a00',
+      shape: 'circle',
+      size: 0.45,
+    }));
+    strategySeries.setMarkers(markers);
     const rowsList = [...rows.values()];
     const lastWithStrategy = [...rowsList].reverse().find((row) => typeof row.strategy === 'number');
     const last = lastWithStrategy ?? rowsList[rowsList.length - 1];
@@ -368,26 +379,7 @@ export default function EquityReturnChart({
 
   useEffect(() => {
     applySeries();
-  }, [data, overlays]);
-
-  useEffect(() => {
-    const series = strategySeriesRef.current;
-    if (!series) return;
-    const rows = rowsRef.current;
-    const markers: SeriesMarker<Time>[] = [];
-    for (const day of [...(actionDays ?? [])].sort()) {
-      if (!rows.has(day)) continue;
-      markers.push({
-        time: day as Time,
-        position: 'inBar',
-        color: '#ff6a00',
-        shape: 'circle',
-        size: 0.45,
-      });
-    }
-    series.setMarkers(markers);
-    paintHud(rows.get(lastKeyRef.current));
-  }, [actionDays]);
+  }, [data, overlays, actionDays]);
 
   return (
     <div className={`return-chart-wrap${onInspectDay ? ' clickable' : ''}`}>

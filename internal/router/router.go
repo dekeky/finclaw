@@ -12,6 +12,7 @@ import (
 	finclawconfig "github.com/finclaw/internal/config"
 	"github.com/finclaw/internal/webui"
 	agentruntime "github.com/finclaw/pkg/agent"
+	"github.com/finclaw/pkg/agent/fdata"
 	"github.com/finclaw/pkg/channels/weixin"
 	"github.com/gin-gonic/gin"
 )
@@ -78,8 +79,8 @@ func (fr *FinClawRouter) RoutesInit() error {
 	fr.modelRouter()
 	fr.strategyRouter()
 	fr.backtestRouter()
-	fr.paperRouter()
-	fr.strategyLibraryRouter()
+	paper := fr.paperRouter()
+	fr.strategyLibraryRouter(paper)
 	fr.marketRouter()
 	fr.weixinRouter()
 
@@ -123,24 +124,35 @@ func (fr *FinClawRouter) fquantAddr() string {
 	return addr
 }
 
+func (fr *FinClawRouter) fdataClient() *fdata.Client {
+	addr, user, pass := "", "", ""
+	if fr.finclawConf != nil && fr.finclawConf.FinclawConfigServer != nil {
+		addr = fr.finclawConf.FdataAddr
+		user = fr.finclawConf.FdataUser
+		pass = fr.finclawConf.FdataPassword
+	}
+	return fdata.New(addr, user, pass)
+}
+
 func (fr *FinClawRouter) strategyRouter() {
 	strategyRouter := agentruntime.NewStrategyRouter(fr.r, auth.AuthMiddleware(fr.authStore), fr.fquantAddr(), fr.authStore)
 	strategyRouter.ConfigRouter()
 }
 
 func (fr *FinClawRouter) backtestRouter() {
-	backtestRouter := agentruntime.NewBacktestRouter(fr.r, auth.AuthMiddleware(fr.authStore), fr.fquantAddr())
+	backtestRouter := agentruntime.NewBacktestRouter(fr.r, auth.AuthMiddleware(fr.authStore), fr.fquantAddr()).WithBars(fr.fdataClient())
 	backtestRouter.ConfigRouter()
 }
 
-func (fr *FinClawRouter) paperRouter() {
-	paperRouter := agentruntime.NewPaperRouter(fr.r, auth.AuthMiddleware(fr.authStore), fr.fquantAddr())
+func (fr *FinClawRouter) paperRouter() *agentruntime.PaperRouter {
+	paperRouter := agentruntime.NewPaperRouter(fr.r, auth.AuthMiddleware(fr.authStore), fr.fquantAddr()).WithBars(fr.fdataClient())
 	paperRouter.ConfigRouter()
 	paperRouter.StartScheduler()
+	return paperRouter
 }
 
-func (fr *FinClawRouter) strategyLibraryRouter() {
-	libraryRouter := agentruntime.NewStrategyLibraryRouter(fr.r, auth.AuthMiddleware(fr.authStore), fr.authStore)
+func (fr *FinClawRouter) strategyLibraryRouter(paper *agentruntime.PaperRouter) {
+	libraryRouter := agentruntime.NewStrategyLibraryRouter(fr.r, auth.AuthMiddleware(fr.authStore), fr.authStore, paper)
 	libraryRouter.ConfigRouter()
 }
 

@@ -17,6 +17,8 @@ const (
 	DefaultAgentHubAddr = "http://159.75.51.78:9093"
 	// DefaultFquantAddr is the local fquant backtest service.
 	DefaultFquantAddr = "http://127.0.0.1:8001"
+	// DefaultFdataAddr is the finclaw-data market API.
+	DefaultFdataAddr = "https://finclaw.chat/data"
 )
 
 func FinclawHomePath() string {
@@ -46,6 +48,7 @@ func defaultFinclawConfig() *FinclawConfigServer {
 		ServerAddr:   ":8082",
 		AgentHubAddr: DefaultAgentHubAddr,
 		FquantAddr:   DefaultFquantAddr,
+		FdataAddr:    DefaultFdataAddr,
 		SMTP:         defaultSMTPSettings(),
 		FinClawChannelConf: &finclaw.FinChannelConfig{
 			ReadTimeout:  60,
@@ -85,6 +88,15 @@ func ensureDefaultFquant(cfg *FinclawConfigServer) {
 	addr := strings.TrimSpace(cfg.FquantAddr)
 	if addr == "" || addr == "http://127.0.0.1:8000" {
 		cfg.FquantAddr = DefaultFquantAddr
+	}
+}
+
+func ensureDefaultFdata(cfg *FinclawConfigServer) {
+	if cfg == nil {
+		return
+	}
+	if strings.TrimSpace(cfg.FdataAddr) == "" {
+		cfg.FdataAddr = DefaultFdataAddr
 	}
 }
 

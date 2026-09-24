@@ -147,6 +147,10 @@
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+.fquant-ui .run-item.attached:not(.selected) {
+  box-shadow: inset 2px 0 0 #7c3aed;
+}
+
 .fquant-ui .run-item-body {
   display: flex;
   flex-direction: column;
@@ -272,12 +276,21 @@
   color: var(--muted);
 }
 
-.fquant-ui .run-item-config:hover {
+.fquant-ui .run-item-config:hover:not(:disabled) {
   color: var(--accent);
 }
 
-.fquant-ui .run-item-config.danger:hover {
+.fquant-ui .run-item-config.is-attached {
+  color: #7c3aed;
+}
+
+.fquant-ui .run-item-config.danger:hover:not(:disabled) {
   color: var(--danger);
+}
+
+.fquant-ui .run-item-config:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .fquant-ui .run-item-rename {

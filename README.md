@@ -2,13 +2,13 @@
 > 开源维护不易，如果对您有帮助，麻烦 [Star ⭐](https://github.com/dekeky/finclaw) 支持一下
 
 <p align="center">
-  <a href="http://159.75.51.78:8082/chat">
+  <a href="https://finclaw.chat">
     <img src="assets/finclaw-readme-hero.jpg" alt="Finclaw — AI × 金融 · 多 Agent 投研平台" width="560" />
   </a>
 </p>
 
 <p align="center">
-  <a href="http://159.75.51.78:8082/chat" style="display:inline-block;padding:10px 26px;margin:0 8px;background-color:#18181b;color:#fafafa;font-size:15px;font-weight:600;text-decoration:none;border-radius:8px;border:1px solid #18181b;">在线体验</a>
+  <a href="https://finclaw.chat" style="display:inline-block;padding:10px 26px;margin:0 8px;background-color:#18181b;color:#fafafa;font-size:15px;font-weight:600;text-decoration:none;border-radius:8px;border:1px solid #18181b;">在线体验</a>
   <a href="https://dekeky.github.io/finclaw" style="display:inline-block;padding:10px 26px;margin:0 8px;background-color:#fafafa;color:#18181b;font-size:15px;font-weight:600;text-decoration:none;border-radius:8px;border:1px solid #e4e4e7;">项目主页</a>
 </p>
 

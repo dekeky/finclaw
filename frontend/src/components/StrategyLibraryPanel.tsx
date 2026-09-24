@@ -14,6 +14,8 @@ import {
   type StrategyLibraryDetail,
   type StrategyLibrarySummary,
 } from '@/api/strategyLibrary';
+import type { RunDetail, RunListItem } from '@/api/backtest';
+import { PaperSessionView } from '@/components/paper/PaperSessionView';
 import { StrategyGallerySkeleton } from '@/components/strategy/StrategyGallerySkeleton';
 import { StrategyGalleryTile } from '@/components/strategy/StrategyGalleryTile';
 import { StrategyCodeEditor } from '@/components/StrategyCodeEditor';
@@ -26,6 +28,14 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { cn } from '@/lib/cn';
+import { hasUsableReturnCurve, returnSeriesFromEquity } from '@/lib/galleryReturn';
+import {
+  formatPaperReturn,
+  paperDisplayReturn,
+  paperSignedClass,
+  paperStatusLabel,
+  samePaperPollSnapshot,
+} from '@/lib/paperSession';
 import { normalizeStrategyPlatform } from '@/lib/strategyPlatforms';
 import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 import { Dialog } from 'radix-ui';
@@ -51,6 +61,41 @@ function formatDate(iso: string): string {
   } catch {
     return '';
   }
+}
+
+function libraryDisplayReturn(entry: StrategyLibrarySummary): number | null {
+  if (entry.initial_cash && entry.initial_cash > 0 && Number.isFinite(entry.equity)) {
+    return paperDisplayReturn({
+      equity: entry.equity ?? 0,
+      initial_cash: entry.initial_cash,
+      return_pct: entry.return_pct ?? 0,
+    });
+  }
+  return typeof entry.return_pct === 'number' ? entry.return_pct : null;
+}
+
+function libraryReturnSeries(entry: StrategyLibrarySummary) {
+  if (!hasUsableReturnCurve(entry.equity_curve, entry.initial_cash, entry.go_live)) return undefined;
+  return returnSeriesFromEquity(entry.equity_curve, entry.initial_cash, entry.go_live);
+}
+
+function libraryRunsAsList(runs: RunDetail[] | undefined): RunListItem[] {
+  if (!runs?.length) return [];
+  return runs.map((run) => ({
+    id: run.id,
+    name: run.name,
+    status: run.status,
+    strategy_name: run.request?.strategy_name ?? '',
+    strategy_id: run.request?.strategy_id,
+    created_at: run.created_at,
+    updated_at: run.updated_at,
+    started_at: run.started_at,
+    finished_at: run.finished_at,
+    duration_seconds: run.duration_seconds,
+    symbols: run.request?.symbols ?? [],
+    request: run.request,
+    equity_curve: run.result?.equity_curve,
+  }));
 }
 
 interface StrategyLibraryInstallDialogProps {
@@ -166,11 +211,13 @@ export function StrategyLibraryDetailView({
   const [detailLoading, setDetailLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [installOpen, setInstallOpen] = useState(false);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setDetail(null);
     setLoadError(null);
+    setSelectedRunId(null);
     setDetailLoading(true);
     void getStrategyLibraryEntry(entry.id)
       .then((d) => {
@@ -186,6 +233,27 @@ export function StrategyLibraryDetailView({
       cancelled = true;
     };
   }, [entry.id]);
+
+  useEffect(() => {
+    const paper = detail?.paper;
+    if (!paper || (paper.status !== 'running' && paper.status !== 'catching_up' && paper.status !== 'failed')) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void getStrategyLibraryEntry(entry.id)
+        .then((next) => {
+          setDetail((current) => {
+            if (!current) return next;
+            if (current.paper && next.paper && samePaperPollSnapshot(current.paper, next.paper)) {
+              return current;
+            }
+            return next;
+          });
+        })
+        .catch(() => undefined);
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [entry.id, detail?.paper?.id, detail?.paper?.status]);
 
   const handleDelete = async () => {
     if (!requireAuth()) return;
@@ -225,6 +293,7 @@ export function StrategyLibraryDetailView({
             </div>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {entry.author_name || '匿名'} · {entry.install_count} 次使用 · {formatDate(entry.created_at)}
+              {detail?.paper ? ` · ${paperStatusLabel(detail.paper.status)}` : ''}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -262,8 +331,19 @@ export function StrategyLibraryDetailView({
         )}
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {detailLoading ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">加载策略代码…</div>
+          {detailLoading && !detail ? (
+            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">加载策略…</div>
+          ) : detail?.paper ? (
+            <PaperSessionView
+              session={detail.paper}
+              runs={libraryRunsAsList(detail.runs)}
+              selectedRun={detail.runs?.find((run) => run.id === selectedRunId) ?? null}
+              script={detail.script}
+              canOpenBacktest={false}
+              emptyRunsText="发布时没有可展示的回测记录"
+              emptyRunsHint="作者发布前跑过的回测会显示在这里。"
+              onOpenRun={(runId) => setSelectedRunId(runId ?? null)}
+            />
           ) : detail ? (
             <StrategyCodeEditor value={detail.script} readOnly className="h-full" />
           ) : (
@@ -434,19 +514,28 @@ export function StrategyLibraryPanel({
 
   const cardGrid = (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {filtered.map((entry) => (
-        <StrategyGalleryTile
-          key={entry.id}
-          title={entry.title}
-          platform={normalizeStrategyPlatform(entry.platform)}
-          subtitle={entry.summary || '暂无描述'}
-          metaLeft={entry.author_name || '匿名'}
-          metaRight={`${entry.install_count} 次使用`}
-          updatedAt={entry.created_at}
-          selected={selectedEntryId === entry.id}
-          onOpen={() => void openEntry(entry)}
-        />
-      ))}
+      {filtered.map((item) => {
+        const liveReturn = libraryDisplayReturn(item);
+        return (
+          <StrategyGalleryTile
+            key={item.id}
+            title={item.title}
+            platform={normalizeStrategyPlatform(item.platform)}
+            subtitle={item.summary || '暂无描述'}
+            returnSeries={libraryReturnSeries(item)}
+            metaLeft={item.author_name || '匿名'}
+            metaRight={
+              liveReturn != null
+                ? formatPaperReturn(liveReturn)
+                : `${item.install_count} 次使用`
+            }
+            metaRightClass={liveReturn != null ? paperSignedClass(liveReturn) : undefined}
+            updatedAt={item.updated_at || item.created_at}
+            selected={selectedEntryId === item.id}
+            onOpen={() => void openEntry(item)}
+          />
+        );
+      })}
     </div>
   );
 

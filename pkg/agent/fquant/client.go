@@ -221,7 +221,9 @@ func (c *Client) GetRun(ctx context.Context, username, runID string) (json.RawMe
 }
 
 func (c *Client) GetRunBlotter(ctx context.Context, username, runID string) (json.RawMessage, error) {
-	return c.getRaw(ctx, c.userPath(username, "/runs/"+url.PathEscape(runID)+"/blotter"), nil)
+	query := url.Values{}
+	query.Set("full", "1")
+	return c.getRaw(ctx, c.userPath(username, "/runs/"+url.PathEscape(runID)+"/blotter"), query)
 }
 
 func (c *Client) GetRunPositions(ctx context.Context, username, runID, date, symbol string) (json.RawMessage, error) {
@@ -293,8 +295,8 @@ func (c *Client) GetUniverseIndex(ctx context.Context, indexCode string) (json.R
 	return c.getRaw(ctx, "/api/universe/indexes/"+url.PathEscape(indexCode), nil)
 }
 
-// GetBars fetches daily OHLCV. Stocks go in codes, indexes in indexes so
-// colliding tickers such as 000001 (平安银行 vs 上证综指) stay distinct.
+// GetBars fetches daily OHLCV from fquant. FinClaw UI/paper K-lines now go
+// through pkg/agent/fdata instead; this remains for tests and older callers.
 func (c *Client) GetBars(ctx context.Context, codes, indexes []string, startTime, endTime string) (*BarsResponse, error) {
 	query := url.Values{}
 	if len(codes) > 0 {

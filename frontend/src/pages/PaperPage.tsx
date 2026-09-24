@@ -330,7 +330,7 @@ export default function PaperPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/50 px-3">
+      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border/50 px-4">
         <SidebarExpandTrigger />
         {detail ? (
           <div className="flex min-w-0 items-center gap-1">
@@ -338,7 +338,7 @@ export default function PaperPage() {
               type="button"
               variant="ghost"
               size="icon"
-              className="size-7 shrink-0"
+              className="size-8 shrink-0"
               onClick={handleBack}
               aria-label={returnTo ? '返回来源页' : '返回列表'}
             >
@@ -346,7 +346,7 @@ export default function PaperPage() {
             </Button>
             {editingId === detail.id ? (
               <input
-                className="h-[26px] max-w-[200px] rounded-sm border border-violet-500 bg-background px-1.5 text-[13px] font-medium"
+                className="h-8 max-w-[min(28rem,46vw)] rounded-md border border-violet-500 bg-background px-2 text-sm font-medium"
                 value={draftName}
                 autoFocus
                 maxLength={64}
@@ -358,7 +358,7 @@ export default function PaperPage() {
             ) : (
               <>
                 <span
-                  className="max-w-[200px] truncate px-1.5 text-[13px] font-medium"
+                  className="max-w-[min(28rem,46vw)] truncate px-1.5 text-sm font-medium"
                   title="双击重命名"
                   onDoubleClick={() => {
                     setEditingId(detail.id);
@@ -369,7 +369,7 @@ export default function PaperPage() {
                 </span>
                 <button
                   type="button"
-                  className="flex size-[22px] shrink-0 items-center justify-center rounded-sm text-muted-foreground/70 hover:bg-muted hover:text-foreground"
+                  className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 hover:bg-muted hover:text-foreground"
                   title="重命名"
                   aria-label={`重命名 ${detail.name}`}
                   onClick={() => {
@@ -384,7 +384,7 @@ export default function PaperPage() {
             {detail.strategy_name ? (
               <button
                 type="button"
-                className="max-w-[160px] truncate px-1 text-xs text-muted-foreground hover:text-foreground"
+                className="max-w-[min(16rem,28vw)] truncate px-1 text-sm text-muted-foreground hover:text-foreground"
                 title="打开来源策略"
                 onClick={() => {
                   goToBacktest({
@@ -396,7 +396,7 @@ export default function PaperPage() {
                 {detail.strategy_name}
               </button>
             ) : null}
-            <Badge variant="outline" className="ml-1 shrink-0 text-[11px]">
+            <Badge variant="outline" className="ml-1 shrink-0">
               {paperStatusLabel(detail.status)}
             </Badge>
           </div>
@@ -405,7 +405,7 @@ export default function PaperPage() {
             type="button"
             variant="ghost"
             size="icon"
-            className="size-7 shrink-0"
+            className="size-8 shrink-0"
             onClick={handleBack}
             aria-label="返回来源页"
           >
@@ -418,7 +418,7 @@ export default function PaperPage() {
               {detail.status === 'paused' ? (
                 <Button
                   type="button"
-                  size="xs"
+                  size="sm"
                   className={PRIMARY_BUTTON_CLASS}
                   disabled={actionBusy}
                   onClick={() => void runAction('恢复', () => resumePaperSession(detail.id))}
@@ -429,7 +429,7 @@ export default function PaperPage() {
               ) : (
                 <Button
                   type="button"
-                  size="xs"
+                  size="sm"
                   variant="outline"
                   disabled={actionBusy || detail.status === 'catching_up'}
                   onClick={() => void runAction('暂停', () => pausePaperSession(detail.id))}
@@ -440,7 +440,7 @@ export default function PaperPage() {
               )}
               <Button
                 type="button"
-                size="xs"
+                size="sm"
                 variant="outline"
                 disabled={actionBusy}
                 onClick={() => void runAction('同步', () => syncPaperSession(detail.id))}
@@ -450,7 +450,7 @@ export default function PaperPage() {
               </Button>
               <Button
                 type="button"
-                size="xs"
+                size="sm"
                 variant="outline"
                 disabled={actionBusy || detail.strategy_missing}
                 title={detail.strategy_missing ? '来源策略已删除，无法重启' : '用当前代码重启'}

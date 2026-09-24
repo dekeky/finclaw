@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/finclaw/pkg/agent/fdata"
 	"github.com/gin-gonic/gin"
 )
 
@@ -267,16 +268,16 @@ func TestSubmitRunRejectsEmptyPicks(t *testing.T) {
 }
 
 func TestMarketBarsForwardsIndexes(t *testing.T) {
-	var gotCodes, gotIndexes string
+	var gotPath, gotCodes string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/market/bars" {
+		gotPath = r.URL.Path
+		gotCodes = r.URL.Query().Get("codes")
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/index_daily" {
 			http.NotFound(w, r)
 			return
 		}
-		gotCodes = r.URL.Query().Get("codes")
-		gotIndexes = r.URL.Query().Get("indexes")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"items":[{"code":"000001","name":"上证综合指数","series":[]}]}`))
+		_, _ = w.Write([]byte(`{"rows":[]}`))
 	}))
 	defer srv.Close()
 
@@ -286,7 +287,9 @@ func TestMarketBarsForwardsIndexes(t *testing.T) {
 		c.Set("userId", "u_test")
 		c.Next()
 	})
-	NewBacktestRouter(engine, func(c *gin.Context) { c.Next() }, srv.URL).ConfigRouter()
+	NewBacktestRouter(engine, func(c *gin.Context) { c.Next() }, "http://127.0.0.1:9").
+		WithBars(fdata.New(srv.URL, "", "")).
+		ConfigRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/backtest/market/bars?indexes=000001&start_time=2020-01-01&end_time=2020-02-01", nil)
 	rec := httptest.NewRecorder()
@@ -294,13 +297,13 @@ func TestMarketBarsForwardsIndexes(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	if gotCodes != "" {
-		t.Fatalf("codes = %q, want empty", gotCodes)
+	if gotPath != "/v1/index_daily" {
+		t.Fatalf("path = %q", gotPath)
 	}
-	if gotIndexes != "000001" {
-		t.Fatalf("indexes = %q", gotIndexes)
+	if gotCodes != "000001" {
+		t.Fatalf("codes = %q", gotCodes)
 	}
-	if !bytes.Contains(rec.Body.Bytes(), []byte("上证综合指数")) {
+	if !bytes.Contains(rec.Body.Bytes(), []byte("上证综指")) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
@@ -324,12 +327,16 @@ func TestMarketBarsRejectsEmptyCodesAndIndexes(t *testing.T) {
 
 func TestMarketBarsReturnsTypedSeries(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/market/bars" {
+		switch r.URL.Path {
+		case "/v1/stock_factor_pro":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"rows":[{"code":"600000.SH","trade_date":"20200102","open_qfq":10.1,"high_qfq":10.5,"low_qfq":10.0,"close_qfq":10.3,"vol":1500000}]}`))
+		case "/v1/stocks":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"rows":[{"code":"600000.SH","name":"浦发银行"}]}`))
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"items":[{"code":"600000","name":"浦发银行","series":[{"symbol":"600000","time":"2020-01-02T00:00:00","open":10.1,"high":10.5,"low":10.0,"close":10.3,"volume":1500000}]}]}`))
 	}))
 	defer srv.Close()
 
@@ -339,7 +346,9 @@ func TestMarketBarsReturnsTypedSeries(t *testing.T) {
 		c.Set("userId", "u_test")
 		c.Next()
 	})
-	NewBacktestRouter(engine, func(c *gin.Context) { c.Next() }, srv.URL).ConfigRouter()
+	NewBacktestRouter(engine, func(c *gin.Context) { c.Next() }, "http://127.0.0.1:9").
+		WithBars(fdata.New(srv.URL, "", "")).
+		ConfigRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/backtest/market/bars?codes=600000,600000&start_time=2020-01-01&end_time=2020-02-01", nil)
 	rec := httptest.NewRecorder()

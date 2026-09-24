@@ -64,6 +64,9 @@ func TestClientUpsertAndSubmit(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/users/u_1/runs/run1":
 			writeJSON(w, http.StatusOK, map[string]any{"id": "run1", "status": "succeeded"})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/users/u_1/runs/run1/blotter":
+			if r.URL.Query().Get("full") != "1" {
+				t.Errorf("full = %q", r.URL.Query().Get("full"))
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"orders": []any{}, "trades": []any{}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/users/u_1/runs/run1/positions":
 			if r.URL.Query().Get("date") != "2020-01-02" {

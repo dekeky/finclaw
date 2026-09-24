@@ -32,6 +32,7 @@ import {
   PANEL_WIDTH_LIMITS,
 } from '@/lib/panelWidths';
 import { saveBacktestViewState } from '@/lib/backtestViewState';
+import { canAnalyzeBacktest, type BacktestAnalysisTarget } from '@/lib/strategyPlatforms';
 import { withReturnTo } from '@/lib/navigationReturn';
 import { createPaperSession, listPaperSessions, type PaperSession } from '@/api/paper';
 import { Button } from '@/components/ui/button';
@@ -110,6 +111,20 @@ function PencilIcon() {
   );
 }
 
+function ChatPlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none">
+      <path
+        d="M7 17.5 3.5 20V6.5A2.5 2.5 0 0 1 6 4h12a2.5 2.5 0 0 1 2.5 2.5V14A2.5 2.5 0 0 1 18 16.5H7Z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path d="M12 8v5M9.5 10.5h5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function SourceIcon() {
   return (
     <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none">
@@ -131,6 +146,10 @@ export function BacktestRunsPanel({
   refreshKey,
   focusRunId,
   active = true,
+  analysisRunId,
+  onAddToChat,
+  onAnalysisRunRename,
+  onAnalysisRunClear,
 }: {
   strategyId?: string;
   strategyName: string;
@@ -138,6 +157,10 @@ export function BacktestRunsPanel({
   refreshKey: number;
   focusRunId: string | null;
   active?: boolean;
+  analysisRunId?: string | null;
+  onAddToChat?: (target: BacktestAnalysisTarget) => void;
+  onAnalysisRunRename?: (name: string) => void;
+  onAnalysisRunClear?: () => void;
 }) {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -428,6 +451,7 @@ export function BacktestRunsPanel({
     try {
       const updated = await renameBacktestRun(item.id, next);
       setItems((list) => list.map((row) => (row.id === item.id ? { ...row, ...updated, name: next } : row)));
+      if (analysisRunId === item.id) onAnalysisRunRename?.(next);
       setCurrent((detail) => {
         if (detail?.id !== item.id) return detail;
         return rememberRunDetail({ ...detail, name: next });
@@ -500,6 +524,7 @@ export function BacktestRunsPanel({
     }
     try {
       await deleteBacktestRun(item.id);
+      if (analysisRunId === item.id) onAnalysisRunClear?.();
       const remaining = items.filter((row) => row.id !== item.id);
       setItems(remaining);
       if (selectedId === item.id) {
@@ -568,7 +593,7 @@ export function BacktestRunsPanel({
               return (
                 <div
                   key={item.id}
-                  className={item.id === selectedId ? 'run-item selected' : 'run-item'}
+                  className={['run-item', item.id === selectedId ? 'selected' : '', item.id === analysisRunId ? 'attached' : ''].filter(Boolean).join(' ')}
                   onClick={() => openRun(item.id)}
                 >
                   <span className={`dot ${item.status}`} />
@@ -596,6 +621,26 @@ export function BacktestRunsPanel({
                         </span>
                       )}
                       <span className="run-item-name-actions">
+                        {strategyPlatform === 'finclaw' && onAddToChat ? (
+                          <button
+                            className={item.id === analysisRunId ? 'run-item-config is-attached' : 'run-item-config'}
+                            type="button"
+                            title={
+                              canAnalyzeBacktest(item.status)
+                                ? '添加到对话'
+                                : '回测结束后再添加到对话'
+                            }
+                            aria-label={`把 ${label} 添加到对话`}
+                            aria-pressed={item.id === analysisRunId}
+                            disabled={!canAnalyzeBacktest(item.status)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onAddToChat({ id: item.id, name: label, status: item.status });
+                            }}
+                          >
+                            <ChatPlusIcon />
+                          </button>
+                        ) : null}
                         <button
                           className="run-item-config"
                           type="button"
