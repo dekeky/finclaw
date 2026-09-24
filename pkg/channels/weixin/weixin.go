@@ -42,7 +42,8 @@ type WeixinChannel struct {
 	resolver   AgentResolver
 	bindMu     sync.RWMutex
 	boundAgent string
-	rebindCh   chan struct{} // 通知 processOutboundLoop 重新订阅出站通道
+	rebindMu   sync.Mutex
+	rebindCh   atomic.Value // chan struct{} — 关闭此 channel 通知重新订阅
 
 	// contextTokens 存储每个用户的 context_token
 	contextTokens sync.Map
@@ -61,11 +62,18 @@ type WeixinChannel struct {
 	// pendingReplies 待发送的回复队列（当收到用户第一条消息时，还来不及回复，先队列起来；
 	// 会话暂停期间无法下发的回复也会暂存在此，等暂停结束后自动重发，避免回复丢失）
 	pendingRepliesMu sync.Mutex
-	pendingReplies   map[string][]OutboundMessage // key = userID
+	pendingReplies   map[string][]pendingReply // key = userID
 
-	// pauseFlushScheduled 记录已为哪些用户安排了"暂停结束后重发"定时器，避免重复创建。
-	pauseFlushMu        sync.Mutex
-	pauseFlushScheduled map[string]bool // key = userID
+	// flushScheduled 记录已为哪些用户安排了"稍后重发"定时器，避免重复创建。
+	// 涵盖两种触发原因：会话暂停、发送失败重试。
+	flushMu        sync.Mutex
+	flushScheduled map[string]bool // key = userID
+
+	// context token 持久化防抖：标记是否有未持久化的变更。
+	// 用 debounce + 强制上限，避免每条消息都全量写盘。
+	tokensDirty    atomic.Bool
+	persistDone    chan struct{} // 关闭时通知持久化 goroutine 退出
+	persistStarted sync.Once
 }
 
 // GetMediaStore 返回媒体存储
@@ -90,19 +98,21 @@ func NewWeixinChannel(
 		return nil, fmt.Errorf("weixin: failed to create API client: %w", err)
 	}
 
-	return &WeixinChannel{
+	ch := &WeixinChannel{
 		api:               api,
 		config:            cfg,
 		name:              "weixin",
 		resolver:          resolver,
 		boundAgent:        boundAgent,
-		rebindCh:          make(chan struct{}, 1),
 		typingCache:       make(map[string]typingTicketCacheEntry),
 		syncBufPath:       buildWeixinSyncBufPath(cfg),
 		contextTokensPath: buildWeixinContextTokensPath(cfg),
-		pendingReplies:      make(map[string][]OutboundMessage),
-		pauseFlushScheduled: make(map[string]bool),
-	}, nil
+		pendingReplies:   make(map[string][]pendingReply),
+		flushScheduled:   make(map[string]bool),
+	}
+	// 通过关闭 channel 广播 rebind 信号：写端关旧建新，读端每次 Load 拿最新的。
+	ch.rebindCh.Store(make(chan struct{}))
+	return ch, nil
 }
 
 // BoundAgent 返回当前绑定的 agent 名（线程安全）。
@@ -110,6 +120,13 @@ func (c *WeixinChannel) BoundAgent() string {
 	c.bindMu.RLock()
 	defer c.bindMu.RUnlock()
 	return c.boundAgent
+}
+
+// rebindNotifyCh 返回当前的 rebind 通知 channel。
+// 收到关闭信号表示需要重新订阅出站通道。
+func (c *WeixinChannel) rebindNotifyCh() chan struct{} {
+	ch, _ := c.rebindCh.Load().(chan struct{})
+	return ch
 }
 
 // currentMsgBus 获取当前绑定 agent 的消息总线。
@@ -137,6 +154,8 @@ func (c *WeixinChannel) currentWeixinOutboundCh() chan bus.OutboundMessage {
 
 // Rebind 在运行时切换绑定的 agent，无需重启频道。
 // 返回 false 表示新 agent 在 resolver 中不存在（msgBus 为 nil）。
+// 通过关闭并重建 rebindCh 通知 processOutboundLoop，确保信号不丢失
+// （即使在 resubscribe 窗口期发生多次 rebind 也不会漏）。
 func (c *WeixinChannel) Rebind(agentName string) bool {
 	if agentName == "" {
 		return false
@@ -153,11 +172,15 @@ func (c *WeixinChannel) Rebind(agentName string) bool {
 	c.boundAgent = agentName
 	c.bindMu.Unlock()
 
-	// 通知 processOutboundLoop 重新订阅新 agent 的出站通道
-	select {
-	case c.rebindCh <- struct{}{}:
-	default:
+	// 关闭旧 channel 触发所有等待者，然后创建新的供下一次使用。
+	// 用 rebindMu 串行化，避免并发 close 导致 panic。
+	c.rebindMu.Lock()
+	oldCh, _ := c.rebindCh.Load().(chan struct{})
+	if oldCh != nil {
+		close(oldCh)
 	}
+	c.rebindCh.Store(make(chan struct{}))
+	c.rebindMu.Unlock()
 
 	logger.InfoCF("weixin", "Rebound to agent", map[string]any{
 		"agent": agentName,
@@ -199,6 +222,9 @@ func (c *WeixinChannel) Start(ctx context.Context) error {
 	// 从磁盘恢复 context_tokens
 	c.restoreContextTokens()
 
+	// 启动过期 token 清理
+	go c.cleanupExpiredContextTokens(c.ctx)
+
 	// 启动轮询循环
 	go c.pollLoop(c.ctx)
 
@@ -210,7 +236,7 @@ func (c *WeixinChannel) Start(ctx context.Context) error {
 }
 
 // restoreContextTokens 从磁盘加载 context tokens 到内存
-// 这样重启后仍能回复之前的会话
+// 这样重启后仍能回复之前的会话（跳过已过期的 token）
 func (c *WeixinChannel) restoreContextTokens() {
 	tokens, err := loadContextTokens(c.contextTokensPath)
 	if err != nil {
@@ -223,24 +249,95 @@ func (c *WeixinChannel) restoreContextTokens() {
 	if len(tokens) == 0 {
 		return
 	}
-	// 恢复到内存 sync.Map
-	for userID, token := range tokens {
-		c.contextTokens.Store(userID, token)
+	restored := 0
+	// 恢复到内存 sync.Map，跳过已过期的 token
+	for userID, entry := range tokens {
+		if entry.UpdatedAt > 0 && time.Since(time.Unix(entry.UpdatedAt, 0)) > weixinContextTokenTTL {
+			continue
+		}
+		c.contextTokens.Store(userID, entry)
+		restored++
 	}
 	logger.InfoCF("weixin", "Restored context tokens from disk", map[string]any{
-		"path":  c.contextTokensPath,
-		"count": len(tokens),
+		"path":     c.contextTokensPath,
+		"total":    len(tokens),
+		"restored": restored,
 	})
 }
 
-// persistContextTokens 将内存中的 context tokens 持久化到磁盘
-// 用于重启后恢复会话
+const (
+	contextTokenPersistDebounce = 5 * time.Second  // 防抖延迟
+	contextTokenPersistMaxWait  = 30 * time.Second // 最大延迟上限
+)
+
+// persistContextTokens 标记 context tokens 有变更，需要持久化。
+// 实际写盘由后台 goroutine 做防抖合并，避免每条消息都全量写磁盘。
 func (c *WeixinChannel) persistContextTokens() {
-	tokens := make(map[string]string)
+	c.tokensDirty.Store(true)
+	c.ensurePersistLoop()
+}
+
+// ensurePersistLoop 确保持久化 goroutine 已启动（只启动一次）。
+func (c *WeixinChannel) ensurePersistLoop() {
+	c.persistStarted.Do(func() {
+		c.persistDone = make(chan struct{})
+		go c.persistLoop()
+	})
+}
+
+// persistLoop 持久化循环，合并多次变更为一次写盘。
+// 防抖逻辑：有变更后等 debounce 时间，如果期间又有变更则重新计时，
+// 最多等 maxWait 后强制写一次，避免高频更新下永远不落地。
+func (c *WeixinChannel) persistLoop() {
+	debounce := time.NewTimer(contextTokenPersistDebounce)
+	defer debounce.Stop()
+	// 第一次直接停掉，等 dirty 标记后再 Reset。
+	if !debounce.Stop() {
+		<-debounce.C
+	}
+
+	maxWait := time.NewTicker(contextTokenPersistMaxWait)
+	defer maxWait.Stop()
+
+	// 初始状态：没有待写入的变更，等待。
+	waiting := false
+
+	for {
+		if c.tokensDirty.Load() && !waiting {
+			debounce.Reset(contextTokenPersistDebounce)
+			waiting = true
+		}
+
+		select {
+		case <-c.persistDone:
+			// 退出前把最后一批变更写掉
+			if c.tokensDirty.Load() {
+				c.doPersistContextTokens()
+			}
+			return
+		case <-debounce.C:
+			if c.tokensDirty.Load() {
+				c.doPersistContextTokens()
+			}
+			waiting = false
+		case <-maxWait.C:
+			// 强制上限：如果一直有更新拖着不写，最多 maxWait 强制写一次
+			if c.tokensDirty.Load() && waiting {
+				c.doPersistContextTokens()
+				waiting = false
+			}
+		}
+	}
+}
+
+// doPersistContextTokens 真正执行磁盘写入，调用方负责控制频率。
+func (c *WeixinChannel) doPersistContextTokens() {
+	c.tokensDirty.Store(false)
+	tokens := make(map[string]contextTokenEntry)
 	c.contextTokens.Range(func(k, v any) bool {
 		if userID, ok := k.(string); ok {
-			if token, ok := v.(string); ok {
-				tokens[userID] = token
+			if entry, ok := v.(contextTokenEntry); ok {
+				tokens[userID] = entry
 			}
 		}
 		return true
@@ -253,12 +350,50 @@ func (c *WeixinChannel) persistContextTokens() {
 	}
 }
 
+// cleanupExpiredContextTokens 定期清理过期的 context_token，避免内存和磁盘无限增长
+func (c *WeixinChannel) cleanupExpiredContextTokens(ctx context.Context) {
+	ticker := time.NewTicker(weixinContextTokenCleanupInt)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.doCleanupExpiredContextTokens()
+		}
+	}
+}
+
+func (c *WeixinChannel) doCleanupExpiredContextTokens() {
+	now := time.Now()
+	removed := 0
+	c.contextTokens.Range(func(k, v any) bool {
+		if entry, ok := v.(contextTokenEntry); ok {
+			if entry.UpdatedAt > 0 && now.Sub(time.Unix(entry.UpdatedAt, 0)) > weixinContextTokenTTL {
+				c.contextTokens.Delete(k)
+				removed++
+			}
+		}
+		return true
+	})
+	if removed > 0 {
+		logger.InfoCF("weixin", "Cleaned up expired context tokens", map[string]any{
+			"removed": removed,
+		})
+		c.persistContextTokens()
+	}
+}
+
 // Stop 停止微信频道
 func (c *WeixinChannel) Stop(ctx context.Context) error {
 	logger.InfoC("weixin", "Stopping Weixin channel")
 	c.SetRunning(false)
 	if c.cancel != nil {
 		c.cancel()
+	}
+	// 停止持久化 goroutine，确保最后一批变更落盘
+	if c.persistDone != nil {
+		close(c.persistDone)
 	}
 	return nil
 }
@@ -359,8 +494,10 @@ func (c *WeixinChannel) pollLoop(ctx context.Context) {
 			continue
 		}
 
-		// 检查会话是否过期
+		// 检查会话是否过期（属于预期内的场景，不算 API 调用失败，
+		// 走 pauseSession 暂停一段时间后自动恢复，连续失败计数因此清零）。
 		if isSessionExpiredStatus(resp.Ret, resp.Errcode) {
+			consecutiveFails = 0
 			remaining := c.pauseSession("getupdates", resp.Ret, resp.Errcode, resp.Errmsg)
 			select {
 			case <-ctx.Done():
@@ -527,7 +664,10 @@ func (c *WeixinChannel) handleInboundMessage(ctx context.Context, msg WeixinMess
 			"user_id":       fromUserID,
 			"context_token": msg.ContextToken[:min(20, len(msg.ContextToken))] + "...",
 		})
-		c.contextTokens.Store(fromUserID, msg.ContextToken)
+		c.contextTokens.Store(fromUserID, contextTokenEntry{
+			Token:     msg.ContextToken,
+			UpdatedAt: time.Now().Unix(),
+		})
 		c.persistContextTokens()
 
 		// 保存成功后，立即发送该用户积压的待回复消息
@@ -640,7 +780,7 @@ func (c *WeixinChannel) processOutboundLoop(ctx context.Context) {
 			case <-ctx.Done():
 				logger.InfoCF("weixin", "Outbound message processor stopped", nil)
 				return
-			case <-c.rebindCh:
+			case <-c.rebindNotifyCh():
 				continue
 			}
 		}
@@ -654,7 +794,7 @@ func (c *WeixinChannel) processOutboundLoop(ctx context.Context) {
 			case <-ctx.Done():
 				logger.InfoCF("weixin", "Outbound message processor stopped", nil)
 				return
-			case <-c.rebindCh:
+			case <-c.rebindNotifyCh():
 				logger.InfoCF("weixin", "Rebind signal received, re-subscribing", map[string]any{
 					"agent": c.BoundAgent(),
 				})
@@ -730,19 +870,64 @@ func (c *WeixinChannel) dispatchOutbound(ctx context.Context, outboundMsg bus.Ou
 	}
 
 	// 发送消息给微信用户
-	if _, err := c.Send(ctx, OutboundMessage{
+	msg := OutboundMessage{
 		Channel: outboundMsg.Channel,
 		ChatID:  outboundMsg.ChatID,
 		Content: outboundMsg.Content,
-	}); err != nil {
-		logger.ErrorCF("weixin", "Failed to send outbound message", map[string]any{
+	}
+	if _, err := c.Send(ctx, msg); err != nil {
+		logger.WarnCF("weixin", "Send failed, queuing for retry", map[string]any{
 			"chat_id": outboundMsg.ChatID,
 			"error":   err.Error(),
 		})
+		c.enqueueRetry(outboundMsg.ChatID, msg, 0)
 	}
 }
 
+// enqueueRetry 将消息放入待发送队列并安排下一次重试。
+// retriesDone 是已经失败过的次数（0 表示首次失败）。
+// 超过最大重试次数则丢弃并记错误日志。
+func (c *WeixinChannel) enqueueRetry(userID string, msg OutboundMessage, retriesDone int) {
+	nextRetries := retriesDone + 1
+	if nextRetries > maxSendRetries {
+		logger.ErrorCF("weixin", "Dropping message after max retries", map[string]any{
+			"user_id":     userID,
+			"retries":     retriesDone,
+			"content_len": len(msg.Content),
+		})
+		return
+	}
+
+	// 指数退避：第 1 次 retryInitialWait，每次翻倍，封顶 retryMaxWait。
+	nextWait := retryInitialWait
+	for i := 1; i < nextRetries; i++ {
+		nextWait *= 2
+		if nextWait > retryMaxWait {
+			nextWait = retryMaxWait
+			break
+		}
+	}
+
+	// 如果处于会话暂停，使用暂停剩余时间（取较大值）。
+	if remaining := c.remainingPause(); remaining > nextWait {
+		nextWait = remaining
+	}
+
+	c.queuePendingReply(userID, pendingReply{
+		msg:      msg,
+		retries:  nextRetries,
+		nextWait: nextWait,
+	})
+	c.scheduleFlush(userID, nextWait)
+}
+
 // ============ 发送消息 ============
+
+const (
+	maxSendRetries   = 5               // 发送失败最大重试次数
+	retryInitialWait = 2 * time.Second // 首次重试延迟
+	retryMaxWait     = 2 * time.Minute // 最大重试延迟
+)
 
 // OutboundMessage 出站消息结构
 type OutboundMessage struct {
@@ -751,33 +936,74 @@ type OutboundMessage struct {
 	Content string
 }
 
+// pendingReply 待发送队列中的一条消息，附带重试信息。
+type pendingReply struct {
+	msg      OutboundMessage
+	retries  int           // 已重试次数（0 表示首次发送）
+	nextWait time.Duration // 下次重试的延迟（指数退避使用）
+}
+
 // stripMarkdown 去除 markdown 格式，转换为纯文本
 // 微信不支持 markdown 渲染，转换以便阅读
 func stripMarkdown(text string) string {
-	// 去除 **bold** -> bold
-	text = strings.ReplaceAll(text, "**", "")
-	// 去除 *italic* -> (保留原样，因为微信也支持)
-	// 去除 `code` -> code
-	text = strings.ReplaceAll(text, "`", "")
-	// 去除 ### 标题
-	for _, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(line, "### ") {
-			text = strings.ReplaceAll(text, line, strings.TrimPrefix(line, "### "))
-		}
-	}
-	// 去除表格 header 分隔符 |---|
 	lines := strings.Split(text, "\n")
-	var cleanLines []string
+	var out []string
+
 	for _, line := range lines {
-		if strings.Contains(line, "|---|") || strings.Contains(line, "|:--|") {
+		// 跳过表格分隔行（如 |---|---|、:-- | ---:、| :---: | 等）
+		if isTableSeparatorLine(line) {
 			continue
 		}
-		cleanLines = append(cleanLines, line)
+
+		// 去掉行首的标题标记 # / ## / ### 等
+		trimmed := strings.TrimLeft(line, " ")
+		if len(trimmed) > 0 && trimmed[0] == '#' {
+			i := 0
+			for i < len(trimmed) && trimmed[i] == '#' {
+				i++
+			}
+			if i < len(trimmed) && trimmed[i] == ' ' {
+				line = trimmed[i+1:]
+			}
+		}
+
+		// 表格行的 | 替换为两个空格（只在含多个 | 的行做，避免误伤正文）
+		if strings.Count(line, "|") >= 2 {
+			line = strings.ReplaceAll(line, "|", "  ")
+			line = strings.TrimSpace(line)
+		}
+
+		out = append(out, line)
 	}
-	text = strings.Join(cleanLines, "\n")
-	// 去除 | 列分隔（简单处理）
-	text = strings.ReplaceAll(text, "|", "  ")
-	return strings.TrimSpace(text)
+
+	result := strings.Join(out, "\n")
+
+	// 行内格式：粗体
+	result = strings.ReplaceAll(result, "**", "")
+	// 行内格式：行内代码
+	result = strings.ReplaceAll(result, "`", "")
+
+	return strings.TrimSpace(result)
+}
+
+// isTableSeparatorLine 判断是否为 markdown 表格的分隔行（表头和内容之间的那行）。
+// 特征：主要由 - | : 和空格组成，且至少包含 3 个连续的 -。
+func isTableSeparatorLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false
+	}
+	// 必须含有至少一组 "---"
+	if !strings.Contains(trimmed, "---") {
+		return false
+	}
+	// 所有字符都只能是 - | : 空格
+	for _, r := range trimmed {
+		if r != '-' && r != '|' && r != ':' && r != ' ' {
+			return false
+		}
+	}
+	return true
 }
 
 // Send 发送文本消息给微信用户
@@ -802,8 +1028,8 @@ func (c *WeixinChannel) Send(ctx context.Context, msg OutboundMessage) ([]string
 	// 若此时直接返回错误，dispatchOutbound 只会记日志并丢弃 agent 的回复，导致用户收不到任何答复。
 	// 因此这里把回复放入待发送队列，并安排在暂停结束后自动重发，确保回复不丢失。
 	if remaining := c.remainingPause(); remaining > 0 {
-		c.queuePendingReply(toUserID, msg)
-		c.schedulePauseFlush(toUserID, remaining)
+		c.queuePendingReply(toUserID, pendingReply{msg: msg})
+		c.scheduleFlush(toUserID, remaining)
 		logger.WarnCF("weixin", "Session paused, queued reply for retry after pause", map[string]any{
 			"chat_id":       toUserID,
 			"content_len":   len(msg.Content),
@@ -818,9 +1044,19 @@ func (c *WeixinChannel) Send(ctx context.Context, msg OutboundMessage) ([]string
 
 	// 查找该用户的 context_token
 	// context_token 是接收消息时保存的，用于告诉微信这条回复属于哪个会话
+	// token 有有效期，过期后视为无 token，走 pending 队列等用户下一条消息刷新。
 	contextToken := ""
 	if ct, ok := c.contextTokens.Load(toUserID); ok {
-		contextToken, _ = ct.(string)
+		if entry, ok := ct.(contextTokenEntry); ok {
+			if entry.UpdatedAt > 0 && time.Since(time.Unix(entry.UpdatedAt, 0)) > weixinContextTokenTTL {
+				c.contextTokens.Delete(toUserID)
+				logger.InfoCF("weixin", "Context token expired, waiting for user message", map[string]any{
+					"to_user_id": toUserID,
+				})
+			} else {
+				contextToken = entry.Token
+			}
+		}
 	}
 
 	logger.InfoCF("weixin", "Send - context token lookup result", map[string]any{
@@ -840,7 +1076,7 @@ func (c *WeixinChannel) Send(ctx context.Context, msg OutboundMessage) ([]string
 			"to_user_id": toUserID,
 			"content":    msg.Content,
 		})
-		c.queuePendingReply(toUserID, msg)
+		c.queuePendingReply(toUserID, pendingReply{msg: msg})
 		return nil, nil // 不返回错误，让调用方以为发送成功
 	}
 
@@ -855,36 +1091,49 @@ func (c *WeixinChannel) Send(ctx context.Context, msg OutboundMessage) ([]string
 			"to_user_id": toUserID,
 			"error":      err.Error(),
 		})
-		if c.remainingPause() > 0 {
-			return nil, fmt.Errorf("weixin send: session paused")
-		}
-		return nil, fmt.Errorf("weixin send: temporary error")
+		return nil, fmt.Errorf("weixin send: %w", err)
 	}
 
 	return nil, nil
 }
 
 // queuePendingReply 将一条回复加入指定用户的待发送队列。
-func (c *WeixinChannel) queuePendingReply(userID string, msg OutboundMessage) {
+func (c *WeixinChannel) queuePendingReply(userID string, pr pendingReply) {
 	c.pendingRepliesMu.Lock()
-	c.pendingReplies[userID] = append(c.pendingReplies[userID], msg)
+	c.pendingReplies[userID] = append(c.pendingReplies[userID], pr)
 	c.pendingRepliesMu.Unlock()
 }
 
-// schedulePauseFlush 安排在会话暂停结束后，自动重发该用户积压的待回复消息。
+// popPendingReply 从队首弹出一条待发送消息。没有更多消息返回 false。
+func (c *WeixinChannel) popPendingReply(userID string) (pendingReply, bool) {
+	c.pendingRepliesMu.Lock()
+	defer c.pendingRepliesMu.Unlock()
+
+	queue := c.pendingReplies[userID]
+	if len(queue) == 0 {
+		return pendingReply{}, false
+	}
+	pr := queue[0]
+	c.pendingReplies[userID] = queue[1:]
+	if len(c.pendingReplies[userID]) == 0 {
+		delete(c.pendingReplies, userID)
+	}
+	return pr, true
+}
+
+// scheduleFlush 安排延迟后自动重发该用户积压的待回复消息。
 // 同一用户同一时间只保留一个定时器，避免重复创建。
-// 若暂停结束后仍处于暂停（期间再次过期），flushPendingReplies → Send 会再次入队并安排下一轮重试。
-func (c *WeixinChannel) schedulePauseFlush(userID string, delay time.Duration) {
-	c.pauseFlushMu.Lock()
-	if c.pauseFlushScheduled[userID] {
-		c.pauseFlushMu.Unlock()
+// 若重发时仍失败，Send 内部会再次入队并安排下一轮重试。
+func (c *WeixinChannel) scheduleFlush(userID string, delay time.Duration) {
+	c.flushMu.Lock()
+	if c.flushScheduled[userID] {
+		c.flushMu.Unlock()
 		return
 	}
-	c.pauseFlushScheduled[userID] = true
-	c.pauseFlushMu.Unlock()
+	c.flushScheduled[userID] = true
+	c.flushMu.Unlock()
 
-	// 暂停结束后留出少量缓冲，确保 remainingPause 已清零再重发。
-	wait := delay + 2*time.Second
+	wait := delay + 500*time.Millisecond
 
 	go func() {
 		timer := time.NewTimer(wait)
@@ -892,47 +1141,63 @@ func (c *WeixinChannel) schedulePauseFlush(userID string, delay time.Duration) {
 
 		select {
 		case <-c.ctx.Done():
-			c.clearPauseFlushScheduled(userID)
+			c.clearFlushScheduled(userID)
 			return
 		case <-timer.C:
 		}
 
-		// 先清除标记，使重发若再次遇到暂停时能安排下一轮定时器。
-		c.clearPauseFlushScheduled(userID)
+		c.clearFlushScheduled(userID)
 		c.flushPendingReplies(c.ctx, userID)
 	}()
 }
 
-// clearPauseFlushScheduled 清除某用户的暂停重发定时器标记。
-func (c *WeixinChannel) clearPauseFlushScheduled(userID string) {
-	c.pauseFlushMu.Lock()
-	delete(c.pauseFlushScheduled, userID)
-	c.pauseFlushMu.Unlock()
+// clearFlushScheduled 清除某用户的重发定时器标记。
+func (c *WeixinChannel) clearFlushScheduled(userID string) {
+	c.flushMu.Lock()
+	delete(c.flushScheduled, userID)
+	c.flushMu.Unlock()
 }
 
-// flushPendingReplies 发送积压的待回复消息
+// flushPendingReplies 发送积压的待回复消息。
+// 逐条从队首弹出并发送，失败的通过 enqueueRetry 重新入队尾并安排下一轮重试（指数退避）。
+// 逐条弹出保证 FIFO 顺序，且与并发入队的新消息不冲突。
 func (c *WeixinChannel) flushPendingReplies(ctx context.Context, userID string) {
-	c.pendingRepliesMu.Lock()
-	replies := c.pendingReplies[userID]
-	delete(c.pendingReplies, userID)
-	c.pendingRepliesMu.Unlock()
+	sent := 0
+	total := 0
+	for {
+		pr, ok := c.popPendingReply(userID)
+		if !ok {
+			break
+		}
+		total++
 
-	if len(replies) == 0 {
-		return
-	}
+		if pr.retries >= maxSendRetries {
+			logger.ErrorCF("weixin", "Dropping reply after max retries", map[string]any{
+				"user_id":     userID,
+				"retries":     pr.retries,
+				"content_len": len(pr.msg.Content),
+			})
+			continue
+		}
 
-	logger.InfoCF("weixin", "Flushing pending replies", map[string]any{
-		"user_id":     userID,
-		"reply_count": len(replies),
-	})
-
-	for _, reply := range replies {
-		if _, err := c.Send(ctx, reply); err != nil {
-			logger.ErrorCF("weixin", "Failed to flush pending reply", map[string]any{
+		if _, err := c.Send(ctx, pr.msg); err != nil {
+			logger.WarnCF("weixin", "Flush send failed, will retry", map[string]any{
 				"user_id": userID,
+				"retries": pr.retries,
 				"error":   err.Error(),
 			})
+			c.enqueueRetry(userID, pr.msg, pr.retries)
+			continue
 		}
+		sent++
+	}
+
+	if total > 0 {
+		logger.InfoCF("weixin", "Flushed pending replies", map[string]any{
+			"user_id": userID,
+			"sent":    sent,
+			"total":   total,
+		})
 	}
 }
 

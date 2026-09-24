@@ -21,12 +21,14 @@ import (
 
 // 微信 CDN 默认基础 URL，用于媒体文件下载
 const (
-	weixinDefaultCDNBaseURL    = "https://novac2c.cdn.weixin.qq.com/c2c"
-	weixinConfigCacheTTL        = 24 * time.Hour       // typing_ticket 缓存有效期
-	weixinConfigRetryInitial   = 2 * time.Second       // 获取配置失败后首次重试延迟
-	weixinConfigRetryMax        = time.Hour             // 获取配置失败后最大重试延迟
-	weixinSessionPauseDuration  = 5 * time.Minute             // 会话过期后暂停时长
-	weixinSessionExpiredCode    = -14                   // 会话过期的错误码
+	weixinDefaultCDNBaseURL      = "https://novac2c.cdn.weixin.qq.com/c2c"
+	weixinConfigCacheTTL         = 24 * time.Hour       // typing_ticket 缓存有效期
+	weixinConfigRetryInitial     = 2 * time.Second      // 获取配置失败后首次重试延迟
+	weixinConfigRetryMax         = time.Hour            // 获取配置失败后最大重试延迟
+	weixinSessionPauseDuration   = 5 * time.Minute      // 会话过期后暂停时长
+	weixinSessionExpiredCode     = -14                  // 会话过期的错误码
+	weixinContextTokenTTL        = 30 * time.Minute     // context_token 过期时间
+	weixinContextTokenCleanupInt = 10 * time.Minute     // 过期 token 清理周期
 )
 
 // ============ 类型定义 ============
@@ -45,10 +47,16 @@ type syncCursorFile struct {
 	GetUpdatesBuf string `json:"get_updates_buf"`
 }
 
+// contextTokenEntry 单个 context_token 条目，带更新时间用于过期判断
+type contextTokenEntry struct {
+	Token     string `json:"token"`
+	UpdatedAt int64  `json:"updated_at"` // Unix 秒时间戳
+}
+
 // contextTokensFile context_token 持久化文件结构
 // 每个用户对应一个 context_token，用于发送回复时关联会话
 type contextTokensFile struct {
-	Tokens map[string]string `json:"tokens"`
+	Tokens map[string]contextTokenEntry `json:"tokens"`
 }
 
 // ============ 路径构建函数 ============
@@ -112,7 +120,7 @@ func saveGetUpdatesBuf(path, cursor string) error {
 }
 
 // loadContextTokens 从文件加载所有用户的 context_token
-func loadContextTokens(path string) (map[string]string, error) {
+func loadContextTokens(path string) (map[string]contextTokenEntry, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -128,7 +136,7 @@ func loadContextTokens(path string) (map[string]string, error) {
 }
 
 // saveContextTokens 原子性保存所有 context_token 到文件
-func saveContextTokens(path string, tokens map[string]string) error {
+func saveContextTokens(path string, tokens map[string]contextTokenEntry) error {
 	data, err := json.Marshal(contextTokensFile{Tokens: tokens})
 	if err != nil {
 		return err
@@ -250,10 +258,14 @@ func (c *WeixinChannel) getTypingTicket(ctx context.Context, userID string) (str
 	retryDelay := entry.retryDelay
 	c.typingMu.Unlock()
 
-	// 从 contextToken 获取用户的会话标识
+	// 从 contextToken 获取用户的会话标识（已过期则视为没有）
 	contextToken := ""
 	if v, ok := c.contextTokens.Load(userID); ok {
-		contextToken, _ = v.(string)
+		if entry, ok := v.(contextTokenEntry); ok {
+			if entry.UpdatedAt == 0 || time.Since(time.Unix(entry.UpdatedAt, 0)) <= weixinContextTokenTTL {
+				contextToken = entry.Token
+			}
+		}
 	}
 
 	// 调用 API 获取配置（包含 typing_ticket）
