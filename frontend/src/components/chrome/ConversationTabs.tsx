@@ -12,6 +12,8 @@ interface ConversationTabsProps {
   onNew: () => void;
   /** 正在生成回复的标签 id（显示脉冲圆点） */
   busyIds?: Set<string>;
+  /** 紧凑模式：使用更窄的标签宽度，便于放进侧栏 / dock 面板。 */
+  compact?: boolean;
 }
 
 /**
@@ -25,6 +27,7 @@ export function ConversationTabs({
   onClose,
   onNew,
   busyIds,
+  compact = false,
 }: ConversationTabsProps) {
   return (
     <>
@@ -36,7 +39,8 @@ export function ConversationTabs({
             <div
               key={tab.id}
               className={cn(
-                'group/tab flex h-8 w-[190px] shrink-0 items-center gap-2 rounded-lg border pl-3 pr-1.5 text-[12px] transition-colors',
+                'group/tab flex h-8 shrink-0 items-center gap-2 rounded-lg border pl-3 pr-1.5 text-[12px] transition-colors',
+                compact ? 'w-[148px]' : 'w-[190px]',
                 active
                   ? 'border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-200'
                   : 'border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground',

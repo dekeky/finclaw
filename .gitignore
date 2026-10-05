@@ -100,6 +100,9 @@ scratch/
 tmp/
 temp/
 
+# 本地运行日志
+.agent-run*.log
+
 #配置文件
 config.json
 

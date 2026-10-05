@@ -196,6 +196,7 @@ export default function BacktestPage() {
   }
   const [analysisRun, setAnalysisRun] = useState<BacktestAnalysisTarget | null>(null);
   const [analysisFocus, setAnalysisFocus] = useState(0);
+  const [attributionRequest, setAttributionRequest] = useState<number | null>(null);
 
   useEffect(() => {
     setAnalysisRun(null);
@@ -656,6 +657,20 @@ export default function BacktestPage() {
     toast.success(`已加入对话：${target.name}`);
   }
 
+  function analyzeAttribution(target: BacktestAnalysisTarget) {
+    if (!strategyReady) {
+      toast.error('请先保存策略，再进行 AI 归因分析');
+      return;
+    }
+    setAnalysisRun(target);
+    setAttributionRequest((prev) => (prev ?? 0) + 1);
+    persistChatOpen(true);
+  }
+
+  function clearAttributionRequest(id: number) {
+    setAttributionRequest((cur) => (cur === id ? null : cur));
+  }
+
   const openLibrary = () => {
     setShowLibrary(true);
     setSelectedName(null);
@@ -1022,6 +1037,7 @@ export default function BacktestPage() {
                       active={strategyPane === 'runs'}
                       analysisRunId={analysisRun?.id}
                       onAddToChat={addRunToChat}
+                      onAnalyzeAttribution={analyzeAttribution}
                       onAnalysisRunRename={(name) => {
                         setAnalysisRun((prev) => (prev ? { ...prev, name } : prev));
                       }}
@@ -1047,6 +1063,8 @@ export default function BacktestPage() {
                 strategyReady={strategyReady}
                 analysisRun={analysisRun}
                 analysisFocus={analysisFocus}
+                attributionRequest={attributionRequest}
+                onAttributionHandled={clearAttributionRequest}
                 onSelectAnalysisRun={setAnalysisRun}
                 onClearAnalysisRun={() => setAnalysisRun(null)}
                 onStrategyFileChanged={handleAgentFileChanged}

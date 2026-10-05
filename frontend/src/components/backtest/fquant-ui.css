@@ -1507,6 +1507,80 @@ button.symbol-link:hover:not(:disabled),
 
 .fquant-ui .rebalance-pane .analysis-table { max-height: none; }
 
+.fquant-ui .blotter-filter-search {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.fquant-ui .blotter-filter-search input {
+  width: 100%;
+  min-width: 180px;
+}
+
+.fquant-ui .rebalance-pane > .blotter-filter + .log-stream {
+  border-top: 0;
+}
+
+.fquant-ui .log-stream {
+  border: 1px solid var(--line);
+  background: var(--bg);
+  padding: 4px 0;
+  max-height: min(560px, 62vh);
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.fquant-ui .log-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 1px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.fquant-ui .log-line:hover { background: var(--bg-hover); }
+
+.fquant-ui .log-time {
+  flex: none;
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.fquant-ui .log-tag {
+  flex: none;
+  width: 34px;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--bg-elev);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.fquant-ui .log-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text);
+}
+
+.fquant-ui .log-text .symbol-link {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.fquant-ui .log-strategy .log-tag { color: var(--info); }
+.fquant-ui .log-fill .log-tag { color: var(--accent); }
+.fquant-ui .log-reject .log-tag { color: var(--danger); }
+
+.fquant-ui .log-reject .log-text { color: var(--danger); }
+.fquant-ui .log-warn .log-text { color: var(--info); }
+.fquant-ui .log-error .log-text { color: var(--danger); }
+
 .fquant-ui .kline-pane {
   position: relative;
   height: 100%;

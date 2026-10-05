@@ -22,7 +22,6 @@ import {
   type ModelProfileSummary,
 } from '@/api/models';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -267,7 +266,6 @@ export default function ModelsPage() {
         <div className="flex min-w-0 items-center gap-3">
           <SidebarExpandTrigger />
           <h1 className="text-base font-medium tracking-tight text-foreground/90">模型配置</h1>
-          <Badge variant="outline" className="text-[10px]">{models.length}</Badge>
         </div>
         <ThemeToggle />
       </div>

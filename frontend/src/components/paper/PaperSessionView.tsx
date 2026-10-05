@@ -5,7 +5,7 @@ import type { PaperSessionDetail } from '@/api/paper';
 import '@/components/backtest/fquant-ui.css';
 import EquityReturnChart from '@/components/backtest/EquityReturnChart';
 import { formatDateMinute, formatMetric, STATUS_LABEL, type MetricSpec } from '@/components/backtest/format';
-import { RebalancePane, type RebalanceEvent } from '@/components/backtest/RebalanceTable';
+import { involvedSymbols, RebalancePane, type RebalanceEvent } from '@/components/backtest/RebalanceTable';
 import { RunReport } from '@/components/backtest/RunReport';
 import { cumulativePct, toEquity } from '@/components/backtest/series';
 import SymbolInspectDialog from '@/components/backtest/SymbolInspectDialog';
@@ -99,6 +99,31 @@ export function PaperSessionView({
   const catching = session.status === 'catching_up';
   const pickCodes = useMemo(() => pickSet?.picks.map((row) => row.symbol) ?? [], [pickSet]);
   const pickKey = pickCodes.join(',');
+  const nameCodes = useMemo(() => {
+    const codes = new Set<string>(pickCodes);
+    const add = (value: unknown) => {
+      const code = String(value ?? '').trim();
+      if (code) codes.add(code);
+    };
+    for (const row of orders) add(row.symbol);
+    // 调仓历史里的标的（selected / targets / plan 腿）也必须查名称，
+    // 否则只出现在历史里的标的会退化成纯代码。
+    for (const row of rebalances) {
+      for (const code of involvedSymbols(row)) add(code);
+    }
+    for (const row of session.result?.holdings ?? []) add(row.symbol);
+    for (const row of session.result?.positions ?? []) add(row.symbol);
+    for (const point of session.result?.prices ?? []) add(point.symbol);
+    return [...codes];
+  }, [
+    pickCodes,
+    orders,
+    rebalances,
+    session.result?.holdings,
+    session.result?.positions,
+    session.result?.prices,
+  ]);
+  const nameKey = nameCodes.join(',');
   const inspectSeedPrices = useMemo(
     () => (session.result?.prices ?? []).filter((point) => point.symbol === inspectSymbol),
     [session.result?.prices, inspectSymbol],
@@ -107,14 +132,12 @@ export function PaperSessionView({
   const showTrades = rebalances.length > 0 || orders.length > 0;
 
   useEffect(() => {
-    const fromOrders = orders.map((row) => String(row.symbol ?? '').trim()).filter(Boolean);
-    const codes = [...new Set([...pickCodes, ...fromOrders])].slice(0, 80);
-    if (!codes.length) {
+    if (!nameCodes.length) {
       setNames({});
       return;
     }
     let cancelled = false;
-    listMarketSymbols({ codes: codes.join(',') })
+    listMarketSymbols({ codes: nameCodes.join(',') })
       .then((items) => {
         if (cancelled) return;
         const next: Record<string, string> = {};
@@ -127,7 +150,7 @@ export function PaperSessionView({
     return () => {
       cancelled = true;
     };
-  }, [pickKey, session.id]);
+  }, [nameKey, session.id]);
 
   useEffect(() => {
     const seeded = quotesFromPrices(session.result?.prices ?? [], pickCodes);

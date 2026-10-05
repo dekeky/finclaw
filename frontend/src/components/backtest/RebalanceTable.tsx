@@ -1,11 +1,12 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { copyToClipboard } from "@/lib/clipboard";
 import DateRangePicker, { filterPresets } from "./DateRangePicker";
 import Hint from "./Hint";
 import { dayKey, formatMetric, formatSymbolLabel, SIDE_LABEL, translate } from "./format";
 import { virtualWindow } from "./VirtualList";
 
 const ROW_HEIGHT = 34;
-const PAGE_SIZE = 20;
+const LOG_PAGE_SIZE = 100;
 
 export type StrategyLog = { time?: string; message?: string; level?: number };
 
@@ -20,10 +21,229 @@ export function filterStrategyLogs(rows: StrategyLog[], from = "", to = ""): Str
   });
 }
 
+export type LogEntryKind = "strategy" | "rebalance" | "fill" | "reject";
+
+export type LogEntry = {
+  key: string;
+  time: string;
+  day: string;
+  kind: LogEntryKind;
+  tag: string;
+  message: string;
+  symbols: string[];
+  level?: number;
+  haystack: string;
+};
+
+const LOG_TAG: Record<LogEntryKind, string> = {
+  strategy: "日志",
+  rebalance: "调仓",
+  fill: "成交",
+  reject: "拒单",
+};
+
+function makeLogEntry(
+  key: string,
+  time: string,
+  kind: LogEntryKind,
+  message: string,
+  symbols: string[],
+  names: Record<string, string>,
+  level?: number,
+): LogEntry {
+  const day = dayKey(time);
+  const haystack = [
+    time,
+    day,
+    LOG_TAG[kind],
+    message,
+    ...symbols.flatMap((code) => [code, formatSymbolLabel(code, names)]),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return { key, time, day, kind, tag: LOG_TAG[kind], message, symbols, level, haystack };
+}
+
+/** 把策略日志、调仓事件、成交明细与拒单合并成一条按时间倒序的原始日志流。 */
+export function buildLogEntries(
+  rows: RebalanceEvent[] = [],
+  rejects: RejectRow[] = [],
+  orders: Record<string, unknown>[] = [],
+  logs: StrategyLog[] = [],
+  names: Record<string, string> = {},
+): LogEntry[] {
+  const entries: LogEntry[] = [];
+  mergeLogEvents(rows, rejects, orders, logs).forEach((row, index) => {
+    const time = String(row.time || "");
+    if (isStrategyLog(row)) {
+      entries.push(makeLogEntry(`strategy-${index}`, time, "strategy", eventReason(row) || "—", [], names, row.level));
+      return;
+    }
+    const symbols = involvedSymbols(row);
+    if (String(row.status || "").toLowerCase() === "rejected") {
+      const plan = row.plan ?? {};
+      const parts = [
+        "拒单",
+        plan.side ? translate(SIDE_LABEL, plan.side) : "",
+        symbols.length ? formatSymbolsText(symbols, names) : "",
+        formatOrderQuantity(plan.quantity),
+        eventReason(row),
+      ].filter(Boolean);
+      entries.push(makeLogEntry(`reject-${index}`, time, "reject", parts.join(" "), symbols, names));
+      return;
+    }
+    const parts = [
+      METHOD_LABEL[String(row.method || "")] || row.method || "调仓",
+      symbols.length ? formatSymbolsText(symbols, names) : "",
+      eventReason(row),
+      statusText(row),
+    ].filter(Boolean);
+    entries.push(makeLogEntry(`rebalance-${index}`, time, "rebalance", parts.join(" · "), symbols, names));
+  });
+
+  orders.forEach((order, index) => {
+    if (String(order.status ?? "filled").toLowerCase() !== "filled") return;
+    const quantity = Number(order.filled_quantity ?? order.quantity);
+    if (Number.isFinite(quantity) && quantity <= 0) return;
+    const symbol = String(order.symbol ?? "");
+    const time = String(order.updated_at ?? order.created_at ?? order.time ?? "");
+    const fill = toFill(order);
+    const parts = [
+      "成交",
+      fill.side ? translate(SIDE_LABEL, fill.side) : "",
+      symbol ? formatSymbolLabel(symbol, names) : "",
+      fill.quantity != null ? `${formatQuantity(fill.quantity)}股` : "",
+      fill.price != null ? `@ ${formatMetric(fill.price, "money")}` : "",
+      fill.value != null ? `金额 ${formatMetric(fill.value, "money")}` : "",
+      ...formatFeeParts(fill),
+      fillReasonForOrder(order, rows),
+    ].filter(Boolean);
+    entries.push(makeLogEntry(`fill-${index}`, time, "fill", parts.join(" "), symbol ? [symbol] : [], names));
+  });
+
+  return entries.sort((left, right) => {
+    const byDay = (right.day || "").localeCompare(left.day || "");
+    if (byDay !== 0) return byDay;
+    return right.time.localeCompare(left.time);
+  });
+}
+
+export function filterLogEntries(
+  entries: LogEntry[],
+  options: { from?: string; to?: string; symbol?: string; query?: string } = {},
+): LogEntry[] {
+  const { from = "", to = "", symbol = "", query = "" } = options;
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  return entries.filter((entry) => {
+    if (from || to) {
+      if (!entry.day) return false;
+      if (from && entry.day < from) return false;
+      if (to && entry.day > to) return false;
+    }
+    if (symbol && !entry.symbols.includes(symbol)) return false;
+    if (terms.length && !terms.every((term) => entry.haystack.includes(term))) return false;
+    return true;
+  });
+}
+
+function collectLogSymbols(entries: LogEntry[], names: Record<string, string>): string[] {
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    for (const symbol of entry.symbols) seen.add(symbol);
+  }
+  return [...seen].sort((a, b) => formatSymbolLabel(a, names).localeCompare(formatSymbolLabel(b, names), "zh-CN"));
+}
+
+function formatSymbolsText(symbols: string[], names: Record<string, string>): string {
+  const shown = symbols.slice(0, 8).map((code) => formatSymbolLabel(code, names));
+  return symbols.length > shown.length ? `${shown.join("、")} 等${symbols.length}只` : shown.join("、");
+}
+
+function formatOrderQuantity(value: unknown): string {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return "";
+  return `${formatQuantity(number)}股`;
+}
+
+function formatFeeParts(fill: ActionFill): string[] {
+  const parts: string[] = [];
+  if (fill.commission) parts.push(`佣金 ${formatFee(fill.commission)}`);
+  if (fill.stampTax) parts.push(`印花税 ${formatFee(fill.stampTax)}`);
+  if (fill.transferFee) parts.push(`过户费 ${formatFee(fill.transferFee)}`);
+  if (fill.slippage) parts.push(`滑点 ${formatFee(fill.slippage)}`);
+  return parts;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** 日线行情的时间戳固定落在 00:00 UTC（北京 08:00），不是真实成交时刻，日志里只保留日期。 */
+function dailyStampDate(text: string): string | null {
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.\d+)?$/);
+  if (!match) return null;
+  return match[2] === "00:00:00" || match[2] === "08:00:00" ? match[1] : null;
+}
+
+/** 服务日志风格的时间：去掉 ISO 的 T、毫秒与时区后缀，保留原始日期/时间。 */
+export function formatLogTime(raw: string): string {
+  if (!raw) return "—";
+  const text = raw.replace("T", " ").replace(/(\.\d+)?([+-]\d{2}:?\d{2}|Z)$/, "");
+  const trimmed = text.trim() || raw;
+  return dailyStampDate(trimmed) ?? trimmed;
+}
+
+function renderLogMessage(
+  entry: LogEntry,
+  names: Record<string, string>,
+  onSelectSymbol: (symbol: string) => void,
+): ReactNode {
+  const labelToCode = new Map<string, string>();
+  for (const code of entry.symbols) {
+    const label = formatSymbolLabel(code, names);
+    if (label && label !== code) labelToCode.set(label, code);
+  }
+  if (!labelToCode.size) return entry.message;
+  const pattern = [...labelToCode.keys()]
+    .sort((left, right) => right.length - left.length)
+    .map(escapeRegExp)
+    .join("|");
+  return entry.message.split(new RegExp(`(${pattern})`)).map((part, index) => {
+    const code = labelToCode.get(part);
+    if (!code) return <span key={index}>{part}</span>;
+    return (
+      <button key={index} type="button" className="symbol-link" onClick={() => onSelectSymbol(code)}>
+        {part}
+      </button>
+    );
+  });
+}
+
+function LogLine({
+  entry,
+  names,
+  onSelectSymbol,
+}: {
+  entry: LogEntry;
+  names: Record<string, string>;
+  onSelectSymbol: (symbol: string) => void;
+}) {
+  const warn = entry.level != null && entry.level >= 30;
+  const error = entry.level != null && entry.level >= 40;
+  return (
+    <div className={`log-line log-${entry.kind}${error ? " log-error" : warn ? " log-warn" : ""}`}>
+      <span className="log-time">{formatLogTime(entry.time)}</span>
+      <span className="log-tag">{entry.tag}</span>
+      <span className="log-text">{renderLogMessage(entry, names, onSelectSymbol)}</span>
+    </div>
+  );
+}
+
 export type RebalanceEvent = {
   time?: string;
   method?: string;
   reason?: string;
+  level?: number;
   targets?: Record<string, unknown> | null;
   selected?: string[] | null;
   scores?: Record<string, unknown> | null;
@@ -157,38 +377,47 @@ export function RebalancePane({
   const [symbol, setSymbol] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
+  const [copied, setCopied] = useState(false);
 
-  const merged = useMemo(() => mergeLogEvents(rows, rejects, orders, logs), [rows, rejects, orders, logs]);
-  const symbols = useMemo(() => collectFilterSymbols(merged, names), [merged, names]);
-  const bounds = useMemo(() => dateBounds(merged), [merged]);
-  const datePresets = useMemo(() => filterPresets(bounds.min, bounds.max), [bounds.min, bounds.max]);
-  const symbolOptions = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return symbols;
-    return symbols.filter((code) => {
-      const label = formatSymbolLabel(code, names).toLowerCase();
-      return code.toLowerCase().includes(needle) || label.includes(needle);
-    });
-  }, [symbols, query, names]);
-  const selectOptions = symbol && !symbolOptions.includes(symbol) ? [symbol, ...symbolOptions] : symbolOptions;
-  const filtered = useMemo(
-    () => merged.filter((row) => matchesRebalance(row, from, to, symbol)),
-    [merged, from, to, symbol],
+  const entries = useMemo(
+    () => buildLogEntries(rows, rejects, orders, logs, names),
+    [rows, rejects, orders, logs, names],
   );
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const symbols = useMemo(() => collectLogSymbols(entries, names), [entries, names]);
+  const bounds = useMemo(() => dateBounds(entries), [entries]);
+  const datePresets = useMemo(() => filterPresets(bounds.min, bounds.max), [bounds.min, bounds.max]);
+  const filtered = useMemo(
+    () => filterLogEntries(entries, { from, to, symbol, query }),
+    [entries, from, to, symbol, query],
+  );
+  const totalPages = Math.max(1, Math.ceil(filtered.length / LOG_PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
-  const pageRows = useMemo(
-    () => filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE),
+  const pageEntries = useMemo(
+    () => filtered.slice(safePage * LOG_PAGE_SIZE, safePage * LOG_PAGE_SIZE + LOG_PAGE_SIZE),
     [filtered, safePage],
   );
-  const filterActive = Boolean(from || to || symbol);
+  const filterActive = Boolean(from || to || symbol || query.trim());
 
   useEffect(() => {
     setPage(0);
-  }, [from, to, symbol]);
+  }, [from, to, symbol, query]);
 
-  if (!merged.length) {
-    return <div className="empty muted">这次回测没有日志。</div>;
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  async function copyLogs() {
+    const text = filtered
+      .map((entry) => `${formatLogTime(entry.time)}\t${entry.tag}\t${entry.message}`)
+      .join("\n");
+    try {
+      await copyToClipboard(text);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
   }
 
   function clearFilters() {
@@ -198,9 +427,21 @@ export function RebalancePane({
     setQuery("");
   }
 
+  if (!entries.length) {
+    return <div className="empty muted">这次回测没有日志。</div>;
+  }
+
   return (
     <div className="rebalance-pane">
       <div className="blotter-filter">
+        <label className="blotter-filter-search">
+          搜索
+          <input
+            value={query}
+            placeholder="时间 / 标的 / 原因 / 内容"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </label>
         <label>
           日期
           <DateRangePicker
@@ -217,14 +458,11 @@ export function RebalancePane({
             }}
           />
         </label>
-        <label className="blotter-filter-symbol">
-          股票
-          {symbols.length > 8 ? (
-            <input value={query} placeholder="搜索名称或代码" onChange={(event) => setQuery(event.target.value)} />
-          ) : null}
+        <label>
+          标的
           <select value={symbol} onChange={(event) => setSymbol(event.target.value)}>
             <option value="">全部</option>
-            {selectOptions.map((code) => (
+            {symbols.map((code) => (
               <option key={code} value={code}>
                 {formatSymbolLabel(code, names)}
               </option>
@@ -236,16 +474,25 @@ export function RebalancePane({
             清除筛选
           </button>
         ) : null}
+        {filtered.length ? (
+          <button type="button" className="btn ghost" onClick={copyLogs}>
+            {copied ? "已复制" : "复制"}
+          </button>
+        ) : null}
         <span className="blotter-filter-count">
-          {filterActive ? `筛选 ${filtered.length} / ${merged.length} 条` : `共 ${merged.length} 条`}
+          {filterActive ? `筛选 ${filtered.length} / ${entries.length} 条` : `共 ${entries.length} 条`}
         </span>
       </div>
       {filtered.length ? (
-        <RebalanceTable rows={pageRows} names={names} orders={orders} onSelectSymbol={onSelectSymbol} />
+        <div className="log-stream" role="log" aria-label="日志">
+          {pageEntries.map((entry) => (
+            <LogLine key={entry.key} entry={entry} names={names} onSelectSymbol={onSelectSymbol} />
+          ))}
+        </div>
       ) : (
-        <div className="empty muted">没有符合筛选条件的记录。</div>
+        <div className="empty muted">没有符合筛选条件的日志。</div>
       )}
-      {filtered.length > PAGE_SIZE ? (
+      {filtered.length > LOG_PAGE_SIZE ? (
         <Pager page={safePage} totalPages={totalPages} total={filtered.length} onChange={setPage} />
       ) : null}
     </div>
@@ -672,6 +919,7 @@ export function mergeLogEvents(
       time: row.time,
       method: "rebalance_log",
       reason: String(row.message ?? ""),
+      level: row.level,
     }));
   const merged = [...rows, ...extra, ...notes].sort((left, right) => {
     const byDay = dayKey(right.time).localeCompare(dayKey(left.time));
@@ -829,14 +1077,6 @@ function eventSymbols(row: RebalanceEvent): string[] {
   return entries.filter(([, value]) => typeof value === "number").map(([key]) => key);
 }
 
-function collectFilterSymbols(rows: RebalanceEvent[], names: Record<string, string>): string[] {
-  const seen = new Set<string>();
-  for (const row of rows) {
-    for (const symbol of involvedSymbols(row)) seen.add(symbol);
-  }
-  return [...seen].sort((a, b) => formatSymbolLabel(a, names).localeCompare(formatSymbolLabel(b, names), "zh-CN"));
-}
-
 function dateBounds(rows: { time?: string }[]): { min?: string; max?: string } {
   let min = "";
   let max = "";
@@ -849,16 +1089,7 @@ function dateBounds(rows: { time?: string }[]): { min?: string; max?: string } {
   return { min: min || undefined, max: max || undefined };
 }
 
-function matchesRebalance(row: RebalanceEvent, from: string, to: string, symbol: string): boolean {
-  const day = dayKey(row.time);
-  if (!day) return !(from || to);
-  if (from && day < from) return false;
-  if (to && day > to) return false;
-  if (symbol && !involvedSymbols(row).includes(symbol)) return false;
-  return true;
-}
-
-function involvedSymbols(row: RebalanceEvent): string[] {
+export function involvedSymbols(row: RebalanceEvent): string[] {
   const seen = new Set<string>();
   const add = (value: unknown) => {
     const text = String(value ?? "").trim();

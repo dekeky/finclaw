@@ -1,4 +1,4 @@
-import { IconPlayerStop, IconTrash } from '@tabler/icons-react';
+import { IconPlayerStop, IconSparkles, IconTrash } from '@tabler/icons-react';
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -36,6 +36,7 @@ import { canAnalyzeBacktest, type BacktestAnalysisTarget } from '@/lib/strategyP
 import { withReturnTo } from '@/lib/navigationReturn';
 import { createPaperSession, listPaperSessions, type PaperSession } from '@/api/paper';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/cn';
 import { PRIMARY_BUTTON_CLASS } from '@/lib/primaryButton';
 import { useAuth } from '@/state/auth';
 import { toast } from 'sonner';
@@ -148,6 +149,7 @@ export function BacktestRunsPanel({
   active = true,
   analysisRunId,
   onAddToChat,
+  onAnalyzeAttribution,
   onAnalysisRunRename,
   onAnalysisRunClear,
 }: {
@@ -159,6 +161,7 @@ export function BacktestRunsPanel({
   active?: boolean;
   analysisRunId?: string | null;
   onAddToChat?: (target: BacktestAnalysisTarget) => void;
+  onAnalyzeAttribution?: (target: BacktestAnalysisTarget) => void;
   onAnalysisRunRename?: (name: string) => void;
   onAnalysisRunClear?: () => void;
 }) {
@@ -571,7 +574,13 @@ export function BacktestRunsPanel({
   const showPaperSessions = paperSessions.length > 0;
   const showStartPaper = current?.status === 'succeeded';
   const showCancel = isLiveStatus(current?.status);
-  const showRunToolbar = strategyPlatform === 'finclaw' && (showPaperSessions || showStartPaper || showCancel);
+  const attributionTarget: BacktestAnalysisTarget | null =
+    strategyPlatform === 'finclaw' && current
+      ? { id: current.id, name: runDisplayName(current), status: current.status }
+      : null;
+  const showAttribution = Boolean(attributionTarget && onAnalyzeAttribution);
+  const showRunToolbar =
+    strategyPlatform === 'finclaw' && (showPaperSessions || showStartPaper || showCancel || showAttribution);
 
   return (
     <div className="fquant-ui flex min-h-0 flex-1 flex-row overflow-hidden">
@@ -701,8 +710,25 @@ export function BacktestRunsPanel({
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {showRunToolbar ? (
             <div className="flex shrink-0 items-center justify-end gap-2 border-b border-border/60 px-3 py-1.5">
+              {showAttribution && attributionTarget && onAnalyzeAttribution ? (
+                <Button
+                  type="button"
+                  size="xs"
+                  className={cn('gap-1', PRIMARY_BUTTON_CLASS)}
+                  disabled={!canAnalyzeBacktest(attributionTarget.status)}
+                  title={
+                    canAnalyzeBacktest(attributionTarget.status)
+                      ? '让 AI 对这次回测做归因分析'
+                      : '回测结束后再进行归因分析'
+                  }
+                  onClick={() => onAnalyzeAttribution(attributionTarget)}
+                >
+                  <IconSparkles className="size-3.5" stroke={1.75} />
+                  AI 归因分析
+                </Button>
+              ) : null}
               {showPaperSessions ? (
-                <Button type="button" size="xs" variant="outline" onClick={openPaperSessions}>
+                <Button type="button" size="xs" className={PRIMARY_BUTTON_CLASS} onClick={openPaperSessions}>
                   查看实盘模拟
                 </Button>
               ) : null}

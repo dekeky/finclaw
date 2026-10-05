@@ -1,12 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { IconAlertTriangle, IconBuildingStore, IconChevronsRight, IconMessagePlus, IconX } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBuildingStore, IconChevronsRight, IconHistory, IconTrash, IconX } from '@tabler/icons-react';
 import { BacktestMentionHints } from '@/components/BacktestMentionHints';
 import { ChatComposerToolbar } from '@/components/chrome/ChatComposerToolbar';
+import { ConversationTabs } from '@/components/chrome/ConversationTabs';
 import { ChatContainer } from '@/components/ChatContainer';
 import { ChatSlashHints, handleSlashInputKeyDown } from '@/components/ChatSlashHints';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { listBacktestRuns, runDisplayName } from '@/api/backtest';
 import { buildAgentWsUrl } from '@/lib/agentWsUrl';
@@ -19,6 +23,14 @@ import {
   removeBacktestMention,
   type MentionRun,
 } from '@/lib/backtestMention';
+import {
+  deleteConversation,
+  inferConversationTitle,
+  listConversations,
+  loadConversation,
+  type ConversationSummary,
+} from '@/lib/chatPersistence';
+import { loadAgentTabs, saveAgentTabs, type ChatTab } from '@/lib/chatTabs';
 import { findStrategyFileTouchInTurn, turnHasUserMessage } from '@/lib/strategyFileDetect';
 import {
   buildStrategyAgentPrompt,
@@ -39,6 +51,23 @@ const STRATEGY_QUICK_PROMPTS = [
   '解释策略逻辑并给出改进建议',
 ];
 
+const ATTRIBUTION_PROMPT_TAIL =
+  '做归因分析：拆解收益来源（行业、个股、选股/择时与因子贡献），分析回撤与波动的来源，指出主要风险点和改进方向。';
+
+function buildAttributionPrompt(strategyName?: string | null): string {
+  const scope = strategyName ? `当前策略「${strategyName}」的这次回测` : '这次回测';
+  return `请对${scope}${ATTRIBUTION_PROMPT_TAIL}`;
+}
+
+interface TabsState {
+  /** 该组标签所属的会话 key（backtest:<agent>），避免切换 Agent 时把旧标签写入新 Agent */
+  agent: string | null;
+  tabs: ChatTab[];
+  activeId: string | null;
+}
+
+const EMPTY_TABS: TabsState = { agent: null, tabs: [], activeId: null };
+
 interface StrategyChatPanelProps {
   platform: StrategyPlatform;
   strategyPath?: string | null;
@@ -47,6 +76,9 @@ interface StrategyChatPanelProps {
   strategyReady: boolean;
   analysisRun?: BacktestAnalysisTarget | null;
   analysisFocus?: number;
+  /** 非空时，连接就绪后自动发送一次归因分析请求，发送后回调清空。 */
+  attributionRequest?: number | null;
+  onAttributionHandled?: (id: number) => void;
   onClearAnalysisRun?: () => void;
   onSelectAnalysisRun?: (target: BacktestAnalysisTarget) => void;
   onStrategyFileChanged?: (agentName: string) => void;
@@ -62,6 +94,8 @@ export function StrategyChatPanel({
   strategyReady,
   analysisRun,
   analysisFocus = 0,
+  attributionRequest,
+  onAttributionHandled,
   onClearAnalysisRun,
   onSelectAnalysisRun,
   onStrategyFileChanged,
@@ -84,6 +118,8 @@ export function StrategyChatPanel({
     send,
     interrupt,
     clearMessages,
+    restoreMessages,
+    getSessionId,
     reconnect,
     taskStartedAt,
   } = useWebSocket(wsUrl, { persistAgentKey: persistKey });
@@ -98,6 +134,7 @@ export function StrategyChatPanel({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const lastPulledTouchRef = useRef<string | null>(null);
   const wasTypingRef = useRef(false);
+  const handledAttributionRef = useRef<number | null>(null);
 
   const buildMessage = useCallback(
     (text: string) => buildStrategyAgentPrompt(platform, text, {
@@ -196,11 +233,159 @@ export function StrategyChatPanel({
     interrupt();
   }, [requireAuth, status, interrupt]);
 
-  const handleNewChat = useCallback(() => {
-    if (!requireAuth()) return;
+  // 点击「AI 归因分析」后自动发送一次归因请求；等待连接与策略就绪后触发。
+  useEffect(() => {
+    if (attributionRequest == null) return;
+    if (handledAttributionRef.current === attributionRequest) return;
+    if (status !== 'connected' || !strategyReady) return;
+    handledAttributionRef.current = attributionRequest;
+    handleSend(buildAttributionPrompt(strategyName));
+    onAttributionHandled?.(attributionRequest);
+  }, [attributionRequest, status, strategyReady, handleSend, strategyName, onAttributionHandled]);
+
+  // ── 对话标签页：与聊天界面一致，可同时打开 / 切换多条对话 ──
+  const [tabsState, setTabsState] = useState<TabsState>(EMPTY_TABS);
+  const { tabs, activeId: activeTabId } = tabsState;
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyRev, setHistoryRev] = useState(0);
+
+  // 切换 Agent：载入该会话下已打开的标签集合（首次使用以当前会话种子化一条）
+  useEffect(() => {
+    if (!persistKey) {
+      setTabsState(EMPTY_TABS);
+      return;
+    }
+    const seeded = loadAgentTabs(persistKey);
+    setTabsState({ agent: persistKey, tabs: seeded.tabs, activeId: seeded.activeId });
+  }, [persistKey]);
+
+  // 激活标签与实际会话指针保持一致（刷新 / 首次载入时对齐）
+  useEffect(() => {
+    if (!persistKey || tabsState.agent !== persistKey || !activeTabId) return;
+    if (activeTabId === getSessionId()) return;
+    restoreMessages(loadConversation(activeTabId), activeTabId);
+  }, [persistKey, tabsState.agent, activeTabId, getSessionId, restoreMessages]);
+
+  // 标签集合变化 → 落盘（按 backtest:<agent> 隔离，与主聊天界面互不影响）
+  useEffect(() => {
+    if (!tabsState.agent || tabsState.agent !== persistKey) return;
+    if (tabsState.tabs.length === 0) return;
+    saveAgentTabs(tabsState.agent, tabsState.tabs, tabsState.activeId);
+  }, [tabsState, persistKey]);
+
+  // 当前对话标题变化 → 同步到激活标签
+  useEffect(() => {
+    if (!activeTabId) return;
+    const title = inferConversationTitle(messages);
+    if (!title) return;
+    setTabsState((prev) => {
+      const idx = prev.tabs.findIndex((t) => t.id === activeTabId);
+      if (idx < 0 || prev.tabs[idx]!.title === title) return prev;
+      const next = [...prev.tabs];
+      next[idx] = { ...next[idx]!, title };
+      return { ...prev, tabs: next };
+    });
+  }, [messages, activeTabId]);
+
+  const bumpHistory = useCallback(() => setHistoryRev((n) => n + 1), []);
+
+  const busyIds = useMemo(
+    () => (activeTabId && isTyping ? new Set([activeTabId]) : undefined),
+    [activeTabId, isTyping],
+  );
+
+  // 新对话：作为新标签页打开，当前对话持续保留在标签栏与历史记录中
+  const handleNewTab = useCallback(() => {
+    if (!requireAuth() || !currentAgent || !persistKey) return;
     lastPulledTouchRef.current = null;
     clearMessages({ startNewSession: true });
-  }, [requireAuth, clearMessages]);
+    const sid = getSessionId();
+    if (!sid) return;
+    setTabsState((prev) => {
+      const base = prev.agent === persistKey ? prev : EMPTY_TABS;
+      return { agent: persistKey, tabs: [...base.tabs, { id: sid, title: '' }], activeId: sid };
+    });
+    bumpHistory();
+  }, [requireAuth, currentAgent, persistKey, clearMessages, getSessionId, bumpHistory]);
+
+  const handleSelectTab = useCallback((id: string) => {
+    if (id === getSessionId()) {
+      setTabsState((prev) => ({ ...prev, activeId: id }));
+      return;
+    }
+    setTabsState((prev) => ({ ...prev, activeId: id }));
+    restoreMessages(loadConversation(id), id);
+  }, [getSessionId, restoreMessages]);
+
+  const handleCloseTab = useCallback((id: string) => {
+    if (!requireAuth() || !currentAgent || !persistKey) return;
+    const prev = tabsState.agent === persistKey ? tabsState : EMPTY_TABS;
+    const idx = prev.tabs.findIndex((t) => t.id === id);
+    if (idx < 0) return;
+    const remaining = prev.tabs.filter((t) => t.id !== id);
+
+    // 关闭最后一个标签 → 打开一条全新对话
+    if (remaining.length === 0) {
+      clearMessages({ startNewSession: true });
+      const sid = getSessionId();
+      setTabsState({ agent: persistKey, tabs: sid ? [{ id: sid, title: '' }] : [], activeId: sid });
+      bumpHistory();
+      return;
+    }
+
+    const closingActive = prev.activeId === id;
+    const nextActiveId = closingActive ? remaining[Math.min(idx, remaining.length - 1)]!.id : prev.activeId;
+    setTabsState({ agent: persistKey, tabs: remaining, activeId: nextActiveId });
+    if (closingActive && nextActiveId) {
+      restoreMessages(loadConversation(nextActiveId), nextActiveId);
+    }
+    bumpHistory();
+  }, [requireAuth, currentAgent, persistKey, tabsState, clearMessages, getSessionId, restoreMessages, bumpHistory]);
+
+  const handleRestoreConversation = useCallback((item: ConversationSummary) => {
+    if (!persistKey) return;
+    setHistoryOpen(false);
+    setTabsState((prev) => {
+      const base = prev.agent === persistKey ? prev : EMPTY_TABS;
+      const exists = base.tabs.some((t) => t.id === item.id);
+      const nextTabs = exists ? base.tabs : [...base.tabs, { id: item.id, title: item.title }];
+      return { agent: persistKey, tabs: nextTabs, activeId: item.id };
+    });
+    if (item.id !== getSessionId()) {
+      restoreMessages(loadConversation(item.id), item.id);
+    }
+  }, [persistKey, getSessionId, restoreMessages]);
+
+  const handleDeleteConversation = useCallback((e: MouseEvent, convId: string) => {
+    e.stopPropagation();
+    if (!requireAuth() || !persistKey) return;
+    if (convId === getSessionId()) {
+      // 删除的是当前对话：清空聊天区、丢弃记录，并替换为一条全新对话标签
+      clearMessages({ startNewSession: true, discard: true });
+      const sid = getSessionId();
+      setTabsState((prev) => {
+        const remaining = prev.tabs.filter((t) => t.id !== convId);
+        if (sid) remaining.push({ id: sid, title: '' });
+        return { agent: persistKey, tabs: remaining, activeId: sid ?? remaining[0]?.id ?? null };
+      });
+      bumpHistory();
+      return;
+    }
+    if (deleteConversation(convId)) {
+      setTabsState((prev) => {
+        if (!prev.tabs.some((t) => t.id === convId)) return prev;
+        const remaining = prev.tabs.filter((t) => t.id !== convId);
+        const nextActiveId = prev.activeId === convId ? (remaining[0]?.id ?? null) : prev.activeId;
+        return { ...prev, tabs: remaining, activeId: nextActiveId };
+      });
+      bumpHistory();
+    }
+  }, [requireAuth, persistKey, getSessionId, clearMessages, bumpHistory]);
+
+  const conversationList = useMemo(() => {
+    if (!persistKey) return [];
+    return listConversations(persistKey);
+  }, [persistKey, historyRev, historyOpen]);
 
   const tryPullStrategyUpdate = useCallback(() => {
     if (!currentAgent || !strategyReady || !onStrategyFileChanged) return;
@@ -235,7 +420,20 @@ export function StrategyChatPanel({
 
   return (
     <div className={cn('flex min-h-0 flex-col border-l border-border/50 bg-[#f7f7f8] dark:bg-background', className)}>
-      <div className="flex shrink-0 items-center justify-end gap-1 border-b border-border/50 px-3 py-2">
+      <div className="flex shrink-0 items-center gap-1 border-b border-border/50 px-2 py-1.5">
+        {currentAgent && tabs.length > 0 ? (
+          <ConversationTabs
+            compact
+            tabs={tabs}
+            activeId={activeTabId}
+            onSelect={handleSelectTab}
+            onClose={handleCloseTab}
+            onNew={handleNewTab}
+            busyIds={busyIds}
+          />
+        ) : (
+          <div className="min-w-0 flex-1" />
+        )}
         {currentAgent && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -243,14 +441,14 @@ export function StrategyChatPanel({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                className={TOOLBAR_ICON_BUTTON_CLASS}
-                aria-label="新对话"
-                onClick={handleNewChat}
+                className={cn(TOOLBAR_ICON_BUTTON_CLASS, 'shrink-0')}
+                aria-label="历史记录"
+                onClick={() => setHistoryOpen(true)}
               >
-                <IconMessagePlus className="size-[18px]" stroke={1.75} />
+                <IconHistory className="size-[18px]" stroke={1.75} />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">新对话</TooltipContent>
+            <TooltipContent side="bottom">历史记录</TooltipContent>
           </Tooltip>
         )}
         {onCollapse ? (
@@ -260,7 +458,7 @@ export function StrategyChatPanel({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                className={TOOLBAR_ICON_BUTTON_CLASS}
+                className={cn(TOOLBAR_ICON_BUTTON_CLASS, 'shrink-0')}
                 aria-label="收起 AI"
                 onClick={onCollapse}
               >
@@ -327,7 +525,8 @@ export function StrategyChatPanel({
               <ChatContainer
                 messages={messages}
                 isTyping={isTyping}
-                onClear={handleNewChat}
+                onClear={handleNewTab}
+                showClear={false}
                 agentName={currentAgent}
                 variant="dock"
                 onQuickPrompt={handleSend}
@@ -470,6 +669,67 @@ export function StrategyChatPanel({
           </div>
         </>
       )}
+
+      <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
+        <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-md">
+          <SheetHeader className="border-b border-border/60 px-4 py-4 text-left">
+            <SheetTitle className="text-base">历史对话</SheetTitle>
+            <SheetDescription className="text-xs">
+              量化助手的全部对话（含当前）自动保存在本机；点击记录会在上方标签栏打开，点击删除图标可移除。
+            </SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1">
+            <ScrollArea className="h-[calc(100vh-8rem)] px-2 py-2">
+              {!currentAgent ? (
+                <p className="px-3 py-8 text-center text-xs text-muted-foreground">请先选择 Agent</p>
+              ) : conversationList.length === 0 ? (
+                <p className="px-3 py-8 text-center text-xs text-muted-foreground">
+                  暂无历史对话。发送消息后会自动保存到这里。
+                </p>
+              ) : (
+                <ul className="flex flex-col gap-1">
+                  {conversationList.map((item) => (
+                    <li key={item.id} className="group relative">
+                      <button
+                        type="button"
+                        className="flex w-full flex-col gap-0.5 rounded-lg border border-transparent py-2.5 pl-3 pr-10 text-left text-sm transition-colors hover:bg-muted/80 hover:border-border/60"
+                        onClick={() => handleRestoreConversation(item)}
+                      >
+                        <span className="flex items-start gap-1.5">
+                          <span className="line-clamp-2 min-w-0 font-medium leading-snug">{item.title}</span>
+                          {item.id === getSessionId() ? (
+                            <Badge variant="secondary" className="mt-px shrink-0 px-1.5 text-[10px]">
+                              当前
+                            </Badge>
+                          ) : tabs.some((t) => t.id === item.id) ? (
+                            <Badge variant="secondary" className="mt-px shrink-0 px-1.5 text-[10px]">
+                              已打开
+                            </Badge>
+                          ) : null}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {new Date(item.updatedAt).toLocaleString()} · {item.messageCount} 条消息
+                        </span>
+                      </button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
+                        aria-label="删除此条历史对话"
+                        title="删除"
+                        onClick={(e) => handleDeleteConversation(e, item.id)}
+                      >
+                        <IconTrash size={16} />
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </ScrollArea>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
